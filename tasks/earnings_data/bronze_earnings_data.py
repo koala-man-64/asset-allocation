@@ -6,8 +6,8 @@ import os
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta, timezone
-from io import BytesIO, StringIO
+from datetime import date, datetime, timezone
+from io import StringIO
 from typing import Any, Callable, Optional, Dict, Sequence
 
 import pandas as pd
@@ -33,12 +33,9 @@ from tasks.common.bronze_symbol_policy import (
 )
 from tasks.common.job_status import resolve_job_run_status
 from tasks.common.bronze_backfill_coverage import (
-    extract_min_date_from_dataframe,
     extract_min_date_from_rows,
-    load_coverage_marker,
     normalize_date,
     resolve_backfill_start_date,
-    should_force_backfill,
     write_coverage_marker,
 )
 from tasks.common.backfill import filter_by_date
@@ -55,7 +52,6 @@ list_manager = ListManager(
 )
 
 
-EARNINGS_STALE_DAYS = 7
 _COVERAGE_DOMAIN = "earnings"
 _COVERAGE_PROVIDER = "alpha-vantage"
 _INVALID_CANDIDATE_REASON = "provider_invalid_symbol"
@@ -207,16 +203,6 @@ def _validate_environment() -> None:
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_SCOPE' is strictly required.")
 
 
-def _is_fresh(blob_last_modified: Optional[datetime], *, fresh_days: int) -> bool:
-    if blob_last_modified is None:
-        return False
-    try:
-        age = datetime.now(timezone.utc) - blob_last_modified
-    except Exception:
-        return False
-    return age <= timedelta(days=max(0, fresh_days))
-
-
 def _coerce_float(value: Any) -> Optional[float]:
     if value is None:
         return None
@@ -331,39 +317,6 @@ def _event_identity_key(df: pd.DataFrame) -> pd.Series:
     return preferred.dt.strftime("%Y-%m-%d").fillna("")
 
 
-def _select_actual_rows(df: Optional[pd.DataFrame]) -> pd.DataFrame:
-    canonical = _canonicalize_earnings_frame(df)
-    if canonical.empty:
-        return canonical
-    return canonical.loc[canonical["record_type"] == "actual"].copy().reset_index(drop=True)
-
-
-def _select_past_scheduled_rows(df: Optional[pd.DataFrame]) -> pd.DataFrame:
-    canonical = _canonicalize_earnings_frame(df)
-    if canonical.empty:
-        return canonical
-    today = _utc_today()
-    mask = (
-        canonical["record_type"].eq("scheduled") & canonical["report_date"].notna() & (canonical["report_date"] < today)
-    )
-    return canonical.loc[mask].copy().reset_index(drop=True)
-
-
-def _has_due_scheduled_rows(*frames: Optional[pd.DataFrame]) -> bool:
-    today = _utc_today()
-    for frame in frames:
-        canonical = _canonicalize_earnings_frame(frame)
-        if canonical.empty:
-            continue
-        if (
-            canonical["record_type"].eq("scheduled")
-            & canonical["report_date"].notna()
-            & (canonical["report_date"] <= today)
-        ).any():
-            return True
-    return False
-
-
 def _dedupe_canonical_earnings_events(df: Optional[pd.DataFrame]) -> tuple[pd.DataFrame, int]:
     canonical = _canonicalize_earnings_frame(df)
     if canonical.empty:
@@ -414,14 +367,6 @@ def _stamp_canonical_earnings_frame(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     canonical["ingested_at"] = now
     canonical["source_hash"] = source_hash
     return canonical[_BUCKET_COLUMNS].reset_index(drop=True)
-
-
-def _canonical_payload_bytes(df: Optional[pd.DataFrame]) -> bytes:
-    canonical = _canonicalize_earnings_frame(df)
-    if canonical.empty:
-        return b"[]"
-    canonical = canonical.sort_values(["symbol", "date", "record_type"]).reset_index(drop=True)
-    return canonical[_CANONICAL_EARNINGS_COLUMNS].to_json(orient="records", date_format="iso").encode("utf-8")
 
 
 def _parse_historical_earnings_records(
@@ -535,29 +480,6 @@ def _build_scheduled_earnings_rows(symbol: str, calendar_rows: Optional[pd.DataF
     out["calendar_currency"] = out.get("currency")
     out["is_future_event"] = 1
     return _canonicalize_earnings_frame(out, symbol=symbol)
-
-
-def _load_existing_earnings_df(blob_path: str) -> pd.DataFrame:
-    try:
-        raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
-    except Exception:
-        return pd.DataFrame()
-    if not raw:
-        return pd.DataFrame()
-    try:
-        df = pd.read_json(BytesIO(raw), orient="records")
-    except Exception:
-        return _empty_canonical_earnings_frame()
-    return _canonicalize_earnings_frame(df)
-
-
-def _extract_latest_earnings_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
-    if df.empty or "date" not in df.columns:
-        return None
-    parsed = pd.to_datetime(df["date"], errors="coerce", utc=True).dropna()
-    if parsed.empty:
-        return None
-    return parsed.max()
 
 
 def _normalize_bucket_df(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
@@ -693,105 +615,47 @@ def fetch_and_save_raw(
     coverage_summary: Optional[dict[str, int]] = None,
     event_summary: Optional[dict[str, int]] = None,
     calendar_rows: Optional[pd.DataFrame] = None,
-    write_symbol_file: bool = True,
     collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
     collected_lock: Optional[threading.Lock] = None,
-    alpha26_mode: bool = False,
 ) -> bool:
     """
-    Fetch earnings for a single symbol via the API-hosted Alpha Vantage gateway and store as Bronze JSON records.
+    Fetch earnings for a single symbol and stage canonical alpha26 Bronze rows for bucket publication.
 
-    Returns True when a Bronze write occurred, False when skipped/no-op.
+    Returns True when a symbol frame was staged, False when the symbol produced no rows after filtering.
     """
     coverage_summary = coverage_summary if coverage_summary is not None else _empty_coverage_summary()
     event_summary = event_summary if event_summary is not None else _empty_event_summary()
     if list_manager.is_blacklisted(symbol):
         return False
+    if collected_symbol_frames is None:
+        raise ValueError("collected_symbol_frames is required for bronze earnings alpha26 staging.")
 
-    blob_path = f"{cfg.EARNINGS_DATA_PREFIX}/{symbol}.json"
-    blob_exists: Optional[bool] = None
-    resolved_backfill_start = normalize_date(backfill_start)
-    existing_df = _empty_canonical_earnings_frame()
-    existing_actual_df = _empty_canonical_earnings_frame()
-    existing_min_date: Optional[date] = None
-    force_backfill = False
-    should_fetch_historical = True
-
+    resolved_backfill_start_raw = normalize_date(backfill_start)
+    resolved_backfill_start = (
+        pd.Timestamp(resolved_backfill_start_raw).date() if resolved_backfill_start_raw is not None else None
+    )
     scheduled_rows = _build_scheduled_earnings_rows(symbol, calendar_rows)
-
-    # Freshness gate only skips the per-symbol historical API fetch. Scheduled rows are still
-    # merged every run from the bulk earnings-calendar feed.
-    if not alpha26_mode:
-        try:
-            blob = bronze_client.get_blob_client(blob_path)
-            blob_exists = bool(blob.exists())
-            if blob_exists:
-                existing_df = _load_existing_earnings_df(blob_path)
-                existing_actual_df = _select_actual_rows(existing_df)
-                props = blob.get_blob_properties()
-                if resolved_backfill_start is not None:
-                    coverage_summary["coverage_checked"] += 1
-                    existing_min_date = extract_min_date_from_dataframe(existing_actual_df, date_col="date")
-                    marker = load_coverage_marker(
-                        common_client=common_client,
-                        domain=_COVERAGE_DOMAIN,
-                        symbol=symbol,
-                    )
-                    force_backfill, skipped_limited_marker = should_force_backfill(
-                        existing_min_date=existing_min_date,
-                        backfill_start=resolved_backfill_start,
-                        marker=marker,
-                    )
-                    if skipped_limited_marker:
-                        coverage_summary["coverage_skipped_limited_marker"] += 1
-                    if force_backfill:
-                        coverage_summary["coverage_forced_refetch"] += 1
-                    elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
-                        _mark_coverage(
-                            symbol=symbol,
-                            backfill_start=resolved_backfill_start,
-                            status="covered",
-                            earliest_available=existing_min_date,
-                            coverage_summary=coverage_summary,
-                        )
-                if (
-                    _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS)
-                    and not force_backfill
-                    and not existing_actual_df.empty
-                    and not _has_due_scheduled_rows(existing_df, scheduled_rows)
-                ):
-                    should_fetch_historical = False
-        except Exception:
-            pass
-    else:
-        blob_exists = False
 
     payload: Optional[dict[str, Any]] = None
     source_earliest: Optional[date] = None
-    has_source_records = False
-    if should_fetch_historical:
-        payload = av.get_earnings(symbol=symbol)
-        if not isinstance(payload, dict):
-            raise AlphaVantageGatewayError(
-                "Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol}
-            )
-
-        source_records = payload.get("quarterlyEarnings") or []
-        has_source_records = any(
-            isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
-            for item in source_records
+    payload = av.get_earnings(symbol=symbol)
+    if not isinstance(payload, dict):
+        raise AlphaVantageGatewayError(
+            "Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol}
         )
-        source_earliest = _extract_source_earliest_earnings_date(payload)
-        actual_rows = _parse_historical_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
-    else:
-        actual_rows = existing_actual_df.copy()
-        source_earliest = extract_min_date_from_dataframe(actual_rows, date_col="date")
-        has_source_records = not actual_rows.empty
 
-    carry_forward_scheduled = _select_past_scheduled_rows(existing_df)
+    source_records = payload.get("quarterlyEarnings") or []
+    has_source_records = any(
+        isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
+        for item in source_records
+    )
+    source_earliest_raw = _extract_source_earliest_earnings_date(payload)
+    source_earliest = pd.Timestamp(source_earliest_raw).date() if source_earliest_raw is not None else None
+    actual_rows = _parse_historical_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
+
     merge_parts = [
         frame
-        for frame in (actual_rows, carry_forward_scheduled, scheduled_rows)
+        for frame in (actual_rows, scheduled_rows)
         if frame is not None and not frame.empty and not frame.dropna(how="all").empty
     ]
     if merge_parts:
@@ -806,43 +670,32 @@ def fetch_and_save_raw(
     merged, actual_replacements = _dedupe_canonical_earnings_events(merged)
     if resolved_backfill_start is not None:
         merged = filter_by_date(merged, "date", pd.Timestamp(resolved_backfill_start), None)
-    canonical_raw_json = _canonical_payload_bytes(merged)
     merged = _stamp_canonical_earnings_frame(merged)
 
     if merged is None or merged.empty:
-        if not has_source_records and scheduled_rows.empty and carry_forward_scheduled.empty:
+        if not has_source_records and scheduled_rows.empty:
             raise BronzeCoverageUnavailableError(
                 "no_earnings_records",
                 detail="No quarterly or scheduled earnings records found.",
                 payload=payload or {"symbol": symbol},
             )
         if resolved_backfill_start is not None:
-            if force_backfill:
+            if source_earliest is not None:
+                marker_status = "covered" if source_earliest <= resolved_backfill_start else "limited"
                 _mark_coverage(
                     symbol=symbol,
                     backfill_start=resolved_backfill_start,
-                    status="limited",
+                    status=marker_status,
                     earliest_available=source_earliest,
                     coverage_summary=coverage_summary,
                 )
-            if blob_exists is not False:
-                cutoff_iso = pd.Timestamp(resolved_backfill_start).date().isoformat()
-                bronze_client.delete_file(blob_path)
-                mdc.write_line(f"No earnings rows on/after {cutoff_iso} for {symbol}; " f"deleted bronze {blob_path}.")
-                list_manager.add_to_whitelist(symbol)
-                return True
             list_manager.add_to_whitelist(symbol)
             return False
-        raw_json = b"[]"
-    else:
-        raw_json = merged.to_json(orient="records").encode("utf-8")
-        event_summary["scheduled_rows_retained"] += int(merged["record_type"].eq("scheduled").sum())
-        event_summary["actual_over_scheduled_replacements"] += int(actual_replacements)
 
-    if resolved_backfill_start is not None and force_backfill:
-        marker_status = (
-            "covered" if source_earliest is not None and source_earliest <= resolved_backfill_start else "limited"
-        )
+    event_summary["scheduled_rows_retained"] += int(merged["record_type"].eq("scheduled").sum())
+    event_summary["actual_over_scheduled_replacements"] += int(actual_replacements)
+    if resolved_backfill_start is not None and source_earliest is not None:
+        marker_status = "covered" if source_earliest <= resolved_backfill_start else "limited"
         _mark_coverage(
             symbol=symbol,
             backfill_start=resolved_backfill_start,
@@ -851,22 +704,11 @@ def fetch_and_save_raw(
             coverage_summary=coverage_summary,
         )
 
-    if (not alpha26_mode) and blob_exists:
-        if _canonical_payload_bytes(existing_df) == canonical_raw_json:
-            list_manager.add_to_whitelist(symbol)
-            return False
-
-    if not write_symbol_file:
-        if merged is not None and not merged.empty and collected_symbol_frames is not None:
-            if collected_lock is not None:
-                with collected_lock:
-                    collected_symbol_frames[symbol] = merged.copy()
-            else:
-                collected_symbol_frames[symbol] = merged.copy()
-        list_manager.add_to_whitelist(symbol)
-        return bool(merged is not None and not merged.empty)
-
-    mdc.store_raw_bytes(raw_json, blob_path, client=bronze_client)
+    if collected_lock is not None:
+        with collected_lock:
+            collected_symbol_frames[symbol] = merged.copy()
+    else:
+        collected_symbol_frames[symbol] = merged.copy()
     list_manager.add_to_whitelist(symbol)
     return True
 
@@ -943,7 +785,7 @@ async def main_async() -> int:
         f"final_scheduled={len(symbols)}"
     )
 
-    alpha26_mode = bronze_bucketing.is_alpha26_mode()
+    bronze_bucketing.bronze_layout_mode()
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
 
     av = AlphaVantageGatewayClient.from_env()
@@ -986,7 +828,7 @@ async def main_async() -> int:
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
     collected_symbol_frames: Dict[str, pd.DataFrame] = {}
-    collected_lock: Optional[threading.Lock] = threading.Lock() if alpha26_mode else None
+    collected_lock: Optional[threading.Lock] = threading.Lock()
 
     def worker(symbol: str) -> tuple[bool, dict[str, int], dict[str, int]]:
         av = client_manager.get_client()
@@ -999,10 +841,8 @@ async def main_async() -> int:
             coverage_summary=coverage_summary,
             event_summary=event_summary,
             calendar_rows=calendar_rows_by_symbol.get(symbol),
-            write_symbol_file=not alpha26_mode,
-            collected_symbol_frames=collected_symbol_frames if alpha26_mode else None,
-            collected_lock=collected_lock if alpha26_mode else None,
-            alpha26_mode=alpha26_mode,
+            collected_symbol_frames=collected_symbol_frames,
+            collected_lock=collected_lock,
         )
         return wrote, coverage_summary, event_summary
 
@@ -1119,23 +959,22 @@ async def main_async() -> int:
         except Exception:
             pass
 
-    if alpha26_mode:
+    try:
+        written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames, run_id=run_id)
+        flat_deleted = _delete_flat_symbol_blobs()
+        mdc.write_line(
+            "Bronze earnings alpha26 buckets written: "
+            f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
+        )
         try:
-            written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames, run_id=run_id)
-            flat_deleted = _delete_flat_symbol_blobs()
-            mdc.write_line(
-                "Bronze earnings alpha26 buckets written: "
-                f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
-            )
-            try:
-                list_manager.flush()
-            except Exception as exc:
-                mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
-            else:
-                log_bronze_success(domain="earnings", operation="list_flush")
+            list_manager.flush()
         except Exception as exc:
-            progress["failed"] += 1
-            mdc.write_error(f"Bronze earnings alpha26 bucket write failed: {exc}")
+            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        else:
+            log_bronze_success(domain="earnings", operation="list_flush")
+    except Exception as exc:
+        progress["failed"] += 1
+        mdc.write_error(f"Bronze earnings alpha26 bucket write failed: {exc}")
 
     if failure_counts:
         ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)

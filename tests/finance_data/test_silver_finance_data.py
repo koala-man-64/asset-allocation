@@ -46,46 +46,6 @@ def test_read_finance_json_projects_only_piotroski_columns() -> None:
     assert out.loc[0, "timeframe"] == "quarterly"
 
 
-def test_read_finance_json_accepts_raw_massive_balance_sheet_payload() -> None:
-    payload = {
-        "status": "OK",
-        "request_id": "req-1",
-        "results": [
-            {
-                "ticker": "AAPL",
-                "period_end": "2024-03-31",
-                "timeframe": "quarterly",
-                "total_assets": 1000.0,
-                "total_current_assets": 250.0,
-                "total_current_liabilities": 125.0,
-                "common_stock_shares_outstanding": 50.0,
-                "long_term_debt": 300.0,
-            }
-        ],
-    }
-
-    out = silver._read_finance_json(
-        json.dumps(payload).encode("utf-8"),
-        ticker="AAPL",
-        suffix="quarterly_balance-sheet",
-    )
-
-    assert list(out.columns) == [
-        "Date",
-        "Symbol",
-        "long_term_debt",
-        "total_assets",
-        "current_assets",
-        "current_liabilities",
-        "shares_outstanding",
-        "timeframe",
-    ]
-    assert out.loc[0, "Symbol"] == "AAPL"
-    assert out.loc[0, "long_term_debt"] == 300.0
-    assert out.loc[0, "total_assets"] == 1000.0
-    assert out.loc[0, "timeframe"] == "quarterly"
-
-
 def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> None:
     monkeypatch.setattr(
         silver.delta_core,
@@ -119,49 +79,13 @@ def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> 
     assert out.loc[1, "pe_ratio"] == 20.0
 
 
-def test_read_finance_json_accepts_raw_massive_valuation_payload(monkeypatch) -> None:
-    monkeypatch.setattr(
-        silver.delta_core,
-        "load_delta",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [
-                {"date": "2024-03-30", "close": 95.0, "symbol": "AAPL"},
-                {"date": "2024-03-31", "close": 100.0, "symbol": "AAPL"},
-            ]
-        ),
-    )
-
-    payload = {
-        "status": "OK",
-        "request_id": "req-2",
-        "results": [
-            {
-                "ticker": "AAPL",
-                "date": "2024-03-31",
-                "market_cap": 1000.0,
-                "price_to_earnings": 20.0,
-            }
-        ],
-    }
-
-    out = silver._read_finance_json(
-        json.dumps(payload).encode("utf-8"),
-        ticker="AAPL",
-        suffix="quarterly_valuation_measures",
-    )
-
-    assert list(out.columns) == ["Date", "Symbol", "market_cap", "pe_ratio"]
-    assert out.loc[0, "market_cap"] == 950.0
-    assert out.loc[1, "market_cap"] == 1000.0
-    assert out.loc[1, "pe_ratio"] == 20.0
-
-
-def test_read_finance_json_rejects_alpha_vantage_payload() -> None:
-    with pytest.raises(ValueError, match="Alpha Vantage finance payload is not supported"):
+def test_read_finance_json_rejects_noncanonical_payload() -> None:
+    with pytest.raises(ValueError, match="Unsupported finance payload schema"):
         silver._read_finance_json(
             json.dumps(
                 {
-                    "quarterlyReports": [{"fiscalDateEnding": "2024-03-31", "totalAssets": "1000"}],
+                    "status": "OK",
+                    "results": [{"period_end": "2024-03-31", "total_assets": 1000.0}],
                 }
             ).encode("utf-8"),
             ticker="AAPL",

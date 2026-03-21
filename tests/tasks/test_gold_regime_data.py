@@ -57,3 +57,52 @@ def test_assert_complete_regime_inputs_reports_non_overlapping_series() -> None:
     assert "no complete SPY/^VIX/^VIX3M rows" in message
     assert "inputs_range=" in message
     assert "coverage=" in message
+
+
+def test_write_storage_outputs_refreshes_persisted_metadata_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
+    parquet_paths: list[str] = []
+    saved_artifact: dict[str, object] = {}
+    snapshot_updates: list[dict[str, object]] = []
+
+    class _FakeClient:
+        def write_parquet(self, path: str, frame: pd.DataFrame) -> None:
+            parquet_paths.append(path)
+            assert isinstance(frame, pd.DataFrame)
+
+    monkeypatch.setattr(regime_job.mdc, "get_storage_client", lambda _container: _FakeClient())
+    monkeypatch.setattr(regime_job, "computed_at_iso", lambda: "2026-03-21T12:00:00+00:00")
+    monkeypatch.setattr(
+        "tasks.common.domain_artifacts.mdc.save_json_content",
+        lambda payload, path, client=None: saved_artifact.update({"payload": payload, "path": path, "client": client}),
+    )
+    monkeypatch.setattr(
+        "tasks.common.domain_artifacts.domain_metadata_snapshots.update_domain_metadata_snapshots_from_artifact",
+        lambda **kwargs: snapshot_updates.append(kwargs),
+    )
+
+    inputs = pd.DataFrame({"as_of_date": [pd.Timestamp("2026-03-20")], "symbol": ["SPY"]})
+    history = pd.DataFrame({"as_of_date": [pd.Timestamp("2026-03-20")], "regime_code": ["risk_on"]})
+    latest = history.copy()
+    transitions = pd.DataFrame({"effective_from_date": [pd.Timestamp("2026-03-20")]})
+
+    regime_job._write_storage_outputs(
+        gold_container="gold",
+        inputs=inputs,
+        history=history,
+        latest=latest,
+        transitions=transitions,
+    )
+
+    assert parquet_paths == [
+        "regime/inputs.parquet",
+        "regime/history.parquet",
+        "regime/latest.parquet",
+        "regime/transitions.parquet",
+    ]
+    assert saved_artifact["path"] == "regime/_metadata/domain.json"
+    assert saved_artifact["payload"]["artifactPath"] == "regime/_metadata/domain.json"
+    assert saved_artifact["payload"]["rootPath"] == "regime"
+    assert len(snapshot_updates) == 1
+    assert snapshot_updates[0]["layer"] == "gold"
+    assert snapshot_updates[0]["domain"] == "regime"
+    assert snapshot_updates[0]["artifact"]["artifactPath"] == "regime/_metadata/domain.json"

@@ -200,7 +200,6 @@ def log_environment_diagnostics():
         "AZURE_CONTAINER_PLATINUM",
         # Job behavior toggles
         "LOG_FORMAT",
-        "FEATURE_ENGINEERING_MAX_WORKERS",
         "TEST_MODE",
     ]
 

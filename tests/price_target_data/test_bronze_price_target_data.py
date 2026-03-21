@@ -126,7 +126,7 @@ def test_process_batch_bronze_logs_symbol_processed_success(
 @patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
 @patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
 @patch('tasks.price_target_data.bronze_price_target_data.list_manager')
-def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
+def test_process_batch_bronze_handles_filtered_missing_symbol(
     mock_list_manager,
     mock_client,
     mock_nasdaq,
@@ -154,11 +154,8 @@ def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
                 semaphore,
                 backfill_start=pd.Timestamp('2024-01-01').date(),
             )
-            assert summary["invalid_candidates"] == 0
-            assert summary["blacklist_promotions"] == 0
             assert summary["filtered_missing"] == 1
             assert summary["deleted"] == 1
-            mock_list_manager.add_to_blacklist.assert_not_called()
             assert mock_store.call_count >= 1
             stored_paths = [call.args[1] for call in mock_store.call_args_list if len(call.args) >= 2]
             assert f"price-target-data/{symbol_with_data}.parquet" in stored_paths
@@ -191,8 +188,6 @@ def test_process_batch_bronze_deletes_stale_when_cutoff_and_empty_response(
                 semaphore,
                 backfill_start=pd.Timestamp('2024-01-01').date(),
             )
-            assert summary["invalid_candidates"] == 0
-            assert summary["blacklist_promotions"] == 0
             assert summary["filtered_missing"] == 2
             assert summary["deleted"] == 2
             assert summary["save_failed"] == 0
@@ -244,8 +239,6 @@ def test_process_batch_bronze_uses_watermark_and_appends_existing(
         ) as mock_store:
             summary = await bronze.process_batch_bronze([symbol], semaphore)
             assert summary["saved"] == 1
-            assert summary["invalid_candidates"] == 0
-            assert summary["blacklist_promotions"] == 0
 
             _, call_kwargs = mock_nasdaq.get_table.call_args
             assert call_kwargs["obs_date"]["gte"] == "2024-03-02"
@@ -293,12 +286,9 @@ def test_process_batch_bronze_missing_after_watermark_keeps_existing(
         ) as mock_store:
             summary = await bronze.process_batch_bronze([symbol], semaphore)
             assert summary["saved"] == 0
-            assert summary["invalid_candidates"] == 0
-            assert summary["blacklist_promotions"] == 0
             assert summary["filtered_missing"] == 1
             mock_store.assert_not_called()
             mock_client.delete_file.assert_not_called()
-            mock_list_manager.add_to_blacklist.assert_not_called()
             mock_list_manager.add_to_whitelist.assert_called_with(symbol)
 
     asyncio.run(run_test())
@@ -477,7 +467,7 @@ def test_main_async_returns_success_when_only_filtered_missing_symbols_are_detec
             return_value=False,
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.process_batch_bronze",
-            new=AsyncMock(return_value={"invalid_candidates": 0, "blacklist_promotions": 0, "filtered_missing": 1}),
+            new=AsyncMock(return_value={"filtered_missing": 1}),
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.list_manager"
         ) as mock_list_manager, patch(

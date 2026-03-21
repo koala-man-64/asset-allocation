@@ -15,7 +15,7 @@ import os
 import re
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Sequence, Tuple, Dict, Any, List, Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -52,8 +52,6 @@ class FeatureJobConfig:
 
     silver_container: str
     gold_container: str
-    max_workers: int
-    tickers: Sequence[str]
 
 
 @dataclass(frozen=True)
@@ -254,143 +252,18 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict[str, Any]:
-    """Compute and write features for a single ticker table path.
-
-    This helper supports per-ticker processing. The current `main()` path uses
-    `_run_alpha26_market_gold()` for bucket-based execution.
-    """
-
-    from core import core as mdc
-    from core import delta_core
-
-    ticker, raw_path, gold_path, silver_container, gold_container, backfill_start_iso = task
-
-    # Read source rows from silver.
-    df_raw = delta_core.load_delta(silver_container, raw_path)
-    if df_raw is None or df_raw.empty:
-        return {"ticker": ticker, "status": "skipped_no_data", "raw_path": raw_path}
-
-    # Isolate compute failures to the current ticker.
-    try:
-        df_features = compute_features(df_raw)
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_compute", "raw_path": raw_path, "error": str(exc)}
-
-    # Optionally drop rows before the configured backfill cutoff date.
-    backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
-    df_features, _ = apply_backfill_start_cutoff(
-        df_features,
-        date_col="date",
-        backfill_start=backfill_start,
-        context=f"gold market {ticker}",
-    )
-
-    # If cutoff removes all rows, purge stale output to prevent ghost data.
-    if backfill_start is not None and df_features.empty:
-        gold_client = mdc.get_storage_client(gold_container)
-        if gold_client is None:
-            return {
-                "ticker": ticker,
-                "status": "failed_write",
-                "gold_path": gold_path,
-                "error": f"Storage client unavailable for cutoff purge {gold_path}.",
-            }
-        deleted = gold_client.delete_prefix(gold_path)
-        return {
-            "ticker": ticker,
-            "status": "ok",
-            "rows": 0,
-            "gold_path": gold_path,
-            "purged_blobs": deleted,
-        }
-
-    # Persist canonical snake_case names in the gold layer.
-    df_features = project_gold_output_frame(df_features, domain="market")
-
-    # Overwrite to keep output fully derived from current source inputs.
-    try:
-        delta_core.store_delta(
-            df_features,
-            gold_container,
-            gold_path,
-            mode="overwrite",
-        )
-        if backfill_start is not None:
-            delta_core.vacuum_delta_table(
-                gold_container,
-                gold_path,
-                retention_hours=0,
-                dry_run=False,
-                enforce_retention_duration=False,
-                full=True,
-            )
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
-
-    return {"ticker": ticker, "status": "ok", "rows": len(df_features), "gold_path": gold_path}
-
-
-def _get_max_workers() -> int:
-    """Pick worker count from CPU affinity/capacity with optional env override."""
-
-    try:
-        available_cpus = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
-    except Exception:
-        available_cpus = os.cpu_count() or 1
-
-    default_workers = available_cpus if available_cpus <= 2 else available_cpus - 1
-
-    configured = os.environ.get("FEATURE_ENGINEERING_MAX_WORKERS")
-    if configured:
-        try:
-            parsed = int(configured)
-            if parsed > 0:
-                return min(parsed, available_cpus)
-        except ValueError:
-            pass
-    return max(1, default_workers)
-
-
 def _build_job_config() -> FeatureJobConfig:
-    """Build runtime configuration and the active ticker universe."""
+    """Resolve storage containers for the bucket-based gold market job."""
 
     silver_container = os.environ.get("AZURE_CONTAINER_SILVER")
     gold_container = os.environ.get("AZURE_CONTAINER_GOLD")
-
-    from core import core as mdc
-    from core import config as common_cfg
-
-    # Load the symbol universe from shared core metadata.
-    df_symbols = mdc.get_symbols()
-    df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
-
-    # Optional debug mode limits execution to an explicit symbol allow-list.
-    if hasattr(common_cfg, "DEBUG_SYMBOLS") and common_cfg.DEBUG_SYMBOLS:
-        mdc.write_line(
-            f"DEBUG MODE: Restricting execution to {len(common_cfg.DEBUG_SYMBOLS)} symbols: {common_cfg.DEBUG_SYMBOLS}"
-        )
-        df_symbols = df_symbols[df_symbols["Symbol"].isin(common_cfg.DEBUG_SYMBOLS)]
-
-    # Normalize symbols for storage/path safety and skip unsupported dotted symbols.
-    tickers: List[str] = []
-    for symbol in df_symbols["Symbol"].astype(str).tolist():
-        if "." in symbol:
-            continue
-        clean = symbol.replace(".", "-")
-        tickers.append(clean)
-
-    # De-duplicate while preserving order.
-    tickers = list(dict.fromkeys(tickers))
-
-    max_workers = _get_max_workers()
-    mdc.write_line(f"Feature engineering configured for {len(tickers)} tickers (max_workers={max_workers})")
-
+    if not silver_container or not str(silver_container).strip():
+        raise ValueError("Environment variable 'AZURE_CONTAINER_SILVER' is required.")
+    if not gold_container or not str(gold_container).strip():
+        raise ValueError("Environment variable 'AZURE_CONTAINER_GOLD' is required.")
     return FeatureJobConfig(
-        silver_container=silver_container,
-        gold_container=gold_container,
-        max_workers=max_workers,
-        tickers=tickers,
+        silver_container=str(silver_container).strip(),
+        gold_container=str(gold_container).strip(),
     )
 
 
@@ -964,12 +837,13 @@ if __name__ == "__main__":
 
     job_name = "gold-market-job"
 
-    # Ensure the API dependency is awake before running the batch job.
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=job_name,
-            run=main,
-            on_success=(lambda: write_system_health_marker(layer="gold", domain="market", job_name=job_name),),
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        # Ensure the API dependency is awake before running the batch job.
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(lambda: write_system_health_marker(layer="gold", domain="market", job_name=job_name),),
+            )
         )
-    )

@@ -475,6 +475,49 @@ def load_domain_artifact(
     return payload
 
 
+def publish_domain_artifact_payload(
+    *,
+    payload: dict[str, Any],
+    client: Optional[BlobStorageClient] = None,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        raise ValueError("Domain artifact payload must be a mapping.")
+
+    normalized_layer = normalize_layer(str(payload.get("layer") or ""))
+    normalized_domain = normalize_domain(str(payload.get("domain") or ""))
+    if not normalized_layer:
+        raise ValueError("Domain artifact payload is missing layer.")
+    if not normalized_domain:
+        raise ValueError("Domain artifact payload is missing domain.")
+
+    normalized_sub_domain = normalize_sub_domain(payload.get("subDomain"))
+    storage_client = client or _client_for_layer(normalized_layer)
+    if storage_client is None:
+        return None
+
+    artifact_path = str(payload.get("artifactPath") or "").strip() or domain_artifact_path(
+        layer=normalized_layer,
+        domain=normalized_domain,
+        sub_domain=normalized_sub_domain or None,
+    )
+    published = dict(payload)
+    published["layer"] = normalized_layer
+    published["domain"] = normalized_domain
+    published["subDomain"] = normalized_sub_domain or None
+    published["artifactPath"] = artifact_path
+    if not str(published.get("rootPath") or "").strip():
+        published["rootPath"] = root_prefix(layer=normalized_layer, domain=normalized_domain)
+
+    mdc.save_json_content(published, artifact_path, client=storage_client)
+    if not normalized_sub_domain:
+        domain_metadata_snapshots.update_domain_metadata_snapshots_from_artifact(
+            layer=normalized_layer,
+            domain=normalized_domain,
+            artifact=published,
+        )
+    return published
+
+
 def write_domain_artifact(
     *,
     layer: str,
@@ -577,11 +620,4 @@ def write_domain_artifact(
             if key in FINANCE_SUBDOMAINS
         } or None
 
-    mdc.save_json_content(payload, artifact_path, client=storage_client)
-    if not normalized_sub_domain:
-        domain_metadata_snapshots.update_domain_metadata_snapshots_from_artifact(
-            layer=normalized_layer,
-            domain=normalized_domain,
-            artifact=payload,
-        )
-    return payload
+    return publish_domain_artifact_payload(payload=payload, client=storage_client)

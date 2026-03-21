@@ -286,8 +286,6 @@ async def process_batch_bronze(
         "saved": 0,
         "deleted": 0,
         "save_failed": 0,
-        "invalid_candidates": 0,
-        "blacklist_promotions": 0,
         "filtered_missing": 0,
         "api_error": False,
     }
@@ -545,8 +543,7 @@ async def process_batch_bronze(
 
         mdc.write_line(
             "Bronze price target batch summary: requested={requested} stale={stale} api_rows={api_rows} "
-            "saved={saved} deleted={deleted} save_failed={save_failed} invalid_candidates={invalid_candidates} "
-            "blacklist_promotions={blacklist_promotions} filtered_missing={filtered_missing} "
+            "saved={saved} deleted={deleted} save_failed={save_failed} filtered_missing={filtered_missing} "
             "api_error={api_error}".format(**batch_summary)
         )
         batch_summary["failure_counts"] = dict(batch_failure_counts)
@@ -630,8 +627,6 @@ async def main_async() -> int:
         "saved": 0,
         "deleted": 0,
         "save_failed": 0,
-        "invalid_candidates": 0,
-        "blacklist_promotions": 0,
         "filtered_missing": 0,
         "api_error_batches": 0,
         "coverage_checked": 0,
@@ -663,8 +658,6 @@ async def main_async() -> int:
             aggregate["saved"] += int(result.get("saved", 0) or 0)
             aggregate["deleted"] += int(result.get("deleted", 0) or 0)
             aggregate["save_failed"] += int(result.get("save_failed", 0) or 0)
-            aggregate["invalid_candidates"] += int(result.get("invalid_candidates", 0) or 0)
-            aggregate["blacklist_promotions"] += int(result.get("blacklist_promotions", 0) or 0)
             aggregate["filtered_missing"] += int(result.get("filtered_missing", 0) or 0)
             aggregate["coverage_checked"] += int(result.get("coverage_checked", 0) or 0)
             aggregate["coverage_forced_refetch"] += int(result.get("coverage_forced_refetch", 0) or 0)
@@ -721,13 +714,11 @@ async def main_async() -> int:
                 + int(aggregate.get("save_failed", 0) or 0)
                 + int(aggregate.get("api_error_batches", 0) or 0)
             ),
-            warning_count=int(aggregate.get("invalid_candidates", 0) or 0),
+            warning_count=0,
         )
         mdc.write_line(
             "Bronze price target overall summary: requested={requested} stale={stale} api_rows={api_rows} "
-            "saved={saved} deleted={deleted} save_failed={save_failed} invalid_candidates={invalid_candidates} "
-            "blacklist_promotions={blacklist_promotions} "
-            "filtered_missing={filtered_missing} "
+            "saved={saved} deleted={deleted} save_failed={save_failed} filtered_missing={filtered_missing} "
             "coverage_checked={coverage_checked} coverage_forced_refetch={coverage_forced_refetch} "
             "coverage_marked_covered={coverage_marked_covered} coverage_marked_limited={coverage_marked_limited} "
             "coverage_skipped_limited_marker={coverage_skipped_limited_marker} "

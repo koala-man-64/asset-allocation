@@ -41,6 +41,7 @@ from tasks.common.bronze_symbol_policy import (
 from tasks.common import bronze_bucketing
 from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
 from tasks.common.job_status import resolve_job_run_status
+from tasks.common.silver_contracts import parse_wait_timeout_seconds
 from tasks.finance_data import config as cfg
 
 
@@ -186,21 +187,6 @@ def _is_valuation_finance_report(report_name: object) -> bool:
 
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-
-
-def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | None:
-    if raw is None:
-        return default
-    value = str(raw).strip()
-    if not value:
-        return default
-    if value.lower() in {"none", "inf", "infinite", "forever"}:
-        return None
-    try:
-        parsed = float(value)
-    except Exception:
-        return default
-    return max(0.0, parsed)
 
 
 def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
@@ -1728,7 +1714,7 @@ if __name__ == "__main__":
 
     job_name = "bronze-finance-job"
     shared_lock_name = (os.environ.get("FINANCE_PIPELINE_SHARED_LOCK_NAME") or _DEFAULT_SHARED_FINANCE_LOCK).strip()
-    shared_wait_timeout = _parse_wait_timeout_seconds(
+    shared_wait_timeout = parse_wait_timeout_seconds(
         os.environ.get("BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS"),
         default=0.0,
     )

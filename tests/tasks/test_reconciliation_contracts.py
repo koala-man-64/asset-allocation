@@ -44,14 +44,6 @@ def _patch_gold_market_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _patch_gold_earnings_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        gold_earnings,
-        "collect_delta_market_symbols",
-        lambda *, client, root_prefix: {"AAPL"} if root_prefix == "earnings-data" else {"AAPL", "MSFT"},
-    )
-
-
 def _patch_gold_price_target_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         gold_price_target,
@@ -63,6 +55,14 @@ def _patch_gold_price_target_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
 def _patch_gold_finance_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gold_finance, "collect_delta_silver_finance_symbols", lambda *, client: {"AAPL"})
     monkeypatch.setattr(gold_finance, "collect_delta_market_symbols", lambda *, client, root_prefix: {"AAPL", "MSFT"})
+
+
+def _patch_gold_earnings_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        gold_earnings,
+        "collect_delta_market_symbols",
+        lambda *, client, root_prefix: {"AAPL"} if root_prefix == "earnings-data" else {"AAPL", "MSFT"},
+    )
 
 
 def _patch_silver_market_symbols(monkeypatch: pytest.MonkeyPatch) -> None:

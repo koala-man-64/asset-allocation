@@ -39,10 +39,12 @@ from tasks.common.silver_contracts import (
     ContractViolation,
     align_to_existing_schema,
     assert_no_unexpected_mixed_empty,
+    coerce_to_naive_datetime,
     log_contract_violation,
     normalize_date_column,
-    require_non_empty_frame,
     normalize_columns_to_snake_case,
+    parse_wait_timeout_seconds,
+    require_non_empty_frame,
 )
 from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
@@ -98,49 +100,6 @@ _FINANCE_VALUATION_CALCULATED_COLUMNS = {
     "market_cap",
     "pe_ratio",
 }
-_RAW_MASSIVE_STATEMENT_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[str, ...]]] = {
-    "balance_sheet": {
-        "long_term_debt": (
-            "long_term_debt_and_capital_lease_obligations",
-            "long_term_debt",
-            "long_term_debt_noncurrent",
-        ),
-        "total_assets": ("total_assets",),
-        "current_assets": ("total_current_assets", "current_assets"),
-        "current_liabilities": ("total_current_liabilities", "current_liabilities"),
-        "shares_outstanding": (
-            "common_stock_shares_outstanding",
-            "common_shares_outstanding",
-            "ordinary_shares_number",
-            "share_issued",
-        ),
-    },
-    "income_statement": {
-        "total_revenue": ("revenues", "revenue", "total_revenue"),
-        "gross_profit": ("gross_profit",),
-        "net_income": (
-            "net_income_loss",
-            "consolidated_net_income_loss",
-            "net_income_loss_attributable_to_parent",
-        ),
-        "shares_outstanding": (
-            "diluted_shares_outstanding",
-            "basic_shares_outstanding",
-            "weighted_average_shares",
-        ),
-    },
-    "cash_flow": {
-        "operating_cash_flow": (
-            "net_cash_flow_from_operating_activities",
-            "net_cash_from_operating_activities",
-            "net_cash_provided_by_operating_activities",
-        ),
-    },
-}
-_RAW_MASSIVE_VALUATION_ALIASES: dict[str, tuple[str, ...]] = {
-    "market_cap": ("market_cap",),
-    "pe_ratio": ("price_to_earnings", "pe_ratio"),
-}
 
 
 def _get_positive_int_env(name: str, default: int) -> int:
@@ -156,21 +115,6 @@ def _get_positive_int_env(name: str, default: int) -> int:
 
 def _get_catchup_max_passes() -> int:
     return _get_positive_int_env("SILVER_FINANCE_CATCHUP_MAX_PASSES", _DEFAULT_CATCHUP_MAX_PASSES)
-
-
-def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | None:
-    if raw is None:
-        return default
-    value = str(raw).strip()
-    if not value:
-        return default
-    if value.lower() in {"none", "inf", "infinite", "forever"}:
-        return None
-    try:
-        parsed = float(value)
-    except Exception:
-        return default
-    return max(0.0, parsed)
 
 
 def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
@@ -318,127 +262,6 @@ def _get_first_value(payload: dict[str, Any], candidates: tuple[str, ...]) -> An
     return None
 
 
-def _get_first_dict(payload: dict[str, Any], candidates: tuple[str, ...]) -> dict[str, Any]:
-    value = _get_first_value(payload, candidates)
-    return value if isinstance(value, dict) else {}
-
-
-def _parse_payload_date(value: Any) -> Optional[pd.Timestamp]:
-    if value is None:
-        return None
-    parsed = pd.to_datetime(value, errors="coerce", utc=True)
-    if pd.isna(parsed):
-        return None
-    return parsed.tz_convert(None)
-
-
-def _extract_raw_massive_statement_section(sub_domain: str, item: dict[str, Any]) -> dict[str, Any]:
-    financials = _get_first_dict(item, ("financials",))
-    if sub_domain == "balance_sheet":
-        section = _get_first_dict(item, ("balance_sheet", "balanceSheet")) or _get_first_dict(
-            financials,
-            ("balance_sheet", "balanceSheet"),
-        )
-        return section or item
-    if sub_domain == "income_statement":
-        section = _get_first_dict(item, ("income_statement", "incomeStatement")) or _get_first_dict(
-            financials,
-            ("income_statement", "incomeStatement"),
-        )
-        return section or item
-    if sub_domain == "cash_flow":
-        section = _get_first_dict(item, ("cash_flow_statement", "cash_flow", "cashFlowStatement")) or _get_first_dict(
-            financials,
-            ("cash_flow_statement", "cash_flow", "cashFlowStatement"),
-        )
-        return section or item
-    return item
-
-
-def _infer_raw_massive_statement_timeframe(item: dict[str, Any]) -> Optional[str]:
-    timeframe = str(item.get("timeframe") or "").strip().lower()
-    if timeframe in {"quarterly", "annual"}:
-        return timeframe
-    if item.get("fiscal_quarter") not in {None, "", 0}:
-        return "quarterly"
-    if item.get("fiscal_year") not in {None, ""}:
-        return "annual"
-    return None
-
-
-def _canonicalize_raw_massive_statement_payload(payload: dict[str, Any], *, sub_domain: str) -> dict[str, Any]:
-    results = payload.get("results")
-    if not isinstance(results, list):
-        return {}
-
-    aliases = _RAW_MASSIVE_STATEMENT_ALIASES_BY_SUBDOMAIN.get(sub_domain, {})
-    rows = []
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-        report_date = _parse_payload_date(
-            item.get("period_end") or item.get("period_of_report_date") or item.get("date") or item.get("report_period")
-        )
-        if report_date is None:
-            continue
-        section = _extract_raw_massive_statement_section(sub_domain, item)
-        timeframe = _infer_raw_massive_statement_timeframe(item)
-        row: dict[str, Any] = {
-            "date": report_date.date().isoformat(),
-            "timeframe": timeframe,
-        }
-        has_metric = False
-        for column, candidates in aliases.items():
-            value = _try_parse_float(_get_first_value(section, candidates))
-            row[column] = value
-            if value is not None:
-                has_metric = True
-        if has_metric:
-            rows.append(row)
-
-    return {
-        "schema_version": 2,
-        "provider": "massive",
-        "report_type": sub_domain,
-        "rows": rows,
-    }
-
-
-def _canonicalize_raw_massive_valuation_payload(payload: dict[str, Any], *, sub_domain: str) -> dict[str, Any]:
-    results = payload.get("results")
-    candidates = results if isinstance(results, list) else [payload]
-
-    latest_row: Optional[dict[str, Any]] = None
-    latest_date: Optional[pd.Timestamp] = None
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        as_of = _parse_payload_date(item.get("date") or item.get("as_of"))
-        if as_of is None:
-            continue
-        if latest_date is None or as_of > latest_date:
-            latest_date = as_of
-            latest_row = item
-
-    latest_row = latest_row or {}
-    return {
-        "schema_version": 2,
-        "provider": "massive",
-        "report_type": sub_domain,
-        "as_of": latest_date.date().isoformat() if latest_date is not None else None,
-        "market_cap": _try_parse_float(_get_first_value(latest_row, _RAW_MASSIVE_VALUATION_ALIASES["market_cap"])),
-        "pe_ratio": _try_parse_float(_get_first_value(latest_row, _RAW_MASSIVE_VALUATION_ALIASES["pe_ratio"])),
-    }
-
-
-def _canonicalize_finance_payload(payload: dict[str, Any], *, sub_domain: str) -> dict[str, Any]:
-    if payload.get("schema_version") == 2 and str(payload.get("provider") or "").strip().lower() == "massive":
-        return payload
-    if sub_domain == "valuation":
-        return _canonicalize_raw_massive_valuation_payload(payload, sub_domain=sub_domain)
-    return _canonicalize_raw_massive_statement_payload(payload, sub_domain=sub_domain)
-
-
 def _load_close_prices(ticker: str) -> pd.DataFrame:
     symbol = str(ticker or "").strip().upper()
     if not symbol:
@@ -455,7 +278,7 @@ def _load_close_prices(ticker: str) -> pd.DataFrame:
 
     out = df[["date", "close"]].copy()
     out = out.rename(columns={"date": "Date", "close": "Close"})
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out["Date"] = coerce_to_naive_datetime(out["Date"])
     out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
     out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
     return out
@@ -466,7 +289,7 @@ def _build_valuation_timeseries(payload: dict[str, Any], *, ticker: str) -> pd.D
     if df_prices.empty:
         return pd.DataFrame()
 
-    as_of = pd.to_datetime(payload.get("as_of"), errors="coerce", utc=True)
+    as_of = pd.to_datetime(payload.get("as_of"), errors="coerce", utc=True, format="mixed")
     if pd.isna(as_of):
         return pd.DataFrame()
     as_of = as_of.tz_convert(None)
@@ -494,7 +317,7 @@ def _build_valuation_timeseries(payload: dict[str, Any], *, ticker: str) -> pd.D
         if column not in out.columns:
             out[column] = pd.Series(dtype="float64")
 
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out["Date"] = coerce_to_naive_datetime(out["Date"])
     out = out.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
     return out[["Date", "Symbol", *expected_columns]]
 
@@ -512,9 +335,6 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
 
     if not isinstance(payload, dict):
         raise ValueError(f"Finance payload for {ticker}/{sub_domain} must be a JSON object.")
-    if "quarterlyReports" in payload or "annualReports" in payload or "fiscalDateEnding" in payload:
-        raise ValueError(f"Alpha Vantage finance payload is not supported for {ticker}/{sub_domain}.")
-    payload = _canonicalize_finance_payload(payload, sub_domain=sub_domain)
     if payload.get("schema_version") != 2 or str(payload.get("provider") or "").strip().lower() != "massive":
         raise ValueError(f"Unsupported finance payload schema for {ticker}/{sub_domain}.")
     payload_report_type = str(payload.get("report_type") or "").strip().lower()
@@ -561,7 +381,7 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
                 df[column] = pd.Series(dtype="string")
             else:
                 df[column] = pd.Series(dtype="float64")
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    df["Date"] = coerce_to_naive_datetime(df["Date"])
     df = df.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
     return df[["Date", "Symbol", *expected_columns[2:]]]
 
@@ -578,7 +398,7 @@ def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] 
         return df
 
     df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    df["Date"] = coerce_to_naive_datetime(df["Date"])
     df = df.dropna(subset=["Date"])
     if df.empty:
         return df
@@ -668,7 +488,7 @@ def _split_finance_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str
     if "symbol" not in out.columns and "Symbol" in out.columns:
         out = out.rename(columns={"Symbol": "symbol"})
     if "date" in out.columns:
-        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out["date"] = coerce_to_naive_datetime(out["date"])
     if "symbol" not in out.columns:
         out["symbol"] = pd.NA
     out["symbol"] = out["symbol"].astype("string").str.upper()
@@ -757,7 +577,7 @@ def _write_alpha26_finance_silver_buckets(
             df_bucket = pd.concat(parts, ignore_index=True)
             if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
                 df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
-                df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")
+                df_bucket["date"] = coerce_to_naive_datetime(df_bucket["date"])
                 df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
                 df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
                     subset=["symbol", "date"], keep="last"
@@ -1126,7 +946,7 @@ def _process_finance_frame(
     df_clean = normalize_columns_to_snake_case(df_clean)
     df_clean = _repair_symbol_column_aliases(df_clean, ticker=ticker)
     if "date" in df_clean.columns:
-        df_clean["date"] = pd.to_datetime(df_clean["date"], errors="coerce")
+        df_clean["date"] = coerce_to_naive_datetime(df_clean["date"])
     if "symbol" in df_clean.columns:
         df_clean["symbol"] = df_clean["symbol"].astype("string").str.upper()
         df_clean = df_clean.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last")
@@ -1153,7 +973,7 @@ def _process_finance_frame(
         df_other_symbols = normalize_columns_to_snake_case(df_other_symbols)
         df_other_symbols = _repair_symbol_column_aliases(df_other_symbols, ticker=ticker)
         if "date" in df_other_symbols.columns:
-            df_other_symbols["date"] = pd.to_datetime(df_other_symbols["date"], errors="coerce")
+            df_other_symbols["date"] = coerce_to_naive_datetime(df_other_symbols["date"])
         if "symbol" in df_other_symbols.columns:
             df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
         df_bucket_to_store = pd.concat([df_other_symbols, df_clean], ignore_index=True)
@@ -1623,19 +1443,20 @@ if __name__ == "__main__":
 
     job_name = "silver-finance-job"
     shared_lock_name = (os.environ.get("FINANCE_PIPELINE_SHARED_LOCK_NAME") or _DEFAULT_FINANCE_SHARED_LOCK).strip()
-    shared_wait_timeout = _parse_wait_timeout_seconds(
+    shared_wait_timeout = parse_wait_timeout_seconds(
         os.environ.get("SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS"),
         default=_DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS,
     )
     with mdc.JobLock(shared_lock_name, conflict_policy="wait_then_fail", wait_timeout_seconds=shared_wait_timeout):
-        ensure_api_awake_from_env(required=True)
-        raise SystemExit(
-            run_logged_job(
-                job_name=job_name,
-                run=main,
-                on_success=(
-                    lambda: write_system_health_marker(layer="silver", domain="finance", job_name=job_name),
-                    trigger_next_job_from_env,
-                ),
+        with mdc.JobLock(job_name, conflict_policy="fail"):
+            ensure_api_awake_from_env(required=True)
+            raise SystemExit(
+                run_logged_job(
+                    job_name=job_name,
+                    run=main,
+                    on_success=(
+                        lambda: write_system_health_marker(layer="silver", domain="finance", job_name=job_name),
+                        trigger_next_job_from_env,
+                    ),
+                )
             )
-        )

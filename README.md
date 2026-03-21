@@ -84,6 +84,11 @@ python3 scripts/dependency_governance.py check --report artifacts/dependency_gov
 - System health surfaces live under `/api/system/health`, `/healthz`, `/readyz`, and `/api/ws/updates`.
 - `/config.js` publishes concrete auth capabilities and API base URLs that the frontend reads at runtime.
 
+## Batch Job Contract
+
+- Stateful medallion jobs should acquire a single-instance `JobLock`, wake API dependencies before execution, run inside `run_logged_job`, publish bucket and domain artifacts after writes, complete reconciliation before final watermark persistence, and only then cross the downstream trigger boundary.
+- Metadata snapshot freshness depends on the shared domain artifact publisher. Jobs that mutate operator-facing metadata should not write raw domain JSON directly.
+
 ## Current API Scope
 
 The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies`, `providers/alpha-vantage`, and `providers/massive`. Treat `/api/docs` and `/api/openapi.json` as the authoritative route map.

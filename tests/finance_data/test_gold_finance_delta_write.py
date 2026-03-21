@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+from core import core as core_module
 from core import delta_core
 from core.pipeline import DataPaths
 from tasks.finance_data import gold_finance_data
@@ -300,7 +301,7 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
     assert captured["df"].loc[0, "pe_ratio"] == 20.0
 
 
-def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(monkeypatch):
+def test_run_alpha26_finance_gold_preflight_blocks_missing_required_inputs(monkeypatch):
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
     index_calls = {"count": 0}
     monkeypatch.setattr(
@@ -336,7 +337,7 @@ def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(m
             "Total Assets": [1_000.0],
             "Current Assets": [500.0],
             "Current Liabilities": [250.0],
-            # Intentionally omit Shares Outstanding to force non-recoverable drift.
+            # Intentionally omit Shares Outstanding so preflight fails on missing inputs.
         }
     )
     cashflow_df = pd.DataFrame(
@@ -394,3 +395,85 @@ def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(m
     assert index_path is None
     assert compute_calls["count"] == 0
     assert index_calls["count"] == 0
+
+
+def test_main_runs_finance_reconciliation_and_persists_watermarks(monkeypatch: pytest.MonkeyPatch) -> None:
+    reconciliation_calls: list[dict[str, str]] = []
+    saved_watermarks: list[tuple[tuple, dict]] = []
+
+    monkeypatch.setattr(core_module, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(gold_finance_data.layer_bucketing, "gold_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(gold_finance_data, "get_backfill_range", lambda: (None, None))
+    monkeypatch.setattr(gold_finance_data, "load_watermarks", lambda _name: {"bucket::A": {"silver_last_commit": 1}})
+    monkeypatch.setattr(
+        gold_finance_data,
+        "_build_job_config",
+        lambda: gold_finance_data.FeatureJobConfig(
+            silver_container="silver",
+            gold_container="gold",
+        ),
+    )
+    monkeypatch.setattr(
+        gold_finance_data,
+        "_run_alpha26_finance_gold",
+        lambda **_kwargs: (1, 0, 0, 0, True, 1, "system/gold-index/finance/latest.parquet"),
+    )
+
+    def _run_reconciliation(*, silver_container: str, gold_container: str):
+        reconciliation_calls.append(
+            {
+                "silver_container": silver_container,
+                "gold_container": gold_container,
+            }
+        )
+        return 4, 5
+
+    monkeypatch.setattr(gold_finance_data, "_run_finance_reconciliation", _run_reconciliation)
+    monkeypatch.setattr(
+        gold_finance_data,
+        "save_watermarks",
+        lambda *args, **kwargs: saved_watermarks.append((args, kwargs)),
+    )
+    monkeypatch.setattr(core_module, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(core_module, "write_error", lambda *_args, **_kwargs: None)
+
+    assert gold_finance_data.main() == 0
+    assert reconciliation_calls == [{"silver_container": "silver", "gold_container": "gold"}]
+    assert len(saved_watermarks) == 1
+
+
+def test_main_fails_closed_when_finance_reconciliation_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    save_watermarks_calls = {"count": 0}
+
+    monkeypatch.setattr(core_module, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(gold_finance_data.layer_bucketing, "gold_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(gold_finance_data, "get_backfill_range", lambda: (None, None))
+    monkeypatch.setattr(gold_finance_data, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(
+        gold_finance_data,
+        "_build_job_config",
+        lambda: gold_finance_data.FeatureJobConfig(
+            silver_container="silver",
+            gold_container="gold",
+        ),
+    )
+    monkeypatch.setattr(
+        gold_finance_data,
+        "_run_alpha26_finance_gold",
+        lambda **_kwargs: (1, 0, 0, 0, True, 1, "system/gold-index/finance/latest.parquet"),
+    )
+    monkeypatch.setattr(
+        gold_finance_data,
+        "_run_finance_reconciliation",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("reconciliation boom")),
+    )
+    monkeypatch.setattr(
+        gold_finance_data,
+        "save_watermarks",
+        lambda *_args, **_kwargs: save_watermarks_calls.__setitem__("count", save_watermarks_calls["count"] + 1),
+    )
+    monkeypatch.setattr(core_module, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(core_module, "write_error", lambda *_args, **_kwargs: None)
+
+    assert gold_finance_data.main() == 1
+    assert save_watermarks_calls["count"] == 0

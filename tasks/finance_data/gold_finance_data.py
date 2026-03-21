@@ -10,7 +10,7 @@ import pandas as pd
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.delta_write_policy import prepare_delta_write_frame
-from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common.silver_contracts import coerce_to_naive_datetime, normalize_columns_to_snake_case
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.finance_contracts import SILVER_FINANCE_SUBDOMAINS
@@ -43,18 +43,6 @@ class BucketExecutionResult:
 
 
 _NUMBER_RE = re.compile(r"^\s*([-+]?\d*\.?\d+)\s*([kKmMbBtT])?\s*$")
-_FREE_CASH_FLOW_DERIVATION_LABEL = (
-    "free_cash_flow missing in source; derivable via operating_cash_flow - abs(capital_expenditures)"
-)
-_TOTAL_DEBT_DERIVATION_LABEL = (
-    "total_debt missing in source; derivable via short_long_term_debt_total or long_term_debt + short_term/current_debt"
-)
-_CASH_AND_EQUIVALENTS_DERIVATION_LABEL = (
-    "cash_and_equivalents missing in source; derivable via cash_and_cash_equivalents_at_carrying_value or cash_and_short_term_investments"
-)
-_EV_EBITDA_DERIVATION_LABEL = (
-    "ev_ebitda missing in source; derivable via enterprise_value/ebitda or ev_revenue*revenue/ebitda"
-)
 _REQUIRED_FEATURE_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
     "revenue": ("total_revenue", "Total Revenue", "Revenue"),
     "gross_profit": ("gross_profit", "Gross Profit"),
@@ -86,26 +74,6 @@ _REQUIRED_FEATURE_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
         "Share Issued",
     ),
 }
-_CAPITAL_EXPENDITURES_ALIASES: Tuple[str, ...] = (
-    "Capital Expenditures",
-    "Capital Expenditure",
-)
-_TOTAL_DEBT_FALLBACK_ALIASES: Tuple[str, ...] = (
-    "Short Long Term Debt Total",
-    "Short/Long Term Debt Total",
-    "Short Long Term Debt",
-)
-_SHORT_TERM_DEBT_ALIASES: Tuple[str, ...] = (
-    "Short Term Debt",
-    "Current Debt",
-    "Current Long Term Debt",
-)
-_CASH_AND_EQUIVALENTS_FALLBACK_ALIASES: Tuple[str, ...] = (
-    "Cash And Cash Equivalents At Carrying Value",
-    "Cash and Cash Equivalents at Carrying Value",
-    "Cash And Short Term Investments",
-    "Cash and Short Term Investments",
-)
 _OPTIONAL_OUTPUT_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
     "market_cap": ("market_cap", "Market Cap", "MarketCapitalization"),
     "pe_ratio": ("pe_ratio", "PE Ratio", "P/E", "PERatio"),
@@ -136,86 +104,12 @@ _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS: Tuple[str, ...] = tuple(
 )
 
 
-def _coerce_datetime(series: pd.Series) -> pd.Series:
-    value = pd.to_datetime(series, errors="coerce", format="%m/%d/%Y")
-    if hasattr(value.dt, "tz_convert") and value.dt.tz is not None:
-        value = value.dt.tz_convert(None)
-    return value
-
-
 def _safe_div(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     return numerator.where(denominator != 0).divide(denominator.where(denominator != 0))
 
 
 def _normalize_column_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(name).strip().lower())
-
-
-_SNAKE_CASE_CAMEL_1 = re.compile(r"(.)([A-Z][a-z]+)")
-_SNAKE_CASE_CAMEL_2 = re.compile(r"([a-z0-9])([A-Z])")
-
-
-def _to_snake_case(value: Any) -> str:
-    text = str(value).strip()
-    if not text:
-        return "col"
-
-    text = _SNAKE_CASE_CAMEL_1.sub(r"\1_\2", text)
-    text = _SNAKE_CASE_CAMEL_2.sub(r"\1_\2", text)
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", text)
-    text = re.sub(r"_+", "_", text).strip("_").lower()
-    return text or "col"
-
-
-def _snake_case_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    names = [_to_snake_case(col) for col in out.columns]
-
-    seen: Dict[str, int] = {}
-    unique: List[str] = []
-    for name in names:
-        count = seen.get(name, 0) + 1
-        seen[name] = count
-        unique.append(name if count == 1 else f"{name}_{count}")
-
-    out.columns = unique
-    return out
- 
- 
-def _rolling_slope(series: pd.Series, window: int) -> pd.Series:
-    """
-    Computes the slope of a linear regression over a rolling window.
-    X is assumed to be `range(window)`.
-    Slope formula: (N * sum(xy) - sum(x) * sum(y)) / (N * sum(x^2) - (sum(x))^2)
-    with x = 0, 1, ..., N-1.
-    """
-    if len(series) < window:
-        return pd.Series(np.nan, index=series.index)
- 
-    # Pre-calculated constants for x = 0, 1, ..., window-1
-    n = window
-    sum_x = (n * (n - 1)) // 2
-    sum_xx = (n * (n - 1) * (2 * n - 1)) // 6
-    denom = n * sum_xx - sum_x * sum_x
-    
-    # sum_xy is a bit trickier with rolling(). Warning: O(N*W) if done naively.
-    # Convolution approach: convolve series with [0, 1, ..., window-1]
-    # Pandas rolling doesn't support weighted sum directly easily without apply (slow).
-    # Optimization: sum_xy[t] = sum_xy[t-1] - sum_y[t-1] + y[t]*(window-1) + dropped_y * 0 ? No.
-    # Let's use stride_tricks or just apply for now as these datasets aren't huge (quarterly data).
-    # Since it's quarterly data, standard apply with numpy polyfit(deg=1) might be fast enough.
-    
-    def slope_1d(y_window):
-        if np.isnan(y_window).any():
-            return np.nan
-        # x is 0..window-1
-        # slope = (N*sum(xy) - sum(x)sum(y)) / denom
-        x = np.arange(window)
-        sum_xy = np.dot(x, y_window)
-        s_y = y_window.sum()
-        return (n * sum_xy - sum_x * s_y) / denom
-
-    return series.rolling(window=window, min_periods=window).apply(slope_1d, raw=True)
 
 
 
@@ -248,154 +142,13 @@ def _require_column(df: pd.DataFrame, *, label: str, candidates: Sequence[str]) 
 def _build_missing_source_column_message(
     label: str,
     candidates: Sequence[str],
-    *,
-    derivation_inputs: Optional[str] = None,
 ) -> str:
-    message = f"Missing required source column for {label}; accepted aliases={list(candidates)}"
-    if derivation_inputs:
-        message = f"{message} or derivation inputs {derivation_inputs}"
-    return message
+    return f"Missing required source column for {label}; accepted aliases={list(candidates)}"
 
 
 def _append_unique(values: List[str], item: str) -> None:
     if item not in values:
         values.append(item)
-
-
-def _derive_free_cash_flow_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
-    """
-    Return the free-cash-flow column name, deriving it when absent.
-
-    Derivation follows the common finance convention:
-    free_cash_flow = operating_cash_flow - capex_outflow
-    where capex_outflow is treated as an absolute outflow amount to handle both
-    positive and negative source sign conventions.
-    """
-    free_cash_flow_col = _resolve_column(
-        out, _REQUIRED_FEATURE_COLUMN_ALIASES["free_cash_flow"]
-    )
-    if free_cash_flow_col:
-        return free_cash_flow_col, False
-
-    operating_cash_flow_col = _resolve_column(
-        out, _REQUIRED_FEATURE_COLUMN_ALIASES["operating_cash_flow"]
-    )
-    capital_expenditures_col = _resolve_column(out, _CAPITAL_EXPENDITURES_ALIASES)
-    if not operating_cash_flow_col or not capital_expenditures_col:
-        raise ValueError(
-            _build_missing_source_column_message(
-                "free_cash_flow",
-                _REQUIRED_FEATURE_COLUMN_ALIASES["free_cash_flow"],
-                derivation_inputs=(
-                    f"operating_cash_flow aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['operating_cash_flow'])} "
-                    f"+ capital_expenditures aliases={list(_CAPITAL_EXPENDITURES_ALIASES)}"
-                ),
-            )
-        )
-
-    operating_cash_flow = _coerce_numeric(out[operating_cash_flow_col])
-    capital_expenditures = _coerce_numeric(out[capital_expenditures_col]).abs()
-    out["free_cash_flow"] = operating_cash_flow - capital_expenditures
-    return "free_cash_flow", True
-
-
-def _derive_total_debt_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
-    total_debt_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["total_debt"])
-    if total_debt_col:
-        return total_debt_col, False
-
-    total_debt_fallback_col = _resolve_column(out, _TOTAL_DEBT_FALLBACK_ALIASES)
-    if total_debt_fallback_col:
-        out["total_debt"] = _coerce_numeric(out[total_debt_fallback_col])
-        return "total_debt", True
-
-    long_term_debt_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["long_term_debt"])
-    short_term_debt_col = _resolve_column(out, _SHORT_TERM_DEBT_ALIASES)
-    if long_term_debt_col and short_term_debt_col:
-        long_term_debt = _coerce_numeric(out[long_term_debt_col])
-        short_term_debt = _coerce_numeric(out[short_term_debt_col])
-        out["total_debt"] = long_term_debt.add(short_term_debt, fill_value=0.0)
-        return "total_debt", True
-
-    raise ValueError(
-        _build_missing_source_column_message(
-            "total_debt",
-            _REQUIRED_FEATURE_COLUMN_ALIASES["total_debt"],
-            derivation_inputs=(
-                f"short_long_term_debt_total aliases={list(_TOTAL_DEBT_FALLBACK_ALIASES)} "
-                f"or long_term_debt aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['long_term_debt'])} "
-                f"+ short_term_debt aliases={list(_SHORT_TERM_DEBT_ALIASES)}"
-            ),
-        )
-    )
-
-
-def _derive_cash_and_equivalents_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
-    cash_and_equivalents_col = _resolve_column(
-        out, _REQUIRED_FEATURE_COLUMN_ALIASES["cash_and_equivalents"]
-    )
-    if cash_and_equivalents_col:
-        return cash_and_equivalents_col, False
-
-    fallback_col = _resolve_column(out, _CASH_AND_EQUIVALENTS_FALLBACK_ALIASES)
-    if fallback_col:
-        out["cash_and_equivalents"] = _coerce_numeric(out[fallback_col])
-        return "cash_and_equivalents", True
-
-    raise ValueError(
-        _build_missing_source_column_message(
-            "cash_and_equivalents",
-            _REQUIRED_FEATURE_COLUMN_ALIASES["cash_and_equivalents"],
-            derivation_inputs=f"fallback aliases={list(_CASH_AND_EQUIVALENTS_FALLBACK_ALIASES)}",
-        )
-    )
-
-
-def _derive_ev_ebitda_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
-    ev_ebitda_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["ev_ebitda"])
-    if ev_ebitda_col:
-        return ev_ebitda_col, False
-
-    market_cap_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["market_cap"])
-    ebitda_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["ebitda"])
-    if market_cap_col and ebitda_col:
-        try:
-            total_debt_col, _ = _derive_total_debt_if_missing(out)
-            cash_and_equivalents_col, _ = _derive_cash_and_equivalents_if_missing(out)
-            market_cap = _coerce_numeric(out[market_cap_col])
-            total_debt = _coerce_numeric(out[total_debt_col])
-            cash_and_equivalents = _coerce_numeric(out[cash_and_equivalents_col])
-            ebitda = _coerce_numeric(out[ebitda_col])
-            enterprise_value = market_cap + total_debt - cash_and_equivalents
-            out["ev_ebitda"] = _safe_div(enterprise_value, ebitda)
-            return "ev_ebitda", True
-        except ValueError:
-            pass
-
-    ev_revenue_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["ev_revenue"])
-    revenue_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["revenue"])
-    if ev_revenue_col and revenue_col and ebitda_col:
-        ev_revenue = _coerce_numeric(out[ev_revenue_col])
-        revenue = _coerce_numeric(out[revenue_col])
-        ebitda = _coerce_numeric(out[ebitda_col])
-        out["ev_ebitda"] = _safe_div(ev_revenue * revenue, ebitda)
-        return "ev_ebitda", True
-
-    raise ValueError(
-        _build_missing_source_column_message(
-            "ev_ebitda",
-            _REQUIRED_FEATURE_COLUMN_ALIASES["ev_ebitda"],
-            derivation_inputs=(
-                f"(market_cap aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['market_cap'])} "
-                f"+ total_debt aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['total_debt'])} "
-                f"- cash_and_equivalents aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['cash_and_equivalents'])}) "
-                f"/ ebitda aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['ebitda'])} "
-                f"or ev_revenue aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['ev_revenue'])} "
-                f"* revenue aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['revenue'])} / "
-                f"ebitda aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['ebitda'])}"
-            ),
-        )
-    )
 
 
 def _parse_human_number(value: Any) -> float:
@@ -449,12 +202,12 @@ def _prepare_table(df: Optional[pd.DataFrame], ticker: str, *, source_label: str
     if df is None or df.empty:
         raise ValueError(f"Missing required Silver source table for {source_label} ({ticker}).")
 
-    out = _snake_case_columns(df)
+    out = normalize_columns_to_snake_case(df)
 
     if "date" not in out.columns:
         raise ValueError(f"Required date column missing in {source_label} for {ticker}.")
 
-    out["date"] = _coerce_datetime(out["date"])
+    out["date"] = coerce_to_naive_datetime(out["date"])
     out = out.dropna(subset=["date"]).copy()
     if out.empty:
         raise ValueError(f"No valid dated rows in {source_label} for {ticker}.")
@@ -472,7 +225,7 @@ def _prepare_optional_table(df: Optional[pd.DataFrame], ticker: str, *, source_l
 
 
 def _preflight_feature_schema(df: pd.DataFrame) -> Dict[str, Any]:
-    out = _snake_case_columns(df)
+    out = normalize_columns_to_snake_case(df)
     missing_requirements: List[str] = []
 
     for label, candidates in _REQUIRED_FEATURE_COLUMN_ALIASES.items():
@@ -484,19 +237,18 @@ def _preflight_feature_schema(df: pd.DataFrame) -> Dict[str, Any]:
 
     return {
         "missing_requirements": missing_requirements,
-        "recoverable_drift": [],
         "available_columns": sorted(str(col) for col in out.columns),
     }
 
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
-    out = _snake_case_columns(df)
+    out = normalize_columns_to_snake_case(df)
     required = {"date", "symbol"}
     missing = required.difference(out.columns)
     if missing:
         raise ValueError(f"Missing required columns: {sorted(missing)}")
 
-    out["date"] = _coerce_datetime(out["date"])
+    out["date"] = coerce_to_naive_datetime(out["date"])
     out = out.dropna(subset=["date"]).sort_values(["symbol", "date"]).reset_index(drop=True)
     out = out.drop_duplicates(subset=["symbol", "date"], keep="last").reset_index(drop=True)
 
@@ -669,10 +421,7 @@ def _project_gold_finance_piotroski_frame(df: pd.DataFrame) -> pd.DataFrame:
     projected = pd.DataFrame(index=out.index)
 
     if "date" in out.columns:
-        date_series = pd.to_datetime(out["date"], errors="coerce")
-        if hasattr(date_series.dtype, "tz") and date_series.dtype.tz is not None:
-            date_series = date_series.dt.tz_convert(None)
-        projected["date"] = date_series
+        projected["date"] = coerce_to_naive_datetime(out["date"])
     else:
         projected["date"] = pd.Series([pd.NaT] * len(out), dtype="datetime64[ns]")
 
@@ -933,8 +682,6 @@ def _run_alpha26_finance_gold(
                 )
 
             symbol_frames: list[pd.DataFrame] = []
-            recoverable_schema_drift = 0
-            recoverable_schema_drift_samples: list[str] = []
             for ticker in sorted(symbol_candidates):
                 try:
                     df_income = _prepare_table(
@@ -991,10 +738,6 @@ def _run_alpha26_finance_gold(
                         f"available_columns={preflight['available_columns']}"
                     )
                     continue
-                if preflight["recoverable_drift"]:
-                    recoverable_schema_drift += 1
-                    if len(recoverable_schema_drift_samples) < 5:
-                        recoverable_schema_drift_samples.append(ticker)
 
                 try:
                     df_features = compute_features(merged)
@@ -1012,13 +755,6 @@ def _run_alpha26_finance_gold(
                     failed += 1
                     bucket_symbol_failures += 1
                     mdc.write_warning(f"Gold finance alpha26 compute failed for {ticker}: {exc}")
-
-            if recoverable_schema_drift > 0:
-                mdc.write_line(
-                    "Gold finance alpha26 schema drift recovered via preflight fallback: "
-                    f"bucket={bucket} count={recoverable_schema_drift} "
-                    f"sample_tickers={recoverable_schema_drift_samples}"
-                )
 
             if symbol_frames:
                 df_gold_bucket = _project_gold_finance_piotroski_frame(
@@ -1254,29 +990,49 @@ def main() -> int:
         backfill_start_iso=backfill_start_iso,
         watermarks=watermarks,
     )
-    if watermarks_dirty:
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    if failed == 0:
+        try:
+            reconciliation_orphans, reconciliation_deleted_blobs = _run_finance_reconciliation(
+                silver_container=job_cfg.silver_container,
+                gold_container=job_cfg.gold_container,
+            )
+        except Exception as exc:
+            reconciliation_failed = 1
+            mdc.write_error(f"Gold finance reconciliation failed: {exc}")
+            mdc.write_line(
+                "reconciliation_result layer=gold domain=finance "
+                "status=failed orphan_count=unknown deleted_blobs=unknown cutoff_rows_dropped=unknown"
+            )
+    if watermarks_dirty and reconciliation_failed == 0:
         save_watermarks("gold_finance_features", watermarks)
-    total_failed = failed
+    total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Gold finance alpha26 complete: "
         f"processed_buckets={processed} skipped_unchanged={skipped_unchanged} "
         f"skipped_missing_source={skipped_missing_source} symbols={alpha26_symbols} "
-        f"index_path={alpha26_index_path or 'unavailable'} failed={total_failed}"
+        f"index_path={alpha26_index_path or 'unavailable'} reconciled_orphans={reconciliation_orphans} "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} failed={total_failed}"
     )
     return 0 if total_failed == 0 else 1
 
 
 if __name__ == "__main__":
+    from core import core as mdc
     from tasks.common.job_entrypoint import run_logged_job
     from tasks.common.job_trigger import ensure_api_awake_from_env
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "gold-finance-job"
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=job_name,
-            run=main,
-            on_success=(lambda: write_system_health_marker(layer="gold", domain="finance", job_name=job_name),),
+
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(lambda: write_system_health_marker(layer="gold", domain="finance", job_name=job_name),),
+            )
         )
-    )

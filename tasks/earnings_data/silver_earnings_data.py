@@ -837,14 +837,15 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-earnings-job"
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=job_name,
-            run=main,
-            on_success=(
-                lambda: write_system_health_marker(layer="silver", domain="earnings", job_name=job_name),
-                trigger_next_job_from_env,
-            ),
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(
+                    lambda: write_system_health_marker(layer="silver", domain="earnings", job_name=job_name),
+                    trigger_next_job_from_env,
+                ),
+            )
         )
-    )

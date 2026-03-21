@@ -103,9 +103,6 @@ def _split_price_target_bucket_rows(
     symbol_mask = out["symbol"] == symbol
     return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
 
-def _extract_ticker(blob_name: str) -> str:
-    return blob_name.replace("price-target-data/", "").replace(".parquet", "")
-
 
 def _parse_alpha26_bucket_from_blob_name(blob_name: str) -> Optional[str]:
     return bronze_bucketing.parse_bucket_from_blob_name(blob_name, expected_prefix="price-target-data")
@@ -319,48 +316,6 @@ def _process_symbol_frame(
     if persist:
         mdc.write_line(f"Updated Silver {ticker}")
     return "ok"
-
-
-def process_blob(
-    blob,
-    *,
-    watermarks: dict,
-    include_history: bool = True,
-    persist: bool = True,
-    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
-) -> str:
-    blob_name = blob["name"]  # price-target-data/{symbol}.parquet
-    watermark_key = normalize_watermark_blob_name(blob_name)
-    if not blob_name.endswith(".parquet"):
-        return "skipped_non_parquet"
-
-    ticker = blob_name.replace("price-target-data/", "").replace(".parquet", "")
-    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
-        return "skipped_debug_symbols"
-
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(watermark_key))
-    if unchanged:
-        return "skipped_unchanged"
-
-    mdc.write_line(f"Processing {ticker}...")
-    try:
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_new = pd.read_parquet(BytesIO(raw_bytes))
-        status = _process_symbol_frame(
-            ticker=ticker,
-            df_new=df_new,
-            source_name=blob_name,
-            include_history=include_history,
-            persist=persist,
-            alpha26_bucket_frames=alpha26_bucket_frames,
-        )
-        if status == "ok" and signature:
-            signature["updated_at"] = _utc_now_iso()
-            watermarks[watermark_key] = signature
-        return status
-    except Exception as exc:
-        mdc.write_error(f"Failed to process {ticker}: {exc}")
-        return "failed"
 
 
 def process_alpha26_bucket_blob(
@@ -719,6 +674,18 @@ def main():
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
     reconciliation_failed = 0
+    if failed == 0:
+        try:
+            reconciliation_orphans, reconciliation_deleted_blobs = _run_price_target_reconciliation(
+                bronze_blob_list=blob_list
+            )
+        except Exception as exc:
+            reconciliation_failed = 1
+            mdc.write_error(f"Silver price-target reconciliation failed: {exc}")
+            mdc.write_line(
+                "reconciliation_result layer=silver domain=price-target "
+                "status=failed orphan_count=unknown deleted_blobs=unknown cutoff_rows_dropped=unknown"
+            )
 
     total_failed = failed + reconciliation_failed
     mdc.write_line(
@@ -758,14 +725,15 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-price-target-job"
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=job_name,
-            run=main,
-            on_success=(
-                lambda: write_system_health_marker(layer="silver", domain="price-target", job_name=job_name),
-                trigger_next_job_from_env,
-            ),
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(
+                    lambda: write_system_health_marker(layer="silver", domain="price-target", job_name=job_name),
+                    trigger_next_job_from_env,
+                ),
+            )
         )
-    )

@@ -297,6 +297,7 @@ def _write_storage_outputs(
             "source": "artifact",
         }
     artifact_path = domain_artifacts.domain_artifact_path(layer="gold", domain="regime")
+    now = computed_at_iso()
     payload = {
         "version": 1,
         "scope": "domain",
@@ -304,8 +305,8 @@ def _write_storage_outputs(
         "domain": "regime",
         "rootPath": "regime",
         "artifactPath": artifact_path,
-        "updatedAt": computed_at_iso(),
-        "computedAt": computed_at_iso(),
+        "updatedAt": now,
+        "computedAt": now,
         "producerJobName": JOB_NAME,
         "symbolCount": 0,
         "columnCount": len(sorted(set(inputs.columns) | set(history.columns) | set(latest.columns) | set(transitions.columns))),
@@ -315,7 +316,7 @@ def _write_storage_outputs(
         "fileCount": 4,
         "warnings": [],
     }
-    mdc.save_json_content(payload, artifact_path, client=client)
+    domain_artifacts.publish_domain_artifact_payload(payload=payload, client=client)
 
 
 def computed_at_iso() -> str:
@@ -415,11 +416,13 @@ def main() -> int:
 if __name__ == "__main__":
     from tasks.common.job_entrypoint import run_logged_job
 
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=JOB_NAME,
-            run=main,
-            on_success=(lambda: write_system_health_marker(layer="gold", domain="regime", job_name=JOB_NAME),),
+    job_name = JOB_NAME
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(lambda: write_system_health_marker(layer="gold", domain="regime", job_name=job_name),),
+            )
         )
-    )
