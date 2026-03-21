@@ -47,37 +47,43 @@ def _stage_market_blob(
     return status, staged_frame
 
 
-def test_silver_processing(unique_ticker):
+def test_process_symbol_frame_stages_expected_market_row(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    
-    csv_content = b"Date,Open,High,Low,Close,Adj Close,Volume\n2023-01-01,100,105,95,102,102,1000"
-    
-    with patch('core.core.read_raw_bytes') as mock_read, \
-         patch('core.delta_core.store_delta') as mock_store_delta, \
-         patch('core.delta_core.load_delta') as mock_load_delta:
-         
-        mock_read.return_value = csv_content
-        
-        # Mock existing history (None)
-        mock_load_delta.return_value = None
-        
-        # Call
-        silver.process_file(blob_name)
-        
-        # Verify
-        mock_read.assert_called_with(blob_name, client=silver.bronze_client) 
-        
-        mock_store_delta.assert_called_once()
-        args, kwargs = mock_store_delta.call_args
-        df_saved = args[0]
-        container = args[1]
-        path = args[2]
-        
-        assert container == cfg.AZURE_CONTAINER_SILVER
-        assert path == DataPaths.get_silver_market_bucket_path(symbol[0])
-        assert len(df_saved) == 1
-        assert df_saved.iloc[0]["close"] == 102
+    source_name = f"market-data/{symbol}.csv"
+    bucket_frames: dict[str, list[pd.DataFrame]] = {}
+    df_new = pd.DataFrame(
+        [
+            {
+                "Date": "2023-01-01",
+                "Open": 100,
+                "High": 105,
+                "Low": 95,
+                "Close": 102,
+                "Adj Close": 102,
+                "Volume": 1000,
+            }
+        ]
+    )
+
+    with patch("tasks.market_data.silver_market_data.get_backfill_range", return_value=(None, None)), patch(
+        "tasks.market_data.silver_market_data.mdc.write_line",
+        lambda *_args, **_kwargs: None,
+    ):
+        status = silver._process_symbol_frame(
+            ticker=symbol,
+            df_new=df_new,
+            source_name=source_name,
+            alpha26_bucket_frames=bucket_frames,
+        )
+
+    assert status == "ok"
+    path = DataPaths.get_silver_market_bucket_path(symbol[0])
+    assert path == f"market-data/buckets/{symbol[0]}"
+    assert symbol[0] in bucket_frames
+    df_saved = pd.concat(bucket_frames[symbol[0]], ignore_index=True)
+    assert len(df_saved) == 1
+    assert df_saved.iloc[0]["symbol"] == symbol
+    assert df_saved.iloc[0]["close"] == 102
 
 
 def test_process_alpha26_bucket_blob_accepts_string_last_modified(monkeypatch):
@@ -96,7 +102,6 @@ def test_process_alpha26_bucket_blob_accepts_string_last_modified(monkeypatch):
     status = silver.process_alpha26_bucket_blob(
         blob,
         watermarks=watermarks,
-        persist=False,
         alpha26_bucket_frames={},
     )
 

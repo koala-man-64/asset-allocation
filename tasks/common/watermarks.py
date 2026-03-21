@@ -37,6 +37,23 @@ def _parse_iso(raw: Any) -> Optional[datetime]:
     return parse_utc_datetime(raw)
 
 
+def normalize_watermark_blob_name(blob_name: str) -> str:
+    text = str(blob_name or "").strip().strip("/")
+    if not text:
+        return ""
+
+    parts = text.split("/")
+    if len(parts) < 3 or parts[-2] != "buckets":
+        return text
+    if "runs" not in parts[:-2]:
+        return text
+
+    run_index = parts.index("runs")
+    if run_index <= 0 or run_index != len(parts) - 4:
+        return text
+    return "/".join([*parts[:run_index], "buckets", parts[-1]])
+
+
 def blob_last_modified_utc(blob: Dict[str, Any]) -> Optional[datetime]:
     return parse_utc_datetime(blob.get("last_modified"))
 
