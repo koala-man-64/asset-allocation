@@ -8,6 +8,11 @@ import { setAccessTokenProvider } from '@/services/authTransport';
 const POST_LOGIN_PATH_STORAGE_KEY = 'asset-allocation.post-login-path';
 const DEFAULT_POST_LOGIN_PATH = '/system-status';
 
+function describeAuthError(prefix: string, err: unknown): string {
+  const detail = err instanceof Error ? err.message.trim() : String(err ?? '').trim();
+  return detail ? `${prefix} ${detail}` : prefix;
+}
+
 export interface AuthContextType {
   enabled: boolean;
   ready: boolean;
@@ -67,7 +72,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const oidcScopes = config.oidcScopes;
   const oidcRedirectUri = config.oidcRedirectUri;
 
-  const enabled = config.oidcEnabled && Boolean(oidcClientId && oidcAuthority && oidcRedirectUri);
+  const enabled =
+    config.oidcEnabled &&
+    Boolean(oidcClientId && oidcAuthority && oidcRedirectUri && oidcScopes.length > 0);
 
   const msal = useMemo(() => {
     if (!enabled) return null;
@@ -84,12 +91,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [enabled, oidcAuthority, oidcClientId, oidcRedirectUri]);
 
+  const ensureMsalInitialized = useMemo(() => {
+    if (!msal) return null;
+    let initializationPromise: Promise<PublicClientApplication> | null = null;
+    return () => {
+      if (!initializationPromise) {
+        initializationPromise = msal.initialize().then(() => msal);
+      }
+      return initializationPromise;
+    };
+  }, [msal]);
+
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!msal) {
+    if (!ensureMsalInitialized) {
       setAccount(null);
       setError(null);
       setReady(true);
@@ -100,13 +118,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setReady(false);
     setError(null);
 
-    msal
-      .handleRedirectPromise()
-      .then((result: AuthenticationResult | null) => {
+    ensureMsalInitialized()
+      .then((instance) =>
+        instance
+          .handleRedirectPromise()
+          .then((result: AuthenticationResult | null) => ({ instance, result }))
+      )
+      .then(({ instance, result }) => {
         const chosen =
-          result?.account ?? msal.getActiveAccount() ?? msal.getAllAccounts()[0] ?? null;
+          result?.account ?? instance.getActiveAccount() ?? instance.getAllAccounts()[0] ?? null;
         if (chosen) {
-          msal.setActiveAccount(chosen);
+          instance.setActiveAccount(chosen);
         }
         if (!cancelled) {
           setAccount(chosen);
@@ -117,7 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('OIDC redirect handling failed', err);
         if (!cancelled) {
           setAccount(null);
-          setError('OIDC redirect handling failed.');
+          setError(describeAuthError('OIDC redirect handling failed.', err));
           setReady(true);
         }
       });
@@ -125,10 +147,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [msal]);
+  }, [ensureMsalInitialized]);
 
   useEffect(() => {
-    if (!msal) {
+    if (!ensureMsalInitialized) {
       setAccessTokenProvider(null);
       return;
     }
@@ -136,7 +158,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAccessTokenProvider(async () => {
       if (!account) return null;
       try {
-        const result = await msal.acquireTokenSilent({
+        const instance = await ensureMsalInitialized();
+        const result = await instance.acquireTokenSilent({
           account,
           scopes: oidcScopes
         });
@@ -153,17 +176,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setAccessTokenProvider(null);
     };
-  }, [msal, account, oidcScopes]);
+  }, [account, ensureMsalInitialized, oidcScopes]);
 
   const signIn = (returnPath?: string) => {
-    if (!msal) return;
+    if (!ensureMsalInitialized) return;
+    setError(null);
     storePostLoginRedirectPath(resolveReturnPath(returnPath));
-    void msal.loginRedirect({ scopes: oidcScopes });
+    void ensureMsalInitialized()
+      .then((instance) =>
+        instance.loginRedirect({
+          scopes: oidcScopes
+        })
+      )
+      .catch((err) => {
+        console.error('OIDC sign-in failed', err);
+        setError(describeAuthError('OIDC sign-in could not be started.', err));
+      });
   };
 
   const signOut = () => {
-    if (!msal) return;
-    void msal.logoutRedirect({ account: account ?? undefined });
+    if (!ensureMsalInitialized) return;
+    setError(null);
+    void ensureMsalInitialized()
+      .then((instance) => instance.logoutRedirect({ account: account ?? undefined }))
+      .catch((err) => {
+        console.error('OIDC sign-out failed', err);
+        setError(describeAuthError('OIDC sign-out could not be completed.', err));
+      });
   };
 
   const userLabel = account?.name || account?.username || null;

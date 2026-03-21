@@ -10,7 +10,7 @@ import { DataService } from '@/services/DataService';
 type AccessState = 'idle' | 'checking' | 'allowed' | 'forbidden' | 'error';
 
 const DEPLOYMENT_AUTH_MISCONFIGURED_BODY =
-  'This deployment requires browser OIDC before the UI can call protected API routes. Set UI_OIDC_CLIENT_ID, UI_OIDC_AUTHORITY, UI_OIDC_SCOPES, and UI_OIDC_REDIRECT_URI. API_KEY is not used by browser clients.';
+  'This deployment requires browser OIDC before the UI can call protected API routes. Set UI_OIDC_CLIENT_ID, UI_OIDC_AUTHORITY, UI_OIDC_SCOPES, and UI_OIDC_REDIRECT_URI. The deployed UI only supports OIDC.';
 
 function AuthPanel({
   title,
@@ -178,8 +178,11 @@ export function OidcAccessGate({ children }: { children: ReactNode }) {
     return (
       <AuthPanel
         title="Sign in required"
-        body="This deployment requires Microsoft Entra authentication before the UI can load protected API data."
-        actionLabel="Sign in"
+        body={
+          auth.error ||
+          'This deployment requires Microsoft Entra authentication before the UI can load protected API data.'
+        }
+        actionLabel={auth.error ? 'Try again' : 'Sign in'}
         onAction={() => auth.signIn(`${location.pathname}${location.search}${location.hash}`)}
       />
     );

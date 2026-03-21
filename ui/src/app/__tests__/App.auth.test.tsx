@@ -79,6 +79,17 @@ describe('App OIDC access flow', () => {
     expect(mockAuth.signIn).toHaveBeenCalledWith('/system-status');
   });
 
+  it('surfaces sign-in startup errors on the access gate', async () => {
+    mockAuth.error = 'OIDC sign-in could not be started. popup blocked';
+    window.history.pushState({}, 'System Status', '/system-status');
+
+    renderWithProviders(<App />);
+
+    expect(await screen.findByText('Sign in required')).toBeInTheDocument();
+    expect(screen.getByText(/popup blocked/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
   it('shows a deployment misconfiguration screen when auth is required but browser OIDC is unavailable', async () => {
     mockConfig.oidcEnabled = false;
     mockAuth.enabled = false;
