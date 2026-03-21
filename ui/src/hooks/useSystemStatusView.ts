@@ -15,9 +15,7 @@ export interface UseSystemStatusViewQueryOptions {
   autoRefresh?: boolean;
 }
 
-export function useSystemStatusViewQuery(
-  options: UseSystemStatusViewQueryOptions = {}
-) {
+export function useSystemStatusViewQuery(options: UseSystemStatusViewQueryOptions = {}) {
   const autoRefresh = options.autoRefresh ?? false;
   const jobOverrides = useSystemHealthJobOverrides();
   const query = useQuery<SystemStatusViewResponse>({

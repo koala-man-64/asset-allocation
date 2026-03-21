@@ -254,13 +254,16 @@ export const backtestApi = {
     params: GetTimeseriesParams = {},
     signal?: AbortSignal
   ): Promise<TimeseriesResponse> {
-    return apiRequest<TimeseriesResponse>(`/backtests/${encodeURIComponent(runId)}/metrics/timeseries`, {
-      params: {
-        source: params.source ?? 'auto',
-        max_points: params.maxPoints ?? 5000
-      },
-      signal
-    });
+    return apiRequest<TimeseriesResponse>(
+      `/backtests/${encodeURIComponent(runId)}/metrics/timeseries`,
+      {
+        params: {
+          source: params.source ?? 'auto',
+          max_points: params.maxPoints ?? 5000
+        },
+        signal
+      }
+    );
   },
 
   async getRolling(
@@ -268,14 +271,17 @@ export const backtestApi = {
     params: GetRollingParams = {},
     signal?: AbortSignal
   ): Promise<RollingMetricsResponse> {
-    return apiRequest<RollingMetricsResponse>(`/backtests/${encodeURIComponent(runId)}/metrics/rolling`, {
-      params: {
-        source: params.source ?? 'auto',
-        window_days: params.windowDays ?? 63,
-        max_points: params.maxPoints ?? 5000
-      },
-      signal
-    });
+    return apiRequest<RollingMetricsResponse>(
+      `/backtests/${encodeURIComponent(runId)}/metrics/rolling`,
+      {
+        params: {
+          source: params.source ?? 'auto',
+          window_days: params.windowDays ?? 63,
+          max_points: params.maxPoints ?? 5000
+        },
+        signal
+      }
+    );
   },
 
   async getTrades(

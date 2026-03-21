@@ -69,7 +69,10 @@ const apiBaseUrl = normalizeApiBaseUrl(
   runtimeConfig.apiBaseUrl || import.meta.env.VITE_API_BASE_URL,
   '/api'
 );
-const oidcAuthority = resolveString(runtimeConfig.oidcAuthority, import.meta.env.VITE_OIDC_AUTHORITY);
+const oidcAuthority = resolveString(
+  runtimeConfig.oidcAuthority,
+  import.meta.env.VITE_OIDC_AUTHORITY
+);
 const oidcClientId = resolveString(runtimeConfig.oidcClientId, import.meta.env.VITE_OIDC_CLIENT_ID);
 const oidcRedirectUri = resolveString(runtimeConfig.oidcRedirectUri);
 const oidcScopes = resolveScopes(runtimeConfig.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES);

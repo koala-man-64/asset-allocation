@@ -40,7 +40,9 @@ describe('backtestApi', () => {
     mainResponse: Response,
     action: (api: BacktestApiModule['backtestApi']) => Promise<T>
   ): Promise<T> {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'ok' })).mockResolvedValueOnce(mainResponse);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: 'ok' }))
+      .mockResolvedValueOnce(mainResponse);
 
     const { backtestApi } = await importBacktestApi();
     const result = await action(backtestApi);

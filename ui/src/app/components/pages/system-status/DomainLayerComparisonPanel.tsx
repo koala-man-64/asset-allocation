@@ -227,7 +227,7 @@ function buildJobDurationSummaryIndex(recentJobs: JobRun[] = []): Map<string, Jo
     }
     summary.set(jobKey, {
       averageDurationSeconds: current.totalSeconds / current.sampleCount,
-      sampleCount: current.sampleCount,
+      sampleCount: current.sampleCount
     });
   }
 

@@ -154,10 +154,7 @@ export function OidcAccessGate({ children }: { children: ReactNode }) {
 
   if (browserOidcMisconfigured) {
     return (
-      <AuthPanel
-        title="Deployment auth misconfigured"
-        body={DEPLOYMENT_AUTH_MISCONFIGURED_BODY}
-      />
+      <AuthPanel title="Deployment auth misconfigured" body={DEPLOYMENT_AUTH_MISCONFIGURED_BODY} />
     );
   }
 
