@@ -27,31 +27,36 @@ def _sync_result() -> bronze.symbol_availability.SyncResult:
     )
 
 
-def _statement_payload(*, period_end: str, total_assets: float) -> dict:
+def _statement_payload(*rows: dict) -> dict:
     return {
-        "results": [
-            {
-                "period_end": period_end,
-                "financials": {
-                    "balance_sheet": {
-                        "total_assets": total_assets,
-                        "total_current_assets": total_assets / 2.0,
-                        "total_current_liabilities": total_assets / 4.0,
-                        "long_term_debt_and_capital_lease_obligations": total_assets / 5.0,
-                    }
-                },
-            }
-        ]
+        "status": "OK",
+        "request_id": "req-1",
+        "results": list(rows),
     }
 
 
-def test_fetch_and_save_raw_writes_canonical_v2_balance_sheet_row(unique_ticker):
+def test_fetch_and_save_raw_writes_raw_balance_sheet_payload(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
-    mock_massive.get_finance_report.side_effect = [
-        _statement_payload(period_end="2024-03-31", total_assets=1000.0),
-        _statement_payload(period_end="2024-12-31", total_assets=1200.0),
-    ]
+    raw_payload = _statement_payload(
+        {
+            "period_end": "2024-12-31",
+            "timeframe": "annual",
+            "total_assets": 1200.0,
+            "total_current_assets": 600.0,
+            "total_current_liabilities": 300.0,
+            "long_term_debt_and_capital_lease_obligations": 240.0,
+        },
+        {
+            "period_end": "2024-03-31",
+            "timeframe": "quarterly",
+            "total_assets": 1000.0,
+            "total_current_assets": 500.0,
+            "total_current_liabilities": 250.0,
+            "long_term_debt_and_capital_lease_obligations": 200.0,
+        },
+    )
+    mock_massive.get_finance_report.return_value = raw_payload
     row_store: dict[tuple[str, str], dict[str, object]] = {}
 
     report = {
@@ -74,31 +79,14 @@ def test_fetch_and_save_raw_writes_canonical_v2_balance_sheet_row(unique_ticker)
     assert wrote is True
     stored = row_store[(symbol, "balance_sheet")]
     payload = json.loads(str(stored["payload_json"]))
-    assert payload["schema_version"] == 2
-    assert payload["provider"] == "massive"
-    assert payload["report_type"] == "balance_sheet"
-    assert payload["rows"] == [
-        {
-            "date": "2024-03-31",
-            "timeframe": "quarterly",
-            "long_term_debt": 200.0,
-            "total_assets": 1000.0,
-            "current_assets": 500.0,
-            "current_liabilities": 250.0,
-            "shares_outstanding": None,
-        },
-        {
-            "date": "2024-12-31",
-            "timeframe": "annual",
-            "long_term_debt": 240.0,
-            "total_assets": 1200.0,
-            "current_assets": 600.0,
-            "current_liabilities": 300.0,
-            "shares_outstanding": None,
-        },
-    ]
+    assert payload == raw_payload
     assert stored["source_min_date"] == "2024-03-31"
     assert stored["source_max_date"] == "2024-12-31"
+    mock_massive.get_finance_report.assert_called_once_with(
+        symbol=symbol,
+        report="balance_sheet",
+        pagination=True,
+    )
 
 
 def test_fetch_and_save_raw_marks_empty_valuation_payload_as_coverage_unavailable(unique_ticker):
@@ -121,15 +109,13 @@ def test_fetch_and_save_raw_marks_empty_valuation_payload_as_coverage_unavailabl
         assert exc_info.value.reason_code == "empty_finance_payload"
         assert exc_info.value.payload == {"symbol": symbol, "report": "valuation"}
         mock_list_manager.add_to_blacklist.assert_not_called()
+        mock_massive.get_ratios.assert_called_once_with(symbol=symbol, limit=1, pagination=False)
 
 
 def test_fetch_and_save_raw_tracks_empty_statement_payload_diagnostics(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
-    mock_massive.get_finance_report.side_effect = [
-        {"status": "OK", "request_id": "quarterly-empty", "results": []},
-        {"status": "OK", "request_id": "annual-empty", "results": []},
-    ]
+    mock_massive.get_finance_report.return_value = {"status": "OK", "request_id": "empty", "results": []}
     coverage_summary = bronze._empty_coverage_summary()
 
     report = {
@@ -151,38 +137,29 @@ def test_fetch_and_save_raw_tracks_empty_statement_payload_diagnostics(unique_ti
                 alpha26_rows={},
             )
 
-    assert coverage_summary["provider_statement_requests"] == 2
-    assert coverage_summary["provider_statement_empty_raw_payloads"] == 2
+    assert coverage_summary["provider_statement_requests"] == 1
+    assert coverage_summary["provider_statement_empty_raw_payloads"] == 1
     assert coverage_summary["provider_statement_nonempty_raw_payloads"] == 0
     assert coverage_summary["provider_statement_canonical_rows"] == 0
     assert coverage_summary["provider_statement_canonical_empty_payloads"] == 1
 
 
-def test_fetch_and_save_raw_applies_backfill_cutoff_to_canonical_rows(unique_ticker):
+def test_fetch_and_save_raw_preserves_raw_payload_when_backfill_cutoff_is_set(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
-    mock_massive.get_finance_report.side_effect = [
+    raw_payload = _statement_payload(
         {
-            "results": [
-                {
-                    "period_end": "2023-12-31",
-                    "financials": {"balance_sheet": {"total_assets": 900.0}},
-                },
-                {
-                    "period_end": "2024-03-31",
-                    "financials": {"balance_sheet": {"total_assets": 1000.0}},
-                },
-            ]
+            "period_end": "2023-12-31",
+            "timeframe": "annual",
+            "total_assets": 900.0,
         },
         {
-            "results": [
-                {
-                    "period_end": "2024-12-31",
-                    "financials": {"balance_sheet": {"total_assets": 1200.0}},
-                }
-            ]
+            "period_end": "2024-03-31",
+            "timeframe": "quarterly",
+            "total_assets": 1000.0,
         },
-    ]
+    )
+    mock_massive.get_finance_report.return_value = raw_payload
     row_store: dict[tuple[str, str], dict[str, object]] = {}
 
     report = {
@@ -206,18 +183,19 @@ def test_fetch_and_save_raw_applies_backfill_cutoff_to_canonical_rows(unique_tic
     assert wrote is True
     stored = row_store[(symbol, "balance_sheet")]
     payload = json.loads(str(stored["payload_json"]))
-    assert [row["date"] for row in payload["rows"]] == ["2024-03-31", "2024-12-31"]
+    assert payload == raw_payload
+    assert stored["source_min_date"] == "2023-12-31"
+    assert stored["source_max_date"] == "2024-03-31"
 
 
 def test_fetch_and_save_raw_coverage_gap_overrides_fresh_current_payload(unique_ticker):
     symbol = unique_ticker
     existing_payload = {
-        "schema_version": 2,
-        "provider": "massive",
-        "report_type": "balance_sheet",
-        "rows": [
+        "status": "OK",
+        "request_id": "old",
+        "results": [
             {
-                "date": "2025-01-01",
+                "period_end": "2025-01-01",
                 "timeframe": "quarterly",
                 "total_assets": 100.0,
             }
@@ -233,10 +211,18 @@ def test_fetch_and_save_raw_coverage_gap_overrides_fresh_current_payload(unique_
     existing_row["ingested_at"] = datetime.now(timezone.utc).isoformat()
 
     mock_massive = MagicMock()
-    mock_massive.get_finance_report.side_effect = [
-        _statement_payload(period_end="2023-12-31", total_assets=90.0),
-        _statement_payload(period_end="2025-03-31", total_assets=110.0),
-    ]
+    mock_massive.get_finance_report.return_value = _statement_payload(
+        {
+            "period_end": "2023-12-31",
+            "timeframe": "annual",
+            "total_assets": 90.0,
+        },
+        {
+            "period_end": "2025-03-31",
+            "timeframe": "quarterly",
+            "total_assets": 110.0,
+        },
+    )
     row_store = {(symbol, "balance_sheet"): dict(existing_row)}
     report = {
         "folder": "Balance Sheet",
@@ -269,8 +255,64 @@ def test_fetch_and_save_raw_coverage_gap_overrides_fresh_current_payload(unique_
     assert wrote is True
     assert coverage_summary["coverage_checked"] == 1
     assert coverage_summary["coverage_forced_refetch"] == 1
-    assert mock_massive.get_finance_report.call_count == 2
+    assert mock_massive.get_finance_report.call_count == 1
     mock_mark_coverage.assert_called_once()
+
+
+def test_fetch_and_save_raw_rewrites_fresh_legacy_canonical_payload_to_raw(unique_ticker):
+    symbol = unique_ticker
+    existing_payload = {
+        "schema_version": 2,
+        "provider": "massive",
+        "report_type": "balance_sheet",
+        "rows": [
+            {
+                "date": "2025-03-31",
+                "timeframe": "quarterly",
+                "total_assets": 100.0,
+            }
+        ],
+    }
+    existing_row = bronze._build_finance_bucket_row(
+        symbol=symbol,
+        report_type="balance_sheet",
+        payload=existing_payload,
+        source_min_date=date(2025, 3, 31),
+        source_max_date=date(2025, 3, 31),
+    )
+    existing_row["ingested_at"] = datetime.now(timezone.utc).isoformat()
+
+    raw_payload = _statement_payload(
+        {
+            "period_end": "2025-03-31",
+            "timeframe": "quarterly",
+            "total_assets": 100.0,
+        }
+    )
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.return_value = raw_payload
+    row_store = {(symbol, "balance_sheet"): dict(existing_row)}
+    report = {
+        "folder": "Balance Sheet",
+        "file_suffix": "quarterly_balance-sheet",
+        "report": "balance_sheet",
+    }
+
+    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            report,
+            mock_massive,
+            alpha26_mode=True,
+            alpha26_existing_row=dict(existing_row),
+            alpha26_rows=row_store,
+        )
+
+    assert wrote is True
+    stored = row_store[(symbol, "balance_sheet")]
+    assert json.loads(str(stored["payload_json"])) == raw_payload
 
 
 def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
@@ -311,6 +353,36 @@ def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
     assert result.coverage_summary["coverage_checked"] == 0
     manager.reset_current.assert_called_once()
     mock_sleep.assert_called_once_with(0.5)
+
+
+def test_process_symbol_with_recovery_does_not_retry_provider_400(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    manager = MagicMock()
+    manager.get_client.return_value = mock_massive
+    attempts = {"balance_sheet": 0}
+
+    def _fake_fetch(symbol_arg, report, massive_client, *, backfill_start=None, coverage_summary=None):
+        assert symbol_arg == symbol
+        assert massive_client is mock_massive
+        del backfill_start, coverage_summary
+        report_name = report["report"]
+        if report_name == "balance_sheet":
+            attempts["balance_sheet"] += 1
+            raise bronze.MassiveGatewayError("invalid query parameter", status_code=400, detail="bad request")
+        return False
+
+    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
+        result = bronze._process_symbol_with_recovery(
+            symbol,
+            manager,
+            max_attempts=3,
+            sleep_seconds=0.0,
+        )
+
+    assert attempts["balance_sheet"] == 1
+    assert any(name == "balance_sheet" for name, _ in result.failures)
+    manager.reset_current.assert_not_called()
 
 
 def test_process_symbol_with_recovery_continues_after_single_invalid_core_report(unique_ticker):

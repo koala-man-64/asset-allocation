@@ -28,7 +28,7 @@ def test_read_finance_json_projects_only_piotroski_columns() -> None:
     out = silver._read_finance_json(
         json.dumps(payload).encode("utf-8"),
         ticker="AAPL",
-        suffix="quarterly_balance-sheet",
+        report_type="balance_sheet",
     )
 
     assert list(out.columns) == [
@@ -70,7 +70,7 @@ def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> 
             }
         ).encode("utf-8"),
         ticker="AAPL",
-        suffix="quarterly_valuation_measures",
+        report_type="valuation",
     )
 
     assert list(out.columns) == ["Date", "Symbol", "market_cap", "pe_ratio"]
@@ -79,18 +79,83 @@ def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> 
     assert out.loc[1, "pe_ratio"] == 20.0
 
 
-def test_read_finance_json_rejects_noncanonical_payload() -> None:
+def test_read_finance_json_decodes_raw_statement_payloads_and_filters_timeframes() -> None:
+    payload = {
+        "status": "OK",
+        "request_id": "req-1",
+        "results": [
+            {"period_end": "2024-03-31", "timeframe": "trailing_twelve_months", "total_assets": 999.0},
+            {"period_end": "2024-03-31", "timeframe": "quarterly", "total_assets": 1000.0},
+            {"period_end": "2024-03-31", "timeframe": "quarterly", "total_assets": 1001.0},
+            {"period_end": "2024-03-31", "timeframe": "annual", "total_assets": 1200.0},
+            {"period_end": "2023-12-31", "timeframe": "annual", "total_assets": 900.0},
+        ],
+    }
+
+    out = silver._read_finance_json(
+        json.dumps(payload).encode("utf-8"),
+        ticker="AAPL",
+        report_type="balance_sheet",
+    )
+
+    assert list(out["Date"].dt.strftime("%Y-%m-%d")) == ["2023-12-31", "2024-03-31", "2024-03-31"]
+    assert list(out["timeframe"]) == ["annual", "annual", "quarterly"]
+    assert list(out["total_assets"]) == [900.0, 1200.0, 1001.0]
+
+
+def test_read_finance_json_decodes_raw_valuation_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        silver.delta_core,
+        "load_delta",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {"date": "2024-03-30", "close": 90.0, "symbol": "AAPL"},
+                {"date": "2024-03-31", "close": 100.0, "symbol": "AAPL"},
+            ]
+        ),
+    )
+
+    out = silver._read_finance_json(
+        json.dumps(
+            {
+                "status": "OK",
+                "results": [
+                    {"date": "2024-03-30", "market_cap": 900.0, "price_to_earnings": 18.0},
+                    {"date": "2024-03-31", "market_cap": 1000.0, "price_to_earnings": 20.0},
+                ],
+            }
+        ).encode("utf-8"),
+        ticker="AAPL",
+        report_type="valuation",
+    )
+
+    assert list(out.columns) == ["Date", "Symbol", "market_cap", "pe_ratio"]
+    assert out.loc[1, "market_cap"] == 1000.0
+    assert out.loc[1, "pe_ratio"] == 20.0
+
+
+def test_read_finance_json_rejects_unsupported_payload() -> None:
     with pytest.raises(ValueError, match="Unsupported finance payload schema"):
         silver._read_finance_json(
-            json.dumps(
-                {
-                    "status": "OK",
-                    "results": [{"period_end": "2024-03-31", "total_assets": 1000.0}],
-                }
-            ).encode("utf-8"),
+            json.dumps({"status": "OK", "payload": []}).encode("utf-8"),
             ticker="AAPL",
-            suffix="quarterly_balance-sheet",
+            report_type="balance_sheet",
         )
+
+
+def test_resample_daily_ffill_preserves_distinct_statement_timeframes() -> None:
+    source = pd.DataFrame(
+        [
+            {"Date": "2024-03-31", "Symbol": "AAPL", "timeframe": "annual", "total_assets": 1200.0},
+            {"Date": "2024-03-31", "Symbol": "AAPL", "timeframe": "quarterly", "total_assets": 1000.0},
+        ]
+    )
+
+    out = silver.resample_daily_ffill(source, extend_to=pd.Timestamp("2024-04-02"))
+
+    assert set(out["timeframe"]) == {"annual", "quarterly"}
+    assert len(out[out["Date"] == pd.Timestamp("2024-04-02")]) == 2
+    assert sorted(out[out["Date"] == pd.Timestamp("2024-04-02")]["total_assets"].tolist()) == [1000.0, 1200.0]
 
 
 def test_process_alpha26_bucket_blob_processes_valuation_rows_into_valuation_bucket(monkeypatch) -> None:
@@ -107,12 +172,14 @@ def test_process_alpha26_bucket_blob_processes_valuation_rows_into_valuation_buc
                 "report_type": "valuation",
                 "payload_json": json.dumps(
                     {
-                        "schema_version": 2,
-                        "provider": "massive",
-                        "report_type": "valuation",
-                        "as_of": "2026-03-04",
-                        "market_cap": 100.0,
-                        "pe_ratio": 10.0,
+                        "status": "OK",
+                        "results": [
+                            {
+                                "date": "2026-03-04",
+                                "market_cap": 100.0,
+                                "price_to_earnings": 10.0,
+                            }
+                        ],
                     }
                 ),
             }
@@ -747,7 +814,7 @@ def test_process_alpha26_bucket_blob_does_not_skip_when_signature_matches_waterm
     monkeypatch.setattr(
         silver,
         "_read_finance_json",
-        lambda _raw, ticker, suffix: pd.DataFrame({"Date": [pd.Timestamp("2024-01-01")], "Symbol": [ticker]}),
+        lambda _raw, ticker, report_type: pd.DataFrame({"Date": [pd.Timestamp("2024-01-01")], "Symbol": [ticker]}),
     )
 
     def _fake_process_finance_frame(**kwargs):

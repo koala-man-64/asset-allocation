@@ -82,8 +82,6 @@ _COVERAGE_DOMAIN = "finance"
 _COVERAGE_PROVIDER = "massive"
 _INVALID_CANDIDATE_REASON = "core_statements_provider_invalid"
 _FINANCE_SCHEMA_VERSION = 2
-_STATEMENT_TIMEFRAMES: tuple[str, ...] = ("quarterly", "annual")
-_STATEMENT_QUERY_LIMIT = 100
 _VALUATION_QUERY_LIMIT = 1
 _CORE_FINANCE_REPORTS = frozenset({"balance_sheet", "cash_flow", "income_statement"})
 _TRACE_FINANCE_ENABLED = (os.environ.get("MASSIVE_FINANCE_TRACE_ENABLED") or "").strip().lower() in {
@@ -108,6 +106,7 @@ except Exception:
     _TRACE_FINANCE_ANOMALY_LIMIT = 200
 _TRACE_FINANCE_COUNTERS: collections.Counter[str] = collections.Counter()
 _TRACE_FINANCE_LOCK = threading.Lock()
+_RAW_FINANCE_VOLATILE_KEYS = frozenset({"request_id", "status", "next_url"})
 _BUCKET_COLUMNS = [
     "symbol",
     "report_type",
@@ -525,205 +524,111 @@ def _parse_iso_date(raw: Any) -> Optional[date]:
         return None
 
 
-def _coerce_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return float(value)
-    text = str(value).strip()
-    if not text or text.lower() in {"none", "null", "nan", "n/a", "na", "-", "not available"}:
-        return None
-    try:
-        return float(text.replace(",", ""))
-    except Exception:
-        return None
+def _normalize_report_name(report_name: Any) -> str:
+    return str(report_name or "").strip().lower()
 
 
-def _get_nested_dict(payload: Any, *keys: str) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {}
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, dict):
-            return value
-    return {}
+def _is_raw_finance_payload(payload: Any) -> bool:
+    return isinstance(payload, dict) and isinstance(payload.get("results"), list)
 
 
-def _get_first_float(payload: dict[str, Any], *keys: str) -> Optional[float]:
-    for key in keys:
-        if key not in payload:
-            continue
-        parsed = _coerce_float(payload.get(key))
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _empty_finance_payload(report_name: str) -> dict[str, Any]:
-    base = {
-        "schema_version": _FINANCE_SCHEMA_VERSION,
-        "provider": _COVERAGE_PROVIDER,
-        "report_type": str(report_name).strip().lower(),
-    }
-    if report_name == "valuation":
-        return {
-            **base,
-            "as_of": None,
-            "market_cap": None,
-            "pe_ratio": None,
-        }
-    return {
-        **base,
-        "rows": [],
-    }
-
-
-def _extract_statement_section(report_name: str, row: dict[str, Any]) -> dict[str, Any]:
-    financials = _get_nested_dict(row, "financials")
-    if report_name == "balance_sheet":
-        return _get_nested_dict(row, "balance_sheet", "balanceSheet") or _get_nested_dict(
-            financials,
-            "balance_sheet",
-            "balanceSheet",
-        )
-    if report_name == "income_statement":
-        return _get_nested_dict(row, "income_statement", "incomeStatement") or _get_nested_dict(
-            financials,
-            "income_statement",
-            "incomeStatement",
-        )
-    if report_name == "cash_flow":
-        return _get_nested_dict(row, "cash_flow_statement", "cash_flow", "cashFlowStatement") or _get_nested_dict(
-            financials,
-            "cash_flow_statement",
-            "cash_flow",
-            "cashFlowStatement",
-        )
-    return {}
-
-
-def _canonical_statement_row(report_name: str, row: dict[str, Any], *, timeframe: str) -> Optional[dict[str, Any]]:
-    report_date = _parse_iso_date(
-        row.get("period_end") or row.get("period_of_report_date") or row.get("date") or row.get("report_period")
+def _is_canonical_finance_payload(payload: dict[str, Any], *, report_name: str) -> bool:
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema_version") == _FINANCE_SCHEMA_VERSION
+        and str(payload.get("provider") or "").strip().lower() == _COVERAGE_PROVIDER
+        and str(payload.get("report_type") or "").strip().lower() == _normalize_report_name(report_name)
     )
-    if report_date is None:
-        return None
 
-    section = _extract_statement_section(report_name, row)
-    if not section:
-        return None
 
-    if report_name == "balance_sheet":
-        out = {
-            "date": report_date.isoformat(),
-            "timeframe": timeframe,
-            "long_term_debt": _get_first_float(
-                section,
-                "long_term_debt_and_capital_lease_obligations",
-                "long_term_debt",
-                "long_term_debt_noncurrent",
-            ),
-            "total_assets": _get_first_float(section, "total_assets"),
-            "current_assets": _get_first_float(section, "total_current_assets", "current_assets"),
-            "current_liabilities": _get_first_float(
-                section,
-                "total_current_liabilities",
-                "current_liabilities",
-            ),
-            "shares_outstanding": _get_first_float(
-                section,
-                "common_stock_shares_outstanding",
-                "common_shares_outstanding",
-                "ordinary_shares_number",
-                "share_issued",
-            ),
-        }
-    elif report_name == "income_statement":
-        out = {
-            "date": report_date.isoformat(),
-            "timeframe": timeframe,
-            "total_revenue": _get_first_float(section, "revenues", "revenue", "total_revenue"),
-            "gross_profit": _get_first_float(section, "gross_profit"),
-            "net_income": _get_first_float(
-                section,
-                "net_income_loss",
-                "consolidated_net_income_loss",
-                "net_income_loss_attributable_to_parent",
-            ),
-            "shares_outstanding": _get_first_float(
-                section,
-                "diluted_shares_outstanding",
-                "basic_shares_outstanding",
-                "weighted_average_shares",
-            ),
-        }
-    elif report_name == "cash_flow":
-        out = {
-            "date": report_date.isoformat(),
-            "timeframe": timeframe,
-            "operating_cash_flow": _get_first_float(
-                section,
-                "net_cash_flow_from_operating_activities",
-                "net_cash_from_operating_activities",
-                "net_cash_provided_by_operating_activities",
-            ),
-        }
-    else:
-        return None
+def _is_supported_finance_payload(payload: Any, *, report_name: str) -> bool:
+    return _is_raw_finance_payload(payload) or _is_canonical_finance_payload(payload or {}, report_name=report_name)
 
-    metric_values = [value for key, value in out.items() if key not in {"date", "timeframe"}]
-    if not any(value is not None for value in metric_values):
+
+def _is_reusable_finance_payload(payload: Any, *, report_name: str) -> bool:
+    del report_name
+    return _is_raw_finance_payload(payload)
+
+
+def _extract_report_date_from_row(report_name: str, row: dict[str, Any]) -> Optional[date]:
+    if not isinstance(row, dict):
         return None
+    if _normalize_report_name(report_name) == "valuation":
+        return _parse_iso_date(row.get("date") or row.get("as_of") or row.get("period_end") or row.get("report_period"))
+    return _parse_iso_date(
+        row.get("period_end")
+        or row.get("period_of_report_date")
+        or row.get("report_period")
+        or row.get("date")
+        or row.get("as_of")
+    )
+
+
+def _payload_row_items(payload: dict[str, Any], *, report_name: str) -> list[dict[str, Any]]:
+    normalized_report = _normalize_report_name(report_name or payload.get("report_type"))
+    if _is_canonical_finance_payload(payload, report_name=normalized_report):
+        if normalized_report == "valuation":
+            row = {
+                "as_of": payload.get("as_of"),
+                "market_cap": payload.get("market_cap"),
+                "pe_ratio": payload.get("pe_ratio"),
+            }
+            return [row] if row["as_of"] else []
+        rows = payload.get("rows")
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if _is_raw_finance_payload(payload):
+        results = payload.get("results")
+        return [row for row in results if isinstance(row, dict)] if isinstance(results, list) else []
+    return []
+
+
+def _payload_report_dates(payload: dict[str, Any], *, report_name: Optional[str] = None) -> list[date]:
+    normalized_report = _normalize_report_name(report_name or payload.get("report_type"))
+    out: list[date] = []
+    for row in _payload_row_items(payload, report_name=normalized_report):
+        row_date = _extract_report_date_from_row(normalized_report, row)
+        if row_date is not None:
+            out.append(row_date)
     return out
 
 
-def _build_statement_payload(report_name: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    deduped: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in rows:
-        row_date = str(row.get("date") or "").strip()
-        timeframe = str(row.get("timeframe") or "").strip().lower()
-        if not row_date or not timeframe:
-            continue
-        deduped[(row_date, timeframe)] = row
-    ordered_rows = [deduped[key] for key in sorted(deduped)]
-    return {
-        "schema_version": _FINANCE_SCHEMA_VERSION,
-        "provider": _COVERAGE_PROVIDER,
-        "report_type": str(report_name).strip().lower(),
-        "rows": ordered_rows,
-    }
+def _extract_latest_finance_report_date(payload: dict[str, Any], *, report_name: Optional[str] = None) -> Optional[date]:
+    dates = _payload_report_dates(payload, report_name=report_name)
+    if not dates:
+        return None
+    return max(dates)
 
 
-def _build_valuation_payload(payload: dict[str, Any], *, report_name: str) -> dict[str, Any]:
-    results = payload.get("results")
-    latest_row: dict[str, Any] | None = None
-    latest_date: Optional[date] = None
-    if isinstance(results, list):
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            item_date = _parse_iso_date(item.get("date") or item.get("as_of"))
-            if item_date is None:
-                continue
-            if latest_date is None or item_date > latest_date:
-                latest_date = item_date
-                latest_row = item
-    elif isinstance(payload, dict):
-        latest_row = payload
-        latest_date = _parse_iso_date(payload.get("date") or payload.get("as_of"))
+def _extract_source_earliest_finance_date(payload: dict[str, Any], *, report_name: Optional[str] = None) -> Optional[date]:
+    dates = _payload_report_dates(payload, report_name=report_name)
+    if not dates:
+        return None
+    return min(dates)
 
-    market_cap = _get_first_float(latest_row or {}, "market_cap")
-    pe_ratio = _get_first_float(latest_row or {}, "price_to_earnings", "pe_ratio")
-    if latest_date is None or (market_cap is None and pe_ratio is None):
-        return _empty_finance_payload(report_name)
-    return {
-        "schema_version": _FINANCE_SCHEMA_VERSION,
-        "provider": _COVERAGE_PROVIDER,
-        "report_type": report_name,
-        "as_of": latest_date.isoformat(),
-        "market_cap": market_cap,
-        "pe_ratio": pe_ratio,
-    }
+
+def _payload_has_dates_on_or_after(
+    payload: dict[str, Any],
+    *,
+    report_name: str,
+    cutoff: Optional[date],
+) -> bool:
+    if cutoff is None:
+        return True
+    return any(report_date >= cutoff for report_date in _payload_report_dates(payload, report_name=report_name))
+
+
+def _count_usable_payload_rows(payload: dict[str, Any], *, report_name: str) -> int:
+    return sum(
+        1
+        for row in _payload_row_items(payload, report_name=report_name)
+        if _extract_report_date_from_row(report_name, row) is not None
+    )
+
+
+def _stable_finance_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {key: value for key, value in payload.items() if key not in _RAW_FINANCE_VOLATILE_KEYS}
 
 
 def _fetch_massive_finance_payload(
@@ -739,7 +644,6 @@ def _fetch_massive_finance_payload(
         try:
             payload = massive_client.get_ratios(
                 symbol=symbol,
-                sort="date.desc",
                 limit=_VALUATION_QUERY_LIMIT,
                 pagination=False,
             )
@@ -786,148 +690,72 @@ def _fetch_massive_finance_payload(
                 f"{_summarize_massive_payload(payload)}",
                 warning=True,
             )
-        return _build_valuation_payload(payload, report_name=report_name)
+        return payload
 
-    rows: list[dict[str, Any]] = []
-    for timeframe in _STATEMENT_TIMEFRAMES:
+    if coverage_summary is not None:
+        coverage_summary["provider_statement_requests"] += 1
+    try:
+        payload = massive_client.get_finance_report(
+            symbol=symbol,
+            report=report_name,
+            pagination=True,
+        )
+    except BaseException as exc:
+        _emit_bounded_trace(
+            "statement_error",
+            f"Massive statement fetch failed symbol={symbol} report={report_name} {_summarize_exception(exc)}",
+            warning=True,
+        )
+        raise
+    if not isinstance(payload, dict):
         if coverage_summary is not None:
-            coverage_summary["provider_statement_requests"] += 1
-        try:
-            payload = massive_client.get_finance_report(
-                symbol=symbol,
-                report=report_name,
-                timeframe=timeframe,
-                sort="period_end.asc",
-                limit=_STATEMENT_QUERY_LIMIT,
-                pagination=True,
-            )
-        except BaseException as exc:
-            _emit_bounded_trace(
-                "statement_error",
-                f"Massive statement fetch failed symbol={symbol} report={report_name} timeframe={timeframe} "
-                f"{_summarize_exception(exc)}",
-                warning=True,
-            )
-            raise
-        if not isinstance(payload, dict):
+            coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
+        _emit_bounded_trace(
+            "statement_unexpected_payload",
+            f"Massive statement payload was not a dict symbol={symbol} report={report_name} "
+            f"payload_type={type(payload).__name__}",
+            warning=True,
+        )
+        raise MassiveGatewayError(
+            "Unexpected Massive statement response type.",
+            payload={"symbol": symbol, "report": report_name},
+        )
+    results = payload.get("results")
+    if isinstance(results, list):
+        if results:
             if coverage_summary is not None:
-                coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
-            _emit_bounded_trace(
-                "statement_unexpected_payload",
-                f"Massive statement payload was not a dict symbol={symbol} report={report_name} "
-                f"timeframe={timeframe} payload_type={type(payload).__name__}",
-                warning=True,
-            )
-            raise MassiveGatewayError(
-                "Unexpected Massive statement response type.",
-                payload={"symbol": symbol, "report": report_name, "timeframe": timeframe},
-            )
-        results = payload.get("results")
-        if isinstance(results, list):
-            if results:
-                if coverage_summary is not None:
-                    coverage_summary["provider_statement_nonempty_raw_payloads"] += 1
-                _log_finance_payload_observation(
-                    symbol=symbol,
+                coverage_summary["provider_statement_nonempty_raw_payloads"] += 1
+                coverage_summary["provider_statement_canonical_rows"] += _count_usable_payload_rows(
+                    payload,
                     report_name=report_name,
-                    timeframe=timeframe,
-                    payload=payload,
-                    anomaly=False,
                 )
-            else:
-                if coverage_summary is not None:
-                    coverage_summary["provider_statement_empty_raw_payloads"] += 1
-                _log_finance_payload_observation(
-                    symbol=symbol,
-                    report_name=report_name,
-                    timeframe=timeframe,
-                    payload=payload,
-                    anomaly=True,
-                )
+            _log_finance_payload_observation(
+                symbol=symbol,
+                report_name=report_name,
+                timeframe=None,
+                payload=payload,
+                anomaly=False,
+            )
         else:
             if coverage_summary is not None:
-                coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
-            _emit_bounded_trace(
-                "statement_unexpected_payload",
-                f"Massive statement payload missing results list symbol={symbol} report={report_name} "
-                f"timeframe={timeframe} {_summarize_massive_payload(payload)}",
-                warning=True,
+                coverage_summary["provider_statement_empty_raw_payloads"] += 1
+            _log_finance_payload_observation(
+                symbol=symbol,
+                report_name=report_name,
+                timeframe=None,
+                payload=payload,
+                anomaly=True,
             )
-        if not isinstance(results, list):
-            continue
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            canonical_row = _canonical_statement_row(report_name, item, timeframe=timeframe)
-            if canonical_row is not None:
-                rows.append(canonical_row)
-    if coverage_summary is not None:
-        coverage_summary["provider_statement_canonical_rows"] += len(rows)
-    return _build_statement_payload(report_name, rows)
-
-
-def _payload_report_dates(payload: dict[str, Any]) -> list[date]:
-    report_type = str(payload.get("report_type") or "").strip().lower()
-    if report_type == "valuation":
-        valuation_date = _parse_iso_date(payload.get("as_of"))
-        return [valuation_date] if valuation_date is not None else []
-
-    rows = payload.get("rows")
-    if not isinstance(rows, list):
-        return []
-    out: list[date] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        row_date = _parse_iso_date(row.get("date"))
-        if row_date is not None:
-            out.append(row_date)
-    return out
-
-
-def _apply_backfill_start_to_finance_payload(
-    payload: dict[str, Any], *, backfill_start: Optional[date]
-) -> dict[str, Any]:
-    if backfill_start is None:
-        return payload
-
-    report_type = str(payload.get("report_type") or "").strip().lower()
-    if report_type == "valuation":
-        as_of = _parse_iso_date(payload.get("as_of"))
-        if as_of is not None and as_of < backfill_start:
-            return _empty_finance_payload(report_type)
-        return payload
-
-    rows = payload.get("rows")
-    if not isinstance(rows, list):
-        return payload
-
-    filtered_rows = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        row_date = _parse_iso_date(row.get("date"))
-        if row_date is not None and row_date < backfill_start:
-            continue
-        filtered_rows.append(row)
-
-    filtered_payload = dict(payload)
-    filtered_payload["rows"] = filtered_rows
-    return filtered_payload
-
-
-def _extract_latest_finance_report_date(payload: dict[str, Any]) -> Optional[date]:
-    dates = _payload_report_dates(payload)
-    if not dates:
-        return None
-    return max(dates)
-
-
-def _extract_source_earliest_finance_date(payload: dict[str, Any]) -> Optional[date]:
-    dates = _payload_report_dates(payload)
-    if not dates:
-        return None
-    return min(dates)
+    else:
+        if coverage_summary is not None:
+            coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
+        _emit_bounded_trace(
+            "statement_unexpected_payload",
+            f"Massive statement payload missing results list symbol={symbol} report={report_name} "
+            f"{_summarize_massive_payload(payload)}",
+            warning=True,
+        )
+    return payload
 
 
 def _has_non_empty_value(value: Any) -> bool:
@@ -941,20 +769,21 @@ def _has_non_empty_value(value: Any) -> bool:
     return text.lower() not in {"none", "null", "nan", "n/a", "na", "-", "not available"}
 
 
-def _is_canonical_finance_payload(payload: dict[str, Any], *, report_name: str) -> bool:
-    return (
-        isinstance(payload, dict)
-        and payload.get("schema_version") == _FINANCE_SCHEMA_VERSION
-        and str(payload.get("provider") or "").strip().lower() == _COVERAGE_PROVIDER
-        and str(payload.get("report_type") or "").strip().lower() == str(report_name).strip().lower()
-    )
-
-
 def _is_empty_finance_payload(payload: dict[str, Any], *, report_name: str) -> bool:
     if not payload:
         return True
 
-    payload_report_type = str(payload.get("report_type") or report_name).strip().lower()
+    payload_report_type = _normalize_report_name(payload.get("report_type") or report_name)
+    if _is_raw_finance_payload(payload):
+        results = payload.get("results")
+        if not isinstance(results, list) or not results:
+            return True
+        return not any(
+            _extract_report_date_from_row(payload_report_type, row) is not None
+            for row in results
+            if isinstance(row, dict)
+        )
+
     if not _is_canonical_finance_payload(payload, report_name=payload_report_type):
         return True
 
@@ -973,8 +802,6 @@ def _is_empty_finance_payload(payload: dict[str, Any], *, report_name: str) -> b
             return False
     return True
 
-    return False
-
 
 def fetch_and_save_raw(
     symbol: str,
@@ -989,7 +816,7 @@ def fetch_and_save_raw(
     alpha26_lock: Optional[threading.Lock] = None,
 ) -> bool:
     """
-    Fetch a finance report via the API-hosted Massive gateway and store canonical v2 bytes in Bronze buckets.
+    Fetch a finance report via the API-hosted Massive gateway and store raw provider JSON in Bronze buckets.
 
     Returns True when a write occurred, False when skipped (fresh/no-op).
     """
@@ -1005,20 +832,28 @@ def fetch_and_save_raw(
     resolved_backfill_start = normalize_date(backfill_start)
     existing_payload: Optional[dict[str, Any]] = None
     existing_min_date: Optional[date] = None
+    existing_payload_current = False
     force_backfill = False
     existing_row = dict(alpha26_existing_row or {})
 
     try:
         if existing_row:
             existing_payload = _decode_payload_json(existing_row.get("payload_json"))
-            existing_payload_current = isinstance(existing_payload, dict) and _is_canonical_finance_payload(
+            existing_payload_supported = isinstance(existing_payload, dict) and _is_supported_finance_payload(
+                existing_payload,
+                report_name=report_name,
+            )
+            existing_payload_current = isinstance(existing_payload, dict) and _is_reusable_finance_payload(
                 existing_payload,
                 report_name=report_name,
             )
             if resolved_backfill_start is not None:
                 coverage_summary["coverage_checked"] += 1
-                if existing_payload_current:
-                    existing_min_date = _extract_source_earliest_finance_date(existing_payload or {})
+                if existing_payload_supported:
+                    existing_min_date = _extract_source_earliest_finance_date(
+                        existing_payload or {},
+                        report_name=report_name,
+                    )
                 marker = load_coverage_marker(
                     common_client=common_client,
                     domain=_COVERAGE_DOMAIN,
@@ -1067,8 +902,8 @@ def fetch_and_save_raw(
         coverage_summary[summary_key] += 1
         _emit_bounded_trace(
             "canonical_empty_payload",
-            f"Massive finance canonical payload empty symbol={symbol} report={report_name} "
-            f"payload_dates={','.join(d.isoformat() for d in _payload_report_dates(payload)) or 'none'}",
+            f"Massive finance raw payload empty symbol={symbol} report={report_name} "
+            f"payload_dates={','.join(d.isoformat() for d in _payload_report_dates(payload, report_name=report_name)) or 'none'}",
             warning=True,
         )
         raise BronzeCoverageUnavailableError(
@@ -1076,9 +911,13 @@ def fetch_and_save_raw(
             detail=f"Massive returned empty finance payload for {symbol} report={report_name}.",
             payload={"symbol": symbol, "report": report_name},
         )
-    source_earliest = _extract_source_earliest_finance_date(payload)
-    payload = _apply_backfill_start_to_finance_payload(payload, backfill_start=resolved_backfill_start)
-    if resolved_backfill_start is not None and _is_empty_finance_payload(payload, report_name=report_name):
+    source_earliest = _extract_source_earliest_finance_date(payload, report_name=report_name)
+    has_cutoff_coverage = _payload_has_dates_on_or_after(
+        payload,
+        report_name=report_name,
+        cutoff=resolved_backfill_start,
+    )
+    if resolved_backfill_start is not None and not has_cutoff_coverage:
         if force_backfill:
             _mark_coverage(
                 symbol=symbol,
@@ -1115,18 +954,18 @@ def fetch_and_save_raw(
         )
 
     if existing_payload is not None:
-        if existing_payload == payload:
+        if _stable_finance_payload(existing_payload) == _stable_finance_payload(payload):
             list_manager.add_to_whitelist(symbol)
             return False
-        if resolved_backfill_start is None:
-            incoming_latest = _extract_latest_finance_report_date(payload)
-            existing_latest = _extract_latest_finance_report_date(existing_payload)
+        if resolved_backfill_start is None and existing_payload_current:
+            incoming_latest = _extract_latest_finance_report_date(payload, report_name=report_name)
+            existing_latest = _extract_latest_finance_report_date(existing_payload, report_name=report_name)
             if incoming_latest is not None and existing_latest is not None and incoming_latest <= existing_latest:
                 list_manager.add_to_whitelist(symbol)
                 return False
 
-    source_min = _extract_source_earliest_finance_date(payload)
-    source_max = _extract_latest_finance_report_date(payload)
+    source_min = _extract_source_earliest_finance_date(payload, report_name=report_name)
+    source_max = _extract_latest_finance_report_date(payload, report_name=report_name)
     bucket_row = _build_finance_bucket_row(
         symbol=symbol,
         report_type=report_name,
@@ -1228,21 +1067,33 @@ def _is_recoverable_massive_error(exc: BaseException) -> bool:
         status_code = getattr(exc, "status_code", None)
         if status_code in {408, 429, 500, 502, 503, 504}:
             return True
+    else:
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {408, 429, 500, 502, 503, 504}:
+            return True
 
-        message = str(exc).strip().lower()
-        transient_markers = (
-            "timeout",
-            "timed out",
-            "connection",
-            "server disconnected",
-            "remoteprotocolerror",
-            "readerror",
-            "connecterror",
-            "gateway unavailable",
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+
+    message = " ".join(
+        part
+        for part in (
+            str(exc).strip().lower(),
+            str(getattr(exc, "detail", "") or "").strip().lower(),
         )
-        return any(marker in message for marker in transient_markers)
-
-    return False
+        if part
+    )
+    transient_markers = (
+        "timeout",
+        "timed out",
+        "connection",
+        "server disconnected",
+        "remoteprotocolerror",
+        "readerror",
+        "connecterror",
+        "gateway unavailable",
+    )
+    return any(marker in message for marker in transient_markers)
 
 
 def _process_symbol_with_recovery(

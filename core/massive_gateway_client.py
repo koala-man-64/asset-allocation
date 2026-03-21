@@ -31,6 +31,8 @@ except Exception:
     _GATEWAY_TRACE_ERROR_LIMIT = 200
 _GATEWAY_TRACE_COUNTS: collections.Counter[str] = collections.Counter()
 _GATEWAY_TRACE_LOCK = threading.Lock()
+_TIMEOUT_FLOOR_WARNING_LOCK = threading.Lock()
+_TIMEOUT_FLOOR_WARNING_EMITTED = False
 
 
 class MassiveGatewayError(RuntimeError):
@@ -126,6 +128,19 @@ def _emit_bounded_gateway_warning(category: str, message: str) -> None:
         )
 
 
+def _warn_timeout_floor_once(configured_timeout_seconds: float) -> None:
+    global _TIMEOUT_FLOOR_WARNING_EMITTED
+    with _TIMEOUT_FLOOR_WARNING_LOCK:
+        if _TIMEOUT_FLOOR_WARNING_EMITTED:
+            return
+        _TIMEOUT_FLOOR_WARNING_EMITTED = True
+    logger.warning(
+        "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=%s is too low for Massive market requests; using %s.",
+        configured_timeout_seconds,
+        _MIN_API_GATEWAY_TIMEOUT_SECONDS,
+    )
+
+
 @dataclass(frozen=True)
 class MassiveGatewayClientConfig:
     base_url: str
@@ -184,11 +199,7 @@ class MassiveGatewayClient:
             _env_float("MASSIVE_TIMEOUT_SECONDS", _MIN_API_GATEWAY_TIMEOUT_SECONDS),
         )
         if timeout_seconds < _MIN_API_GATEWAY_TIMEOUT_SECONDS:
-            logger.warning(
-                "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=%s is too low for Massive market requests; using %s.",
-                timeout_seconds,
-                _MIN_API_GATEWAY_TIMEOUT_SECONDS,
-            )
+            _warn_timeout_floor_once(timeout_seconds)
             timeout_seconds = _MIN_API_GATEWAY_TIMEOUT_SECONDS
 
         warmup_max_attempts = max(1, _env_int("ASSET_ALLOCATION_API_WARMUP_ATTEMPTS", _DEFAULT_API_WARMUP_MAX_ATTEMPTS))

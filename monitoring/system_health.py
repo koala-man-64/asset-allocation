@@ -439,6 +439,79 @@ union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
     return out
 
 
+def _query_recent_bronze_finance_ingest_summaries(
+    client: AzureLogAnalyticsClient,
+    *,
+    workspace_id: str,
+    job_name: str,
+    lookback_hours: int,
+) -> List[Dict[str, Any]]:
+    job_kql = _escape_kql_literal(job_name)
+    end = _utc_now()
+    start = end - timedelta(hours=max(lookback_hours, 1))
+    timespan = f"{start.isoformat()}/{end.isoformat()}"
+    query = f"""
+let jobName = '{job_kql}';
+union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+| extend job = tostring(
+    column_ifexists('ContainerJobName_s',
+        column_ifexists('ContainerName_s',
+            column_ifexists('ContainerAppJobName_s',
+                column_ifexists('JobName_s',
+                    column_ifexists('JobName',
+                        column_ifexists('ContainerAppName_s', '')
+                    )
+                )
+            )
+        )
+    )
+)
+| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
+| extend msg = tostring(
+    column_ifexists('Log_s',
+        column_ifexists('Log',
+            column_ifexists('LogMessage_s',
+                column_ifexists('Message',
+                    column_ifexists('message', '')
+                )
+            )
+        )
+    )
+)
+| where ((job != '' and job contains jobName) or (resource contains jobName))
+| where msg has 'Bronze Massive finance ingest complete:'
+| extend processed = tolong(extract(@"processed=([0-9]+)", 1, msg))
+| extend written = tolong(extract(@"written=([0-9]+)", 1, msg))
+| where isnotnull(processed) and isnotnull(written)
+| order by TimeGenerated desc
+| take 5
+| project TimeGenerated, processed, written, msg
+""".strip()
+    payload = client.query(workspace_id=workspace_id, query=query, timespan=timespan)
+    rows = extract_first_table_rows(payload)
+    out: List[Dict[str, Any]] = []
+    seen_timestamps: set[str] = set()
+    for row in rows:
+        timestamp = str(row.get("TimeGenerated") or "").strip()
+        if not timestamp or timestamp in seen_timestamps:
+            continue
+        seen_timestamps.add(timestamp)
+        try:
+            processed = int(row.get("processed") or 0)
+            written = int(row.get("written") or 0)
+        except Exception:
+            continue
+        out.append(
+            {
+                "timeGenerated": timestamp,
+                "processed": processed,
+                "written": written,
+                "message": str(row.get("msg") or "").strip(),
+            }
+        )
+    return out
+
+
 def _load_freshness_overrides() -> Dict[str, Dict[str, Any]]:
     raw = os.environ.get("SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON", "")
     text = raw.strip()
@@ -1108,6 +1181,66 @@ def _bronze_symbol_jump_alerts(
                 "message": (
                     f"Latest Bronze symbol count jumped from {previous_count} to {current_count} "
                     f"({ratio:.2f}x; previous={previous.get('timeGenerated')}, current={current.get('timeGenerated')})."
+                ),
+            }
+            )
+    return alerts
+
+
+def _bronze_finance_zero_write_alerts(
+    *,
+    job_names: Sequence[str],
+    checked_iso: str,
+    log_client: Optional[AzureLogAnalyticsClient],
+    workspace_id: str,
+) -> List[Dict[str, Any]]:
+    if log_client is None or not workspace_id:
+        return []
+
+    try:
+        lookback_hours = _require_int(
+            "SYSTEM_HEALTH_BRONZE_FINANCE_ZERO_WRITE_LOOKBACK_HOURS",
+            min_value=1,
+            max_value=24 * 365,
+        )
+    except ValueError:
+        lookback_hours = 24 * 7
+
+    alerts: List[Dict[str, Any]] = []
+    for job_name in job_names:
+        if str(job_name or "").strip().lower() != "bronze-finance-job":
+            continue
+        try:
+            summaries = _query_recent_bronze_finance_ingest_summaries(
+                log_client,
+                workspace_id=workspace_id,
+                job_name=job_name,
+                lookback_hours=lookback_hours,
+            )
+        except Exception as exc:
+            logger.warning("Bronze finance zero-write probe failed for job=%s: %s", job_name, exc, exc_info=True)
+            continue
+        if not summaries:
+            continue
+        latest = summaries[0]
+        processed = int(latest.get("processed") or 0)
+        written = int(latest.get("written") or 0)
+        if processed <= 0 or written != 0:
+            continue
+        alerts.append(
+            {
+                "id": _alert_id(
+                    severity="error",
+                    title="Bronze finance wrote zero rows",
+                    component=job_name,
+                ),
+                "severity": "error",
+                "title": "Bronze finance wrote zero rows",
+                "component": job_name,
+                "timestamp": checked_iso,
+                "message": (
+                    f"Latest Bronze finance run processed {processed} symbol(s) but wrote {written} row(s). "
+                    f"summary={latest.get('message') or 'n/a'}"
                 ),
             }
         )
@@ -1813,6 +1946,18 @@ def collect_system_health_snapshot(
                             statuses.extend(
                                 "error" if alert.get("severity") == "error" else "stale"
                                 for alert in bronze_jump_alerts
+                            )
+                        bronze_finance_zero_write_alerts = _bronze_finance_zero_write_alerts(
+                            job_names=job_names,
+                            checked_iso=checked_iso,
+                            log_client=log_client,
+                            workspace_id=log_analytics_workspace_id,
+                        )
+                        if bronze_finance_zero_write_alerts:
+                            alerts.extend(bronze_finance_zero_write_alerts)
+                            statuses.extend(
+                                "error" if alert.get("severity") == "error" else "stale"
+                                for alert in bronze_finance_zero_write_alerts
                             )
                 finally:
                     if log_client is not None:

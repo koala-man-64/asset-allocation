@@ -17,7 +17,6 @@ from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.finance_contracts import (
-    SILVER_FINANCE_ALPHA26_REPORT_LAYOUTS,
     SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN,
     SILVER_FINANCE_REPORT_TYPE_TO_LAYOUT,
     SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN,
@@ -100,6 +99,7 @@ _FINANCE_VALUATION_CALCULATED_COLUMNS = {
     "market_cap",
     "pe_ratio",
 }
+_STATEMENT_TIMEFRAMES = frozenset({"quarterly", "annual"})
 
 
 def _get_positive_int_env(name: str, default: int) -> int:
@@ -284,21 +284,93 @@ def _load_close_prices(ticker: str) -> pd.DataFrame:
     return out
 
 
-def _build_valuation_timeseries(payload: dict[str, Any], *, ticker: str) -> pd.DataFrame:
+def _normalize_finance_report_type(report_type: Any) -> str:
+    return str(report_type or "").strip().lower()
+
+
+def _extract_finance_row_date(item: dict[str, Any], *, report_type: str) -> Optional[pd.Timestamp]:
+    if not isinstance(item, dict):
+        return None
+    normalized_report = _normalize_finance_report_type(report_type)
+    if normalized_report == "valuation":
+        raw_value = item.get("date") or item.get("as_of") or item.get("period_end") or item.get("report_period")
+    else:
+        raw_value = (
+            item.get("date")
+            or item.get("period_end")
+            or item.get("period_of_report_date")
+            or item.get("report_period")
+            or item.get("as_of")
+        )
+    parsed = pd.to_datetime(raw_value, errors="coerce", utc=True, format="mixed")
+    if pd.isna(parsed):
+        return None
+    return parsed.tz_convert(None)
+
+
+def _is_canonical_finance_payload(payload: dict[str, Any], *, report_type: str) -> bool:
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema_version") == 2
+        and str(payload.get("provider") or "").strip().lower() == "massive"
+        and _normalize_finance_report_type(payload.get("report_type")) == _normalize_finance_report_type(report_type)
+    )
+
+
+def _is_raw_finance_payload(payload: dict[str, Any]) -> bool:
+    return isinstance(payload, dict) and isinstance(payload.get("results"), list)
+
+
+def _extract_valuation_snapshot(payload: dict[str, Any], *, report_type: str) -> Optional[dict[str, Any]]:
+    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN["valuation"]
+    if _is_canonical_finance_payload(payload, report_type=report_type):
+        as_of = _extract_finance_row_date({"as_of": payload.get("as_of")}, report_type="valuation")
+        if as_of is None:
+            return None
+        market_cap = _try_parse_float(_get_first_value(payload, alias_map["market_cap"]))
+        pe_ratio = _try_parse_float(_get_first_value(payload, alias_map["pe_ratio"]))
+        if market_cap is None and pe_ratio is None:
+            return None
+        return {"as_of": as_of, "market_cap": market_cap, "pe_ratio": pe_ratio}
+
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        return None
+
+    candidates: list[tuple[pd.Timestamp, int, dict[str, Any]]] = []
+    for index, item in enumerate(results):
+        if not isinstance(item, dict):
+            continue
+        report_date = _extract_finance_row_date(item, report_type="valuation")
+        if report_date is None:
+            continue
+        candidates.append((report_date, index, item))
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda entry: (entry[0], entry[1]))
+    latest_date, _latest_index, latest_row = candidates[-1]
+    market_cap = _try_parse_float(_get_first_value(latest_row, alias_map["market_cap"]))
+    pe_ratio = _try_parse_float(_get_first_value(latest_row, alias_map["pe_ratio"]))
+    if market_cap is None and pe_ratio is None:
+        return None
+    return {"as_of": latest_date, "market_cap": market_cap, "pe_ratio": pe_ratio}
+
+
+def _build_valuation_timeseries(snapshot: dict[str, Any], *, ticker: str) -> pd.DataFrame:
     df_prices = _load_close_prices(ticker)
     if df_prices.empty:
         return pd.DataFrame()
 
-    as_of = pd.to_datetime(payload.get("as_of"), errors="coerce", utc=True, format="mixed")
-    if pd.isna(as_of):
+    as_of = snapshot.get("as_of")
+    if as_of is None or pd.isna(as_of):
         return pd.DataFrame()
-    as_of = as_of.tz_convert(None)
     df_prices = df_prices[df_prices["Date"] <= as_of].copy()
     if df_prices.empty:
         return pd.DataFrame()
 
-    market_cap_now = _try_parse_float(payload.get("market_cap"))
-    pe_ratio_now = _try_parse_float(payload.get("pe_ratio"))
+    market_cap_now = _try_parse_float(snapshot.get("market_cap"))
+    pe_ratio_now = _try_parse_float(snapshot.get("pe_ratio"))
     anchor_close = float(df_prices["Close"].iloc[-1])
     if anchor_close <= 0:
         return pd.DataFrame()
@@ -322,56 +394,56 @@ def _build_valuation_timeseries(payload: dict[str, Any], *, ticker: str) -> pd.D
     return out[["Date", "Symbol", *expected_columns]]
 
 
-def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.DataFrame:
-    payload = json.loads(raw_bytes.decode("utf-8"))
+def _read_statement_payload(payload: dict[str, Any], *, ticker: str, report_type: str) -> pd.DataFrame:
+    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN[report_type]
+    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN[report_type]
 
-    suffix_to_sub_domain = {
-        report_suffix: sub_domain
-        for sub_domain, (_folder_name, report_suffix) in SILVER_FINANCE_ALPHA26_REPORT_LAYOUTS.items()
-    }
-    sub_domain = suffix_to_sub_domain.get(suffix)
-    if sub_domain is None:
-        return pd.DataFrame()
+    if _is_canonical_finance_payload(payload, report_type=report_type):
+        reports = payload.get("rows")
+        if reports is None:
+            raise ValueError(f"Finance payload rows are required for {ticker}/{report_type}.")
+        if not isinstance(reports, list) or not reports:
+            return pd.DataFrame()
+    elif _is_raw_finance_payload(payload):
+        reports = payload.get("results")
+        if not isinstance(reports, list) or not reports:
+            return pd.DataFrame()
+    else:
+        raise ValueError(f"Unsupported finance payload schema for {ticker}/{report_type}.")
 
-    if not isinstance(payload, dict):
-        raise ValueError(f"Finance payload for {ticker}/{sub_domain} must be a JSON object.")
-    if payload.get("schema_version") != 2 or str(payload.get("provider") or "").strip().lower() != "massive":
-        raise ValueError(f"Unsupported finance payload schema for {ticker}/{sub_domain}.")
-    payload_report_type = str(payload.get("report_type") or "").strip().lower()
-    if payload_report_type != sub_domain:
-        raise ValueError(
-            f"Finance payload report_type mismatch for {ticker}: expected {sub_domain}, got {payload_report_type or 'missing'}."
-        )
-
-    if sub_domain == "valuation":
-        return _build_valuation_timeseries(payload, ticker=ticker)
-
-    reports = payload.get("rows")
-    if reports is None:
-        raise ValueError(f"Finance payload rows are required for {ticker}/{sub_domain}.")
-    if not isinstance(reports, list) or not reports:
-        return pd.DataFrame()
-
-    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN[sub_domain]
-    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN[sub_domain]
-    rows = []
-    for item in reports:
+    prepared_rows: list[tuple[pd.Timestamp, str, int, dict[str, Any]]] = []
+    for index, item in enumerate(reports):
         if not isinstance(item, dict):
             continue
-        date_raw = item.get("date")
-        if not date_raw:
+        report_date = _extract_finance_row_date(item, report_type=report_type)
+        if report_date is None:
             continue
-        row: dict[str, Any] = {"Date": str(date_raw).strip(), "Symbol": ticker}
+        timeframe = str(_get_first_value(item, alias_map["timeframe"]) or "").strip().lower()
+        if timeframe not in _STATEMENT_TIMEFRAMES:
+            continue
+        row: dict[str, Any] = {"Date": report_date, "Symbol": ticker, "timeframe": timeframe}
         for column in expected_columns[2:]:
-            value = _get_first_value(item, alias_map[column])
             if column == "timeframe":
-                normalized = str(value or "").strip().lower()
-                row[column] = normalized or None
-            else:
-                row[column] = _try_parse_float(value)
-        rows.append(row)
+                continue
+            row[column] = _try_parse_float(_get_first_value(item, alias_map[column]))
+        metric_columns = [column for column in expected_columns[2:] if column != "timeframe"]
+        if not any(row.get(column) is not None for column in metric_columns):
+            continue
+        prepared_rows.append((report_date, timeframe, index, row))
 
-    df = pd.DataFrame(rows)
+    if not prepared_rows:
+        return pd.DataFrame()
+
+    deduped: dict[tuple[pd.Timestamp, str], dict[str, Any]] = {}
+    for report_date, timeframe, index, row in sorted(prepared_rows, key=lambda entry: (entry[0], entry[1], entry[2])):
+        del index
+        deduped[(report_date, timeframe)] = row
+
+    ordered_rows = [
+        deduped[key]
+        for key in sorted(deduped.keys(), key=lambda item: (item[0], item[1]))
+    ]
+    df = pd.DataFrame(ordered_rows)
     if df.empty:
         return df
 
@@ -382,8 +454,41 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
             else:
                 df[column] = pd.Series(dtype="float64")
     df["Date"] = coerce_to_naive_datetime(df["Date"])
-    df = df.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
+    df = df.dropna(subset=["Date"]).sort_values(["Date", "timeframe"]).reset_index(drop=True)
     return df[["Date", "Symbol", *expected_columns[2:]]]
+
+
+def _read_finance_json(raw_bytes: bytes, *, ticker: str, report_type: str) -> pd.DataFrame:
+    payload = json.loads(raw_bytes.decode("utf-8"))
+    sub_domain = _normalize_finance_report_type(report_type)
+    if sub_domain not in SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN:
+        return pd.DataFrame()
+
+    if not isinstance(payload, dict):
+        raise ValueError(f"Finance payload for {ticker}/{sub_domain} must be a JSON object.")
+    payload_report_type = _normalize_finance_report_type(payload.get("report_type"))
+    looks_canonical = payload.get("schema_version") == 2 and str(payload.get("provider") or "").strip().lower() == "massive"
+    if looks_canonical and payload_report_type and payload_report_type != sub_domain:
+        raise ValueError(
+            f"Finance payload report_type mismatch for {ticker}: expected {sub_domain}, got {payload_report_type or 'missing'}."
+        )
+    if not _is_canonical_finance_payload(payload, report_type=sub_domain) and not _is_raw_finance_payload(payload):
+        raise ValueError(f"Unsupported finance payload schema for {ticker}/{sub_domain}.")
+
+    if sub_domain == "valuation":
+        snapshot = _extract_valuation_snapshot(payload, report_type=sub_domain)
+        if snapshot is None:
+            return pd.DataFrame()
+        return _build_valuation_timeseries(snapshot, ticker=ticker)
+
+    return _read_statement_payload(payload, ticker=ticker, report_type=sub_domain)
+
+
+def _finance_row_identity_columns(df: pd.DataFrame) -> list[str]:
+    columns = ["symbol", "date"]
+    if "timeframe" in df.columns:
+        columns.append("timeframe")
+    return columns
 
 
 def _utc_today() -> pd.Timestamp:
@@ -403,22 +508,33 @@ def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] 
     if df.empty:
         return df
 
-    df = df.set_index("Date")
-    df = df.sort_index()
+    group_columns = [column for column in ("Symbol", "timeframe") if column in df.columns]
+    grouped_frames: list[pd.DataFrame] = []
+    grouped = [(None, df)] if not group_columns else list(df.groupby(group_columns, dropna=False, sort=True))
 
-    # Resample and ffill
-    # We must restrict to the known date range
-    if df.empty:
-        return df
+    for group_key, group_frame in grouped:
+        group = group_frame.copy()
+        group = group.sort_values(["Date"]).drop_duplicates(subset=["Date"], keep="last")
+        group = group.set_index("Date").sort_index()
+        if group.empty:
+            continue
 
-    end = df.index.max()
-    if extend_to is not None and extend_to > end:
-        end = extend_to
+        end = group.index.max()
+        if extend_to is not None and extend_to > end:
+            end = extend_to
 
-    full_range = pd.date_range(start=df.index.min(), end=end, freq="D", name="Date")
-    df_daily = df.reindex(full_range).ffill()
+        full_range = pd.date_range(start=group.index.min(), end=end, freq="D", name="Date")
+        group_daily = group.reindex(full_range).ffill().reset_index()
 
-    return df_daily.reset_index()
+        if group_columns:
+            key_values = group_key if isinstance(group_key, tuple) else (group_key,)
+            for column, value in zip(group_columns, key_values):
+                group_daily[column] = value
+        grouped_frames.append(group_daily)
+
+    if not grouped_frames:
+        return pd.DataFrame(columns=df.reset_index(drop=True).columns)
+    return pd.concat(grouped_frames, ignore_index=True)
 
 
 def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
@@ -579,8 +695,10 @@ def _write_alpha26_finance_silver_buckets(
                 df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
                 df_bucket["date"] = coerce_to_naive_datetime(df_bucket["date"])
                 df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
-                df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
-                    subset=["symbol", "date"], keep="last"
+                identity_columns = _finance_row_identity_columns(df_bucket)
+                df_bucket = df_bucket.sort_values(identity_columns).drop_duplicates(
+                    subset=identity_columns,
+                    keep="last",
                 )
                 for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
                     if symbol:
@@ -949,7 +1067,8 @@ def _process_finance_frame(
         df_clean["date"] = coerce_to_naive_datetime(df_clean["date"])
     if "symbol" in df_clean.columns:
         df_clean["symbol"] = df_clean["symbol"].astype("string").str.upper()
-        df_clean = df_clean.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last")
+        identity_columns = _finance_row_identity_columns(df_clean)
+        df_clean = df_clean.sort_values(identity_columns).drop_duplicates(subset=identity_columns, keep="last")
         df_clean = df_clean.reset_index(drop=True)
     applied_calculated_columns = set()
     if suffix == "quarterly_valuation_measures":
@@ -978,8 +1097,9 @@ def _process_finance_frame(
             df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
         df_bucket_to_store = pd.concat([df_other_symbols, df_clean], ignore_index=True)
         if "symbol" in df_bucket_to_store.columns and "date" in df_bucket_to_store.columns:
-            df_bucket_to_store = df_bucket_to_store.sort_values(["symbol", "date"]).drop_duplicates(
-                subset=["symbol", "date"],
+            identity_columns = _finance_row_identity_columns(df_bucket_to_store)
+            df_bucket_to_store = df_bucket_to_store.sort_values(identity_columns).drop_duplicates(
+                subset=identity_columns,
                 keep="last",
             )
         df_bucket_to_store = df_bucket_to_store.reset_index(drop=True)
@@ -1094,7 +1214,7 @@ def process_alpha26_bucket_blob(
             continue
         try:
             raw_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-            df_raw = _read_finance_json(raw_json, ticker=ticker, suffix=suffix)
+            df_raw = _read_finance_json(raw_json, ticker=ticker, report_type=report_type)
             result = _process_finance_frame(
                 blob_name=blob_name,
                 ticker=ticker,

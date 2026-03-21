@@ -64,6 +64,8 @@ def _handle_massive_error(exc: Exception) -> None:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     if isinstance(exc, MassiveNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, MassiveError) and getattr(exc, "status_code", None) == 400:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if isinstance(exc, (MassiveAuthError, MassiveServerError, MassiveError)):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     raise HTTPException(status_code=500, detail=f"Unexpected error: {type(exc).__name__}: {exc}") from exc

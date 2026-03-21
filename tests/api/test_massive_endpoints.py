@@ -1,7 +1,7 @@
 import pytest
 
 from api.service.app import create_app
-from api.service.massive_gateway import MassiveGateway, MassiveNotConfiguredError, get_current_caller_context
+from api.service.massive_gateway import MassiveError, MassiveGateway, MassiveNotConfiguredError, get_current_caller_context
 from massive_provider.errors import MassiveNotFoundError, MassiveRateLimitError
 from tests.api._client import get_test_client
 
@@ -148,6 +148,21 @@ async def test_massive_missing_symbol_maps_to_404(monkeypatch):
         resp = await client.get("/api/providers/massive/financials/balance_sheet?symbol=BAD")
 
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_massive_provider_bad_request_maps_to_400(monkeypatch):
+    def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
+        del symbol, report, timeframe, sort, limit, pagination
+        raise MassiveError("invalid query parameter", status_code=400, detail="invalid query parameter")
+
+    monkeypatch.setattr(MassiveGateway, "get_finance_report", fake_financials)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/providers/massive/financials/balance_sheet?symbol=AAPL")
+
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

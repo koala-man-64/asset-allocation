@@ -84,6 +84,8 @@ properties:
         value: ${ASSET_ALLOCATION_API_BASE_URL}
       - name: ASSET_ALLOCATION_API_SCOPE
         value: ${ASSET_ALLOCATION_API_SCOPE}
+      - name: ASSET_ALLOCATION_API_TIMEOUT_SECONDS
+        value: "60"
       - name: MASSIVE_TIMEOUT_SECONDS
         value: ${MASSIVE_TIMEOUT_SECONDS}
       - name: MASSIVE_MAX_WORKERS

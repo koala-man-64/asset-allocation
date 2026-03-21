@@ -115,6 +115,31 @@ def test_gateway_from_env_enforces_timeout_floor(case: dict[str, Any], monkeypat
         client.close()
 
 
+def test_massive_gateway_timeout_floor_warning_emits_once(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
+    monkeypatch.setenv("ASSET_ALLOCATION_API_SCOPE", "api://asset-allocation/.default")
+    monkeypatch.setenv("ASSET_ALLOCATION_API_TIMEOUT_SECONDS", "5")
+    monkeypatch.setattr(massive_gateway_client_module, "_TIMEOUT_FLOOR_WARNING_EMITTED", False)
+
+    with caplog.at_level("WARNING"):
+        client_one = MassiveGatewayClient.from_env()
+        client_two = MassiveGatewayClient.from_env()
+
+    try:
+        warnings = [
+            record.message
+            for record in caplog.records
+            if "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=5.0 is too low" in record.message
+        ]
+        assert len(warnings) == 1
+    finally:
+        client_one.close()
+        client_two.close()
+
+
 @pytest.mark.parametrize("case", GATEWAY_CASES, ids=[c["id"] for c in GATEWAY_CASES])
 def test_gateway_from_env_reads_api_scope(case: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     client_cls = case["client_cls"]
