@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -184,7 +184,7 @@ export function ContainerAppsPanel() {
     return marker || String(app.name || '').trim();
   };
 
-  const fetchAppLogs = (appName: string, marker: string | null) => {
+  const fetchAppLogs = useCallback((appName: string, marker: string | null) => {
     logControllers.current[appName]?.abort();
     const controller = new AbortController();
     logControllers.current[appName] = controller;
@@ -230,7 +230,7 @@ export function ContainerAppsPanel() {
           }
         }));
       });
-  };
+  }, []);
 
   const toggleAppLogs = (app: ContainerAppStatusItem) => {
     const appName = String(app.name || '').trim();
@@ -259,7 +259,7 @@ export function ContainerAppsPanel() {
     if (!current || current.marker !== marker) {
       fetchAppLogs(expandedAppName, marker);
     }
-  }, [apps, expandedAppName]);
+  }, [apps, expandedAppName, fetchAppLogs, logStateByName]);
 
   useEffect(() => {
     if (!expandedAppName) return;

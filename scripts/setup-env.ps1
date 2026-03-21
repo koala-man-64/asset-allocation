@@ -290,7 +290,6 @@ $Config += "VITE_PORT=" + (Prompt-Var "VITE_PORT" "5174" "Vite dev server port."
 $Config += "VITE_PROXY_CONFIG_JS=" + (Prompt-Var "VITE_PROXY_CONFIG_JS" "false" "UI dev only: when true, proxy /config.js to the API.")
 $Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget "UI dev only: Vite proxy target for /api (do not include /api).")
 $Config += "VITE_API_BASE_URL=" + (Prompt-Var "VITE_API_BASE_URL" "/api" "UI build-time fallback for the API base URL.")
-$Config += "VITE_BACKTEST_API_BASE_URL=" + (Prompt-Var "VITE_BACKTEST_API_BASE_URL" "/api" "UI build-time fallback for the backtest API base URL.")
 $Config += "VITE_OIDC_AUTHORITY=" + (Prompt-Var "VITE_OIDC_AUTHORITY" "" "UI build-time fallback OIDC authority.")
 $Config += "VITE_OIDC_CLIENT_ID=" + (Prompt-Var "VITE_OIDC_CLIENT_ID" "" "UI build-time fallback OIDC client ID.")
 $Config += "VITE_OIDC_SCOPES=" + (Prompt-Var "VITE_OIDC_SCOPES" "" "UI build-time fallback OIDC scopes.")

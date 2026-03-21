@@ -23,6 +23,14 @@ const PURGE_POLL_INTERVAL_MS = 1000;
 const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function getPurgeDeletedCount(result: unknown): number {
+  if (typeof result !== 'object' || result === null) {
+    return 0;
+  }
+  const totalDeleted = (result as { totalDeleted?: unknown }).totalDeleted;
+  return typeof totalDeleted === 'number' && Number.isFinite(totalDeleted) ? totalDeleted : 0;
+}
+
 export const normalizeLayerKey = (value: string) =>
   value.toLowerCase().trim().replace(/\s+/g, '-').replace(/_/g, '-');
 
@@ -136,8 +144,11 @@ export function PurgeActionIcon({
         throw new Error('Purge returned no completion result.');
       }
 
-      toast.success(`Purged ${result.totalDeleted} blob(s).`);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+      toast.success(`Purged ${getPurgeDeletedCount(result)} blob(s).`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.systemStatusView() }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() })
+      ]);
     } catch (err: unknown) {
       toast.error(describePurgeFailure(operationId, err));
     } finally {

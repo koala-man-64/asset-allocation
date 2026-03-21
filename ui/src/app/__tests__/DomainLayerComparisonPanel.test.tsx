@@ -305,6 +305,38 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect((await screen.findAllByText('9 cols • 2.0 KB')).length).toBeGreaterThan(0);
   });
 
+  it('shows the average runtime for the mapped job in coverage metadata', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      recentJobs: [
+        {
+          jobName: 'aca-job-market',
+          jobType: 'data-ingest',
+          status: 'success',
+          startTime: NOW,
+          duration: 120,
+          triggeredBy: 'test'
+        },
+        {
+          jobName: 'aca-job-market',
+          jobType: 'data-ingest',
+          status: 'success',
+          startTime: '2026-03-03T11:00:00Z',
+          duration: 240,
+          triggeredBy: 'test'
+        }
+      ]
+    });
+
+    expect(await screen.findByText('avg runtime 3m')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+
+    expect(screen.getByText('avg runtime:')).toBeInTheDocument();
+    expect(screen.getByText('3m (2 runs)')).toBeInTheDocument();
+  });
+
   it('uses an explicit disclosure button for inline domain details', async () => {
     const user = userEvent.setup();
 
@@ -371,7 +403,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   it('shows a row-level refreshing indicator in the medallion-domain view during refresh', async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
-    let resolveMetadata: ((value: DomainMetadata) => void) | null = null;
+    let resolveMetadata!: (value: DomainMetadata) => void;
     const metadataPromise = new Promise<DomainMetadata>((resolve) => {
       resolveMetadata = resolve;
     });
@@ -386,18 +418,16 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.getByTestId('cell-refresh-icon-summary-market-bronze')).toBeInTheDocument();
     expect(screen.queryByTestId('cell-refresh-icon-detail-market-bronze')).not.toBeInTheDocument();
 
-    if (resolveMetadata) {
-      resolveMetadata({
-        layer: 'bronze',
-        domain: 'market',
-        container: 'bronze',
-        type: 'delta',
-        computedAt: NOW,
-        metadataSource: 'artifact',
-        symbolCount: 123,
-        warnings: []
-      });
-    }
+    resolveMetadata({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      metadataSource: 'artifact',
+      symbolCount: 123,
+      warnings: []
+    });
 
     await waitFor(() => {
       expect(screen.queryByTestId('domain-refresh-indicator-market')).not.toBeInTheDocument();
@@ -410,7 +440,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   it('refreshes merged header coverage action with live metadata and updates zero counts', async () => {
     const user = userEvent.setup();
     const onRefresh = vi.fn().mockResolvedValue(undefined);
-    let resolveMetadata: ((value: DomainMetadata) => void) | null = null;
+    let resolveMetadata!: (value: DomainMetadata) => void;
     const metadataPromise = new Promise<DomainMetadata>((resolve) => {
       resolveMetadata = resolve;
     });
@@ -434,18 +464,16 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
 
     expect(await screen.findByTestId('domain-refresh-indicator-market')).toBeInTheDocument();
 
-    if (resolveMetadata) {
-      resolveMetadata({
-        layer: 'bronze',
-        domain: 'market',
-        container: 'bronze',
-        type: 'delta',
-        computedAt: NOW,
-        metadataSource: 'artifact',
-        symbolCount: 0,
-        warnings: []
-      });
-    }
+    resolveMetadata({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      metadataSource: 'artifact',
+      symbolCount: 0,
+      warnings: []
+    });
 
     await waitFor(() => {
       expect(screen.queryByTestId('domain-refresh-indicator-market')).not.toBeInTheDocument();

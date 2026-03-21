@@ -80,6 +80,16 @@ logger = logging.getLogger("asset-allocation.api.system")
 router = APIRouter()
 
 
+def _reject_removed_query_params(request: Request, *names: str) -> None:
+    removed = [name for name in names if name in request.query_params]
+    if removed:
+        joined = ", ".join(sorted(removed))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported query parameter(s): {joined}. Use the canonical request contract instead.",
+        )
+
+
 def _sanitize_system_health_json_value(value: Any) -> tuple[Any, int]:
     if value is None or isinstance(value, (str, bool)):
         return value, 0
@@ -1030,13 +1040,9 @@ def domain_metadata(
         default=False,
         description="When true, collect live metadata, persist refreshed snapshot documents, and return the refreshed payload.",
     ),
-    cache_only: bool = Query(
-        default=False,
-        alias="cacheOnly",
-        description="Retained for backward compatibility. When refresh=false, domain metadata is served from persisted snapshots.",
-    ),
 ) -> JSONResponse:
     validate_auth(request)
+    _reject_removed_query_params(request, "cacheOnly")
     normalized_layer = _normalize_layer(layer)
     normalized_domain = _normalize_domain(domain)
     if not normalized_layer:
@@ -1105,17 +1111,13 @@ def domain_metadata_snapshot(
         default=None,
         description="Optional comma-separated domain filter (e.g. market,finance,earnings,price-target).",
     ),
-    cache_only: bool = Query(
-        default=True,
-        alias="cacheOnly",
-        description="Retained for backward compatibility. Batch metadata is always served from persisted snapshots.",
-    ),
     refresh: bool = Query(
         default=False,
         description="When true, bypass the in-process snapshot document cache before reading persisted metadata.",
     ),
 ) -> JSONResponse:
     validate_auth(request)
+    _reject_removed_query_params(request, "cacheOnly")
     response_payload = _build_domain_metadata_snapshot_payload(
         layers=layers,
         domains=domains,

@@ -390,7 +390,7 @@ export const toJobStatusLabel = (status: string): string => {
   if (key === 'failed') return 'FAIL';
   if (key === 'running') return 'RUN';
   if (key === 'pending') return 'PENDING';
-  return key.toUpperCase();
+  return 'PENDING';
 };
 
 export const getAzurePortalUrl = (azureId?: string | null) => {

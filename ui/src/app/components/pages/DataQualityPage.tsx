@@ -21,6 +21,7 @@ import {
 } from '@/app/components/ui/table';
 import { cn } from '@/app/components/ui/utils';
 import { formatTimeAgo, getStatusConfig } from './system-status/SystemStatusHelpers';
+import { formatSystemStatusText } from './system-status/systemStatusText';
 import { sanitizeExternalUrl } from '@/utils/urlSecurity';
 import type { RequestMeta, StorageUsageResponse } from '@/services/apiService';
 import {
@@ -200,7 +201,8 @@ export function DataQualityPage() {
     cancelRunAll,
     isRunningAll,
     runAllStatusMessage,
-    setRunAllStatusMessage
+    setRunAllStatusMessage,
+    setProbeResults
   } = useDataProbes({
     ticker: normalizedProbeSymbol,
     rows

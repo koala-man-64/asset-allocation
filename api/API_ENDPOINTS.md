@@ -60,8 +60,7 @@ API Root
     │       ├── /fundamentals/short-interest [GET] (massive.get_short_interest) - Massive short interest payload :: api/endpoints/massive.py
     │       ├── /fundamentals/short-volume [GET] (massive.get_short_volume) - Massive short volume payload :: api/endpoints/massive.py
     │       ├── /fundamentals/float [GET] (massive.get_float) - Massive float payload :: api/endpoints/massive.py
-    │       ├── /financials/{report} [GET] (massive.get_finance_report) - Massive financial payload :: api/endpoints/massive.py
-    │       └── /finance/{report} [GET] (massive.get_finance_report) - Alias for Massive financial payload :: api/endpoints/massive.py
+    │       └── /financials/{report} [GET] (massive.get_finance_report) - Massive financial payload :: api/endpoints/massive.py
 
     # Raw Data Layer
     ├── /data

@@ -67,7 +67,6 @@ describe('useSystemHealthQuery', () => {
         durationMs: 10,
         url: '/api/system/health',
         cacheDegraded: false,
-        stale: false,
         requestId: 'test-request-id'
       }
     });
@@ -104,7 +103,6 @@ describe('useSystemHealthQuery', () => {
         durationMs: 10,
         url: '/api/system/health',
         cacheDegraded: false,
-        stale: false,
         requestId: 'test-request-id'
       }
     });

@@ -4,16 +4,21 @@ baseline:
 standards:
   format: []
   lint:
-    - "python3 -m ruff check ."
-  typecheck: []
+    - "python3 scripts/run_quality_gate.py lint-python"
+    - "python3 scripts/run_quality_gate.py lint-ui"
+    - "python3 scripts/check_ui_api_drift_guards.py"
+  typecheck:
+    - "python3 scripts/run_quality_gate.py typecheck-ui"
   test_fast:
-    - "python3 -m pytest -q tests/tasks tests/market_data tests/finance_data tests/earnings_data tests/price_target_data"
+    - "python3 scripts/run_quality_gate.py test-fast-api"
+    - "python3 scripts/run_quality_gate.py test-ui"
   test_full:
-    - "python3 -m pytest -q"
+    - "python3 scripts/run_quality_gate.py test-full-api"
+    - "python3 scripts/run_quality_gate.py test-ui"
   format_fix:
-    - "python3 -m ruff format ."
+    - "python3 scripts/run_quality_gate.py format-python"
   lint_fix:
-    - "python3 -m ruff check --fix ."
+    - "python3 scripts/run_quality_gate.py lint-fix-python"
 
 architecture:
   layers:
@@ -78,7 +83,6 @@ risk_controls:
     - "deploy/sql/postgres/migrations/**"
     - "infra/**"
     - ".github/workflows/deploy.yml"
-    - "api/endpoints/system.py"
   require_tests_passing_before_automerge: true
 
 reporting:
@@ -90,7 +94,6 @@ detection:
   lookback_days: 7
   exclude_globs:
     - "artifacts/**"
-    - "*.[mM][dD]"
   speculative_safeguards:
     enabled: true
     patterns:

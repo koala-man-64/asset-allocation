@@ -62,7 +62,7 @@ const navSections: NavSection[] = [
       { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
       { path: '/symbol-purge', label: 'Symbol Purge', icon: Filter },
       { path: '/runtime-config', label: 'Runtime Config', icon: SlidersHorizontal },
-      { path: '/strategy-exploration/data-catalog', label: 'Strategy Exploration', icon: Target },
+      { path: '/strategy-exploration', label: 'Strategy Exploration', icon: Target },
       { path: '/strategies', label: 'Run Configurations', icon: Target },
       { path: '/universes', label: 'Universe Configurations', icon: Globe },
       { path: '/rankings', label: 'Ranking Configurations', icon: Layers3 },

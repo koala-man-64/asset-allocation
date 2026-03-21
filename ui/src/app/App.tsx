@@ -143,19 +143,11 @@ function AppContent() {
                 <Route path="/debug-symbols" element={<DebugSymbolsPage />} />
                 <Route path="/runtime-config" element={<RuntimeConfigPage />} />
                 <Route path="/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
-                <Route path="/data-admin/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
                 <Route path="/stock-explorer" element={<StockExplorerPage />} />
                 <Route path="/strategies" element={<StrategyConfigPage />} />
-                <Route path="/run-configurations" element={<StrategyConfigPage />} />
                 <Route path="/universes" element={<UniverseConfigPage />} />
-                <Route path="/universe-configurations" element={<UniverseConfigPage />} />
                 <Route path="/rankings" element={<RankingConfigPage />} />
-                <Route path="/ranking-configurations" element={<RankingConfigPage />} />
                 <Route path="/strategy-exploration" element={<StrategyDataCatalogPage />} />
-                <Route
-                  path="/strategy-exploration/data-catalog"
-                  element={<StrategyDataCatalogPage />}
-                />
                 <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
                 <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

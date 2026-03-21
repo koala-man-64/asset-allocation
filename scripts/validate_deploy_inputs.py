@@ -147,30 +147,28 @@ def validate_auth_configuration() -> None:
     if not api_oidc_audience:
         fail("API_OIDC_AUDIENCE is required for the production deploy workflow.")
 
-    ui_oidc_authority = optional_value("UI_OIDC_AUTHORITY")
-    ui_oidc_client_id = optional_value("UI_OIDC_CLIENT_ID")
-    ui_oidc_scopes = optional_value("UI_OIDC_SCOPES")
-    ui_oidc_redirect_uri = optional_value("UI_OIDC_REDIRECT_URI")
-    ui_oidc_inputs_present = any(
-        (
-            ui_oidc_authority,
-            ui_oidc_client_id,
-            ui_oidc_scopes,
-            ui_oidc_redirect_uri,
+    ui_oidc_values = {
+        "UI_OIDC_CLIENT_ID": optional_value("UI_OIDC_CLIENT_ID"),
+        "UI_OIDC_AUTHORITY": optional_value("UI_OIDC_AUTHORITY"),
+        "UI_OIDC_SCOPES": optional_value("UI_OIDC_SCOPES"),
+        "UI_OIDC_REDIRECT_URI": optional_value("UI_OIDC_REDIRECT_URI"),
+    }
+
+    if not any(ui_oidc_values.values()):
+        fail(
+            "Production deploy requires browser OIDC configuration for the UI. "
+            "Set UI_OIDC_CLIENT_ID, UI_OIDC_AUTHORITY, UI_OIDC_SCOPES, and "
+            "UI_OIDC_REDIRECT_URI. API_KEY is not used by browser clients."
         )
-    )
 
-    if not ui_oidc_inputs_present:
-        fail("Production deploy requires UI OIDC configuration.")
-    if not (ui_oidc_authority and ui_oidc_client_id):
-        fail("UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together.")
-    if not ui_oidc_scopes:
-        fail("UI_OIDC_SCOPES is required for the production deploy workflow.")
+    missing_ui_oidc = [name for name, value in ui_oidc_values.items() if not value]
+    if missing_ui_oidc:
+        fail(
+            "Production deploy requires complete browser OIDC configuration for the UI. "
+            f"Missing: {', '.join(missing_ui_oidc)}. API_KEY is not used by browser clients."
+        )
 
-    redirect = optional_value("UI_OIDC_REDIRECT_URI")
-    if not redirect:
-        fail("UI_OIDC_REDIRECT_URI is required when browser OIDC is configured.")
-    parsed = urlparse(redirect)
+    parsed = urlparse(ui_oidc_values["UI_OIDC_REDIRECT_URI"])
     if parsed.scheme != "https" or not (parsed.hostname or "").strip():
         fail("UI_OIDC_REDIRECT_URI must be an absolute https:// URL.")
 

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '@/hooks/useDataQueries';
 import {
@@ -17,7 +17,7 @@ export interface UseSystemStatusViewQueryOptions {
 
 export function useSystemStatusViewQuery(
   options: UseSystemStatusViewQueryOptions = {}
-): UseQueryResult<SystemStatusViewResponse> {
+) {
   const autoRefresh = options.autoRefresh ?? false;
   const jobOverrides = useSystemHealthJobOverrides();
   const query = useQuery<SystemStatusViewResponse>({

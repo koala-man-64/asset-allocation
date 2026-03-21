@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { queryKeys } from '@/hooks/useDataQueries';
 import { ApiError, backtestApi } from '@/services/backtestApi';
 import { clearJobOverride } from '@/hooks/useSystemHealthJobOverrides';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 type JobControlAction = 'suspend' | 'resume' | 'stop';
 type QueryKeyLike = readonly string[];
+const DEFAULT_INVALIDATION_KEYS = [queryKeys.systemStatusView(), queryKeys.systemHealth()] as const;
 
 function normalizeInvalidationKeys(
-  queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
+  queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = DEFAULT_INVALIDATION_KEYS
 ): QueryKeyLike[] {
   if (Array.isArray(queryKey[0])) {
     return (queryKey as ReadonlyArray<QueryKeyLike>).filter((entry) => entry.length > 0);
@@ -27,7 +29,7 @@ export function useJobSuspend() {
   const setJobSuspended = async (
     jobName: string,
     suspended: boolean,
-    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
+    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = DEFAULT_INVALIDATION_KEYS
   ) => {
     const action: JobControlAction = suspended ? 'stop' : 'resume';
     setJobControl({ jobName, action });
@@ -59,7 +61,7 @@ export function useJobSuspend() {
 
   const stopJob = async (
     jobName: string,
-    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
+    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = DEFAULT_INVALIDATION_KEYS
   ) => {
     setJobControl({ jobName, action: 'stop' });
     try {

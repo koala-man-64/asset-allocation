@@ -450,7 +450,25 @@ def test_deploy_validation_requires_complete_ui_oidc_configuration() -> None:
         UI_OIDC_REDIRECT_URI="",
     )
     assert result.returncode != 0
-    assert "UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together." in (result.stdout + result.stderr)
+    assert (
+        "Missing: UI_OIDC_AUTHORITY, UI_OIDC_SCOPES, UI_OIDC_REDIRECT_URI. API_KEY is not used by browser clients."
+        in (result.stdout + result.stderr)
+    )
+
+    missing_all_ui_oidc = _run_deploy_validation(
+        UI_OIDC_CLIENT_ID="",
+        UI_OIDC_AUTHORITY="",
+        UI_OIDC_SCOPES="",
+        UI_OIDC_REDIRECT_URI="",
+    )
+    assert missing_all_ui_oidc.returncode != 0
+    assert (
+        "Production deploy requires browser OIDC configuration for the UI." in
+        (missing_all_ui_oidc.stdout + missing_all_ui_oidc.stderr)
+    )
+    assert "API_KEY is not used by browser clients." in (
+        missing_all_ui_oidc.stdout + missing_all_ui_oidc.stderr
+    )
 
     missing_api_oidc = _run_deploy_validation(
         API_OIDC_ISSUER="",
@@ -474,7 +492,7 @@ def test_deploy_validation_requires_complete_ui_oidc_configuration() -> None:
         UI_OIDC_REDIRECT_URI="",
     )
     assert missing_redirect_uri.returncode != 0
-    assert "UI_OIDC_REDIRECT_URI is required when browser OIDC is configured." in (
+    assert "Missing: UI_OIDC_REDIRECT_URI. API_KEY is not used by browser clients." in (
         missing_redirect_uri.stdout + missing_redirect_uri.stderr
     )
 

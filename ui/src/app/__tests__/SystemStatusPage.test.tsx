@@ -9,6 +9,7 @@ import { getDomainOrderEntries } from '@/app/components/pages/system-status/doma
 import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import type { SystemStatusViewResponse } from '@/services/apiService';
+import type { DataLayer } from '@/types/strategy';
 
 const { MOCK_RUN_TIMESTAMPS, domainLayerCoverageSpy, jobLogStreamSpy } = vi.hoisted(() => ({
   MOCK_RUN_TIMESTAMPS: {
@@ -226,7 +227,7 @@ describe('SystemStatusPage', () => {
       }
     });
 
-  const expectNoPlatinumDomain = (layers: Array<{ domains?: Array<{ name?: string }> }>) => {
+  const expectNoPlatinumDomain = (layers: DataLayer[]) => {
     for (const layer of layers) {
       for (const domain of layer.domains || []) {
         expect(
@@ -244,8 +245,8 @@ describe('SystemStatusPage', () => {
     await screen.findByTestId('mock-domain-layer-coverage-panel');
 
     expect(screen.getByText(/VIEW UPDATED/i)).toBeInTheDocument();
-    expect(screen.getByTestId('mock-container-apps-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('mock-job-log-stream-panel')).toBeInTheDocument();
+    expect(await screen.findByTestId('mock-container-apps-panel')).toBeInTheDocument();
+    expect(await screen.findByTestId('mock-job-log-stream-panel')).toBeInTheDocument();
   });
 
   it('keeps platinum as a layer but removes it as a data domain', async () => {
@@ -259,7 +260,7 @@ describe('SystemStatusPage', () => {
     });
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+      dataLayers: DataLayer[];
       managedContainerJobs: Array<{ name: string; lastModifiedAt?: string | null }>;
       metadataSource?: string | null;
     };
@@ -286,7 +287,7 @@ describe('SystemStatusPage', () => {
     });
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+      dataLayers: DataLayer[];
     };
 
     const coverageOrder = getDomainOrderEntries(coverageProps.dataLayers).map((entry) => entry.key);
@@ -386,7 +387,7 @@ describe('SystemStatusPage', () => {
       .mockResolvedValueOnce(
         buildSystemStatusView({
           systemHealth: {
-            overall: 'warning',
+            overall: 'degraded',
             dataLayers: [],
             recentJobs: [
               {
@@ -442,7 +443,7 @@ describe('SystemStatusPage', () => {
       managedContainerJobs: Array<{ name: string; runningState?: string | null }>;
     };
 
-    expect(coverageProps.overall).toBe('warning');
+    expect(coverageProps.overall).toBe('degraded');
     expect(coverageProps.jobStates['aca-job-zeta']).toBe('Running');
     expect(coverageProps.recentJobs).toEqual(
       expect.arrayContaining([

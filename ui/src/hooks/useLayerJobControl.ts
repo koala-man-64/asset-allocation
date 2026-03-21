@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { queryKeys } from '@/hooks/useDataQueries';
 import { backtestApi } from '@/services/backtestApi';
 import { DataLayer } from '@/types/strategy';
 import {
@@ -66,7 +67,8 @@ export function useLayerJobControl() {
       toast.info(`Triggering ${jobs.length} jobs for ${layer.name}...`);
       await Promise.allSettled(jobs.map((job) => backtestApi.triggerJob(job)));
       toast.success(`Trigger commands sent for ${layer.name}`);
-      void queryClient.invalidateQueries({ queryKey: ['systemHealth'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemStatusView() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (err: unknown) {
       console.error(err);
       toast.error(`Failed to trigger jobs for ${layer.name}`);
@@ -99,7 +101,8 @@ export function useLayerJobControl() {
       );
       await Promise.allSettled(requests);
       toast.success(`${suspend ? 'Stop' : 'Resume'} commands sent for ${layer.name}`);
-      void queryClient.invalidateQueries({ queryKey: ['systemHealth'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemStatusView() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (err: unknown) {
       console.error(err);
       toast.error(`Failed to ${action} jobs for ${layer.name}`);

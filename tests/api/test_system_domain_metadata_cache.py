@@ -71,7 +71,9 @@ def test_write_and_read_cached_domain_metadata_snapshot_round_trip(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_domain_metadata_returns_cached_snapshot_when_refresh_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         system,
         "_read_cached_domain_metadata_snapshot",
@@ -84,7 +86,7 @@ async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: p
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market&cacheOnly=true")
+        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market")
 
     assert response.status_code == 200
     payload = response.json()
@@ -265,12 +267,12 @@ async def test_system_status_view_refresh_bypasses_system_health_cache_and_domai
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_domain_metadata_snapshot_miss_returns_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", lambda layer, domain, force_refresh=False: None)
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market&cacheOnly=true")
+        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market")
 
     assert response.status_code == 200
     payload = response.json()
@@ -311,9 +313,7 @@ async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: py
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get(
-            "/api/system/domain-metadata/snapshot?layers=bronze&domains=market,finance&cacheOnly=true"
-        )
+        response = await client.get("/api/system/domain-metadata/snapshot?layers=bronze&domains=market,finance")
 
     assert response.status_code == 200
     payload = response.json()
@@ -338,14 +338,32 @@ async def test_domain_metadata_snapshot_never_live_fills_missing_entries(monkeyp
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get(
-            "/api/system/domain-metadata/snapshot?layers=bronze&domains=market&cacheOnly=false"
-        )
+        response = await client.get("/api/system/domain-metadata/snapshot?layers=bronze&domains=market")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["entries"] == {}
     assert payload["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_rejects_removed_cache_only_param() -> None:
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market&cacheOnly=true")
+
+    assert response.status_code == 400
+    assert "Unsupported query parameter(s): cacheOnly" in response.json().get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_snapshot_rejects_removed_cache_only_param() -> None:
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/domain-metadata/snapshot?layers=bronze&cacheOnly=true")
+
+    assert response.status_code == 400
+    assert "Unsupported query parameter(s): cacheOnly" in response.json().get("detail", "")
 
 
 @pytest.mark.asyncio
