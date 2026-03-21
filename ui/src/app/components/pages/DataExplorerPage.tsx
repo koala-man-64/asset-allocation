@@ -294,14 +294,17 @@ export const DataExplorerPage: React.FC = () => {
   const rootMeta = treeMetaByPath[rootPath];
   const rootLoading = Boolean(loadingPaths[rootPath]);
 
-  const handleToggleFolder = (folderPath: string) => {
-    const normalized = normalizeFolderPath(folderPath);
-    const shouldExpand = !expandedFolders[normalized];
-    setExpandedFolders((prev) => ({ ...prev, [normalized]: shouldExpand }));
-    if (shouldExpand && !treeByPath[normalized]) {
-      void loadFolder(normalized);
-    }
-  };
+  const handleToggleFolder = useCallback(
+    (folderPath: string) => {
+      const normalized = normalizeFolderPath(folderPath);
+      const shouldExpand = !expandedFolders[normalized];
+      setExpandedFolders((prev) => ({ ...prev, [normalized]: shouldExpand }));
+      if (shouldExpand && !treeByPath[normalized]) {
+        void loadFolder(normalized);
+      }
+    },
+    [expandedFolders, loadFolder, treeByPath]
+  );
 
   const refreshExplorer = useCallback(async () => {
     if (refreshing) {
@@ -414,7 +417,7 @@ export const DataExplorerPage: React.FC = () => {
         );
       });
     },
-    [expandedFolders, loadPreview, loadingPaths, selectedFilePath, treeByPath]
+    [expandedFolders, handleToggleFolder, loadPreview, loadingPaths, selectedFilePath, treeByPath]
   );
 
   const selectedFileLabel = useMemo(() => {

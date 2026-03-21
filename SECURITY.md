@@ -9,8 +9,7 @@ If GitHub Security Advisories are not available for this repo, report the issue 
 ## Authentication and Authorization
 
 - Production deploys must configure `API_OIDC_ISSUER`, `API_OIDC_AUDIENCE`, `UI_OIDC_CLIENT_ID`, `UI_OIDC_AUTHORITY`, `UI_OIDC_SCOPES`, `UI_OIDC_REDIRECT_URI`, and `ASSET_ALLOCATION_API_SCOPE`.
-- API key auth uses `API_KEY` and the fixed `X-API-Key` header.
-- OIDC auth validates issuer and audience and can require scopes and roles. Production browser and bronze-job access should prefer role-based enforcement over shared API keys. The service discovers JWKS from the issuer unless `API_OIDC_JWKS_URL` is set explicitly.
+- OIDC auth validates issuer and audience and can require scopes and roles. The service discovers JWKS from the issuer unless `API_OIDC_JWKS_URL` is set explicitly.
 - The UI receives its runtime auth and API base URL settings from `/config.js`.
 - Browser OIDC requires an explicit absolute `UI_OIDC_REDIRECT_URI`; deployed environments should use `https://.../auth/callback`.
 - Local development can fall back to anonymous access only when no auth providers are configured and the runtime is local. Deployed environments do not allow anonymous auth.
@@ -18,7 +17,7 @@ If GitHub Security Advisories are not available for this repo, report the issue 
 ## Secrets and Identities
 
 - Do not commit secrets. `.gitignore` excludes `.env` and `.env.*`, while `.env.template` is the checked-in contract.
-- Public ACA deploy manifests use Entra OIDC for browser and bronze-job auth. `API_KEY` remains a local/private compatibility secret only if you still have non-OIDC internal callers.
+- Public ACA deploy manifests use Entra OIDC for browser and bronze-job auth.
 - Azure deployment uses a user-assigned managed identity for registry pulls and platform access.
 
 ## Response Hardening and Input Validation

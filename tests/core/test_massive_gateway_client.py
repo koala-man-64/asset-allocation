@@ -26,9 +26,7 @@ def test_warmup_probe_retries_before_first_request(monkeypatch):
     client = MassiveGatewayClient(
         MassiveGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=60.0,
             warmup_enabled=True,
             warmup_max_attempts=3,
@@ -37,6 +35,7 @@ def test_warmup_probe_retries_before_first_request(monkeypatch):
             warmup_probe_timeout_seconds=1.0,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         first = client.get_daily_time_series_csv(symbol="AAPL")
@@ -67,13 +66,12 @@ def test_warmup_can_be_disabled(monkeypatch):
     client = MassiveGatewayClient(
         MassiveGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=60.0,
             warmup_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         csv = client.get_daily_time_series_csv(symbol="AAPL")
@@ -98,14 +96,13 @@ def test_unified_snapshot_uses_batch_api_route() -> None:
     client = MassiveGatewayClient(
         MassiveGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=60.0,
             warmup_enabled=False,
             readiness_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         payload = client.get_unified_snapshot(symbols=["aapl", "MSFT", "AAPL"], asset_type="stocks")
@@ -131,14 +128,13 @@ def test_get_tickers_uses_reference_ticker_route() -> None:
     client = MassiveGatewayClient(
         MassiveGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=60.0,
             warmup_enabled=False,
             readiness_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         payload = client.get_tickers(market="stocks", locale="us", active=True)
@@ -165,14 +161,13 @@ def test_short_interest_uses_underscore_date_filters() -> None:
     client = MassiveGatewayClient(
         MassiveGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=60.0,
             warmup_enabled=False,
             readiness_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         client.get_short_interest(
@@ -204,14 +199,13 @@ def test_short_volume_uses_underscore_date_filters() -> None:
     client = MassiveGatewayClient(
         MassiveGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=60.0,
             warmup_enabled=False,
             readiness_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         client.get_short_volume(
@@ -243,14 +237,13 @@ def test_finance_valuation_uses_ratios_route() -> None:
     client = MassiveGatewayClient(
         MassiveGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=60.0,
             warmup_enabled=False,
             readiness_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         client.get_finance_report(

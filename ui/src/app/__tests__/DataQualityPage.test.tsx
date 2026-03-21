@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
 import { DataService } from '@/services/DataService';
@@ -81,8 +82,7 @@ describe('DataQualityPage', () => {
         status: 200,
         durationMs: 25,
         url: '/api/system/health',
-        cacheHint: 'miss',
-        stale: false
+        cacheHint: 'miss'
       }
     });
     vi.mocked(DataService.getDataQualityValidation).mockResolvedValue({
@@ -195,9 +195,10 @@ describe('DataQualityPage', () => {
   });
 
   it('forces refresh with refresh=true on click', async () => {
+    const user = userEvent.setup();
     renderWithProviders(<DataQualityPage />);
     const refreshButton = await screen.findByRole('button', { name: /^refresh$/i });
-    fireEvent.click(refreshButton);
+    await user.click(refreshButton);
     expect(DataService.getSystemHealthWithMeta).toHaveBeenCalledWith({ refresh: true });
   });
 

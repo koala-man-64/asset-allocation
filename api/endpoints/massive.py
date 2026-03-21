@@ -275,7 +275,6 @@ def get_ratios(
 
 
 @router.get("/financials/{report}")
-@router.get("/finance/{report}")  # Backwards-compatible alias
 def get_finance_report(
     request: Request,
     report: FinanceReport,

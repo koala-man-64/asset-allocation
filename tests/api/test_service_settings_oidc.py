@@ -36,3 +36,12 @@ def test_browser_oidc_accepts_localhost_http_redirect_uri(monkeypatch: pytest.Mo
 
     assert settings.browser_oidc_enabled is True
     assert settings.ui_oidc_config["redirectUri"] == "http://localhost:5174/auth/callback"
+
+
+def test_deployed_runtime_requires_api_oidc_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+    monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
+    monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
+
+    with pytest.raises(ValueError, match="Deployed runtime requires API OIDC configuration."):
+        ServiceSettings.from_env()

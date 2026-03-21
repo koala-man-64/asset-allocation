@@ -15,7 +15,6 @@ from core.api_gateway_auth import build_access_token_provider
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 60.0
-_FIXED_API_KEY_HEADER = "X-API-Key"
 _DEFAULT_API_WARMUP_ENABLED = True
 _DEFAULT_API_WARMUP_MAX_ATTEMPTS = 3
 _DEFAULT_API_WARMUP_BASE_DELAY_SECONDS = 1.0
@@ -130,8 +129,6 @@ def _emit_bounded_gateway_warning(category: str, message: str) -> None:
 @dataclass(frozen=True)
 class MassiveGatewayClientConfig:
     base_url: str
-    api_key: Optional[str]
-    api_key_header: str
     api_scope: Optional[str]
     timeout_seconds: float
     warmup_enabled: bool = _DEFAULT_API_WARMUP_ENABLED
@@ -176,11 +173,11 @@ class MassiveGatewayClient:
             raise ValueError("ASSET_ALLOCATION_API_BASE_URL is required for Massive ETL via API gateway.")
         base_url = str(base_url).rstrip("/")
 
-        api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(
-            os.environ.get("API_KEY")
-        )
         api_scope = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_SCOPE"))
-        api_key_header = _FIXED_API_KEY_HEADER
+        if not api_scope:
+            raise ValueError(
+                "ASSET_ALLOCATION_API_SCOPE is required for Massive ETL via the Asset Allocation API gateway."
+            )
 
         timeout_seconds = _env_float(
             "ASSET_ALLOCATION_API_TIMEOUT_SECONDS",
@@ -219,8 +216,6 @@ class MassiveGatewayClient:
         return MassiveGatewayClient(
             MassiveGatewayClientConfig(
                 base_url=base_url,
-                api_key=api_key,
-                api_key_header=str(api_key_header),
                 api_scope=api_scope,
                 timeout_seconds=float(timeout_seconds),
                 warmup_enabled=True,
@@ -246,17 +241,18 @@ class MassiveGatewayClient:
 
     def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self._access_token_provider is None and self.config.api_scope:
-            self._access_token_provider = build_access_token_provider(self.config.api_scope)
-        if self._access_token_provider is not None:
-            try:
-                headers["Authorization"] = f"Bearer {self._access_token_provider()}"
-            except Exception as exc:
+        if self._access_token_provider is None:
+            if not self.config.api_scope:
                 raise MassiveGatewayAuthError(
-                    "Failed to acquire bearer token for the Asset Allocation API gateway."
-                ) from exc
-        elif self.config.api_key:
-            headers[str(self.config.api_key_header)] = str(self.config.api_key)
+                    "ASSET_ALLOCATION_API_SCOPE is required for bearer-token access to the Asset Allocation API gateway."
+                )
+            self._access_token_provider = build_access_token_provider(self.config.api_scope)
+        try:
+            headers["Authorization"] = f"Bearer {self._access_token_provider()}"
+        except Exception as exc:
+            raise MassiveGatewayAuthError(
+                "Failed to acquire bearer token for the Asset Allocation API gateway."
+            ) from exc
 
         caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME"))
         caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME"))

@@ -413,6 +413,15 @@ def test_env_template_includes_regime_job_defaults() -> None:
     assert "VITE_BACKTEST_API_KEY" not in text, (
         ".env.template must not define bundled browser API keys"
     )
+    assert "ASSET_ALLOCATION_API_KEY=" not in text, (
+        ".env.template must not define ETL API-key compatibility fallbacks"
+    )
+    assert "\nAPI_KEY=" not in text, (
+        ".env.template must not define API-key auth fallbacks"
+    )
+    assert "VITE_BACKTEST_API_BASE_URL=" not in text, (
+        ".env.template must not define legacy backtest UI base URL fallbacks"
+    )
     assert "API_INGRESS_EXTERNAL" not in text, (
         ".env.template must not expose ingress as an env toggle"
     )
@@ -450,7 +459,25 @@ def test_deploy_validation_requires_complete_ui_oidc_configuration() -> None:
         UI_OIDC_REDIRECT_URI="",
     )
     assert result.returncode != 0
-    assert "UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together." in (result.stdout + result.stderr)
+    assert (
+        "Missing: UI_OIDC_AUTHORITY, UI_OIDC_SCOPES, UI_OIDC_REDIRECT_URI. The deployed UI only supports OIDC."
+        in (result.stdout + result.stderr)
+    )
+
+    missing_all_ui_oidc = _run_deploy_validation(
+        UI_OIDC_CLIENT_ID="",
+        UI_OIDC_AUTHORITY="",
+        UI_OIDC_SCOPES="",
+        UI_OIDC_REDIRECT_URI="",
+    )
+    assert missing_all_ui_oidc.returncode != 0
+    assert (
+        "Production deploy requires browser OIDC configuration for the UI." in
+        (missing_all_ui_oidc.stdout + missing_all_ui_oidc.stderr)
+    )
+    assert "The deployed UI only supports OIDC." in (
+        missing_all_ui_oidc.stdout + missing_all_ui_oidc.stderr
+    )
 
     missing_api_oidc = _run_deploy_validation(
         API_OIDC_ISSUER="",
@@ -474,7 +501,7 @@ def test_deploy_validation_requires_complete_ui_oidc_configuration() -> None:
         UI_OIDC_REDIRECT_URI="",
     )
     assert missing_redirect_uri.returncode != 0
-    assert "UI_OIDC_REDIRECT_URI is required when browser OIDC is configured." in (
+    assert "Missing: UI_OIDC_REDIRECT_URI. The deployed UI only supports OIDC." in (
         missing_redirect_uri.stdout + missing_redirect_uri.stderr
     )
 
@@ -510,6 +537,13 @@ def test_deploy_validation_requires_api_scope_for_bronze_jobs() -> None:
     assert "ASSET_ALLOCATION_API_SCOPE is required for bronze job managed-identity callers." in (
         result.stdout + result.stderr
     )
+
+
+def test_deploy_validation_rejects_removed_auth_and_ui_compatibility_settings() -> None:
+    for name in ("API_KEY", "ASSET_ALLOCATION_API_KEY", "VITE_BACKTEST_API_BASE_URL"):
+        result = _run_deploy_validation(**{name: "stale-value"})
+        assert result.returncode != 0
+        assert f"{name} is no longer supported." in (result.stdout + result.stderr)
 
 
 def test_public_deploy_surfaces_no_longer_reference_shared_api_key_auth() -> None:

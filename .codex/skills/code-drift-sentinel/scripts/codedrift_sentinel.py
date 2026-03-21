@@ -298,13 +298,16 @@ def run_list_command(cmd: list[str], cwd: pathlib.Path, timeout: int = 180) -> t
 
 def run_shell_command(command: str, cwd: pathlib.Path, timeout: int = 1800) -> CommandResult:
     started = time.perf_counter()
+    if os.name == "nt":
+        shell_command = ["powershell.exe", "-NoProfile", "-Command", command]
+    else:
+        shell_command = [os.environ.get("SHELL", "/bin/bash"), "-lc", command]
+
     proc = subprocess.run(
-        command,
+        shell_command,
         cwd=str(cwd),
         text=True,
         capture_output=True,
-        shell=True,
-        executable="/bin/bash",
         check=False,
         timeout=timeout,
     )
@@ -1083,6 +1086,7 @@ def detect_behavioral_and_test_drift(
     detection_config: dict[str, Any] | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
+    test_definition_pattern = re.compile(r"\b(def\s+test_|(?:it|test)(?:\.each)?\()")
 
     test_failures = [result for result in quality_results if result.name in {"test_fast", "test_full"} and result.status == "failed"]
     if test_failures:
@@ -1106,6 +1110,16 @@ def detect_behavioral_and_test_drift(
             )
         )
 
+    added_test_files: set[str] = set()
+    added_test_lines = iter_added_lines_by_file(
+        compare_diff,
+        include_patterns=TEST_PATH_PATTERNS,
+        exclude_patterns=DEFAULT_EXCLUDED_PATH_PATTERNS,
+    )
+    for file_path, added_line in added_test_lines:
+        if test_definition_pattern.search(added_line):
+            added_test_files.add(file_path)
+
     removed_test_markers: list[str] = []
     removed_test_files: set[str] = set()
     removed_test_lines = iter_removed_lines_by_file(
@@ -1114,7 +1128,7 @@ def detect_behavioral_and_test_drift(
         exclude_patterns=DEFAULT_EXCLUDED_PATH_PATTERNS,
     )
     for file_path, removed_line in removed_test_lines:
-        if re.search(r"\b(def\s+test_|it\(|test\()", removed_line):
+        if test_definition_pattern.search(removed_line) and file_path not in added_test_files:
             removed_test_files.add(file_path)
             removed_test_markers.append(f"{file_path}: {removed_line}")
 

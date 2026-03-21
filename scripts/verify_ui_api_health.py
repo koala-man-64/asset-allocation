@@ -146,14 +146,14 @@ def _probe_ui_config(*, url: str, timeout_seconds: float) -> ProbeResult:
         )
 
     body = response.text or ""
-    if "__BACKTEST_UI_CONFIG__" not in body and "__API_UI_CONFIG__" not in body:
+    if "__API_UI_CONFIG__" not in body:
         return ProbeResult(
             name="UI config.js",
             url=url,
             ok=False,
             elapsed_ms=elapsed_ms,
             status_code=response.status_code,
-            error="config.js did not contain expected runtime config keys.",
+            error="config.js did not contain the canonical UI runtime config key.",
         )
 
     return ProbeResult(

@@ -32,14 +32,13 @@ async def test_config_js_emits_fixed_api_base_url(monkeypatch: pytest.MonkeyPatc
     assert "application/javascript" in resp.headers.get("content-type", "")
     assert "no-store" in resp.headers.get("cache-control", "").lower()
 
-    cfg_backtest = _parse_window_assignment(resp.text, "__BACKTEST_UI_CONFIG__")
-    cfg_api = _parse_window_assignment(resp.text, "__API_UI_CONFIG__")
-    assert cfg_backtest == cfg_api
+    cfg = _parse_window_assignment(resp.text, "__API_UI_CONFIG__")
 
-    assert cfg_backtest["apiBaseUrl"] == "/api"
-    assert cfg_backtest["backtestApiBaseUrl"] == "/api"
-    assert cfg_backtest["oidcRedirectUri"] is None
-    assert "apiKeyAuthConfigured" not in cfg_backtest
+    assert "window.__BACKTEST_UI_CONFIG__" not in resp.text
+    assert cfg["apiBaseUrl"] == "/api"
+    assert cfg["oidcRedirectUri"] is None
+    assert "backtestApiBaseUrl" not in cfg
+    assert "apiKeyAuthConfigured" not in cfg
 
 
 @pytest.mark.asyncio
@@ -52,9 +51,9 @@ async def test_config_js_ignores_ui_api_base_url_override(monkeypatch: pytest.Mo
         resp = await client.get("/config.js")
 
     assert resp.status_code == 200
-    cfg = _parse_window_assignment(resp.text, "__BACKTEST_UI_CONFIG__")
+    cfg = _parse_window_assignment(resp.text, "__API_UI_CONFIG__")
     assert cfg["apiBaseUrl"] == "/api"
-    assert cfg["backtestApiBaseUrl"] == "/api"
+    assert "backtestApiBaseUrl" not in cfg
 
 
 @pytest.mark.asyncio
@@ -74,6 +73,11 @@ async def test_config_js_preserves_explicit_oidc_redirect_uri(monkeypatch: pytes
         resp = await client.get("/config.js")
 
     assert resp.status_code == 200
-    cfg = _parse_window_assignment(resp.text, "__BACKTEST_UI_CONFIG__")
+    cfg = _parse_window_assignment(resp.text, "__API_UI_CONFIG__")
+    assert cfg["oidcEnabled"] is True
+    assert cfg["authRequired"] is True
+    assert cfg["oidcClientId"] == "spa-client-id"
+    assert cfg["oidcAuthority"] == "https://login.microsoftonline.com/tenant-id"
+    assert cfg["oidcScopes"] == "api://asset-allocation-api/user_impersonation"
     assert cfg["oidcRedirectUri"] == "https://asset-allocation.example.com/auth/callback"
 

@@ -107,10 +107,10 @@ export function AppHeader() {
                 <DropdownMenuItem disabled>{auth.userLabel}</DropdownMenuItem>
               )}
               {auth.enabled && !auth.authenticated && (
-                <DropdownMenuItem onClick={auth.signIn}>Sign in</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => auth.signIn()}>Sign in</DropdownMenuItem>
               )}
               {auth.enabled && auth.authenticated && (
-                <DropdownMenuItem onClick={auth.signOut}>Sign out</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => auth.signOut()}>Sign out</DropdownMenuItem>
               )}
               <DropdownMenuItem>Settings</DropdownMenuItem>
               <DropdownMenuItem>Defaults</DropdownMenuItem>

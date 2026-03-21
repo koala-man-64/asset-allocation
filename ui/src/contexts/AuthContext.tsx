@@ -2,33 +2,11 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import type { AccountInfo, AuthenticationResult } from '@azure/msal-browser';
 import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/msal-browser';
 
+import { config } from '@/config';
 import { setAccessTokenProvider } from '@/services/authTransport';
 
 const POST_LOGIN_PATH_STORAGE_KEY = 'asset-allocation.post-login-path';
 const DEFAULT_POST_LOGIN_PATH = '/system-status';
-
-type RuntimeConfig = {
-  oidcClientId?: string;
-  oidcAuthority?: string;
-  oidcScopes?: string[] | string;
-  oidcRedirectUri?: string;
-};
-
-function getRuntimeConfig(): RuntimeConfig {
-  return (window.__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
-}
-
-function parseScopes(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw
-      .map(String)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-  if (typeof raw !== 'string') return [];
-  const normalized = raw.replace(/,/g, ' ').trim();
-  return normalized ? normalized.split(/\s+/).filter(Boolean) : [];
-}
 
 export interface AuthContextType {
   enabled: boolean;
@@ -84,18 +62,12 @@ export function consumePostLoginRedirectPath(): string {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const runtime = getRuntimeConfig();
-  const oidcClientId = String(
-    runtime.oidcClientId ?? import.meta.env.VITE_OIDC_CLIENT_ID ?? ''
-  ).trim();
-  const oidcAuthority = String(
-    runtime.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY ?? ''
-  ).trim();
-  const oidcScopesRaw = runtime.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES;
-  const oidcRedirectUri = String(runtime.oidcRedirectUri ?? '').trim();
-  const oidcScopes = useMemo(() => parseScopes(oidcScopesRaw), [oidcScopesRaw]);
+  const oidcClientId = config.oidcClientId;
+  const oidcAuthority = config.oidcAuthority;
+  const oidcScopes = config.oidcScopes;
+  const oidcRedirectUri = config.oidcRedirectUri;
 
-  const enabled = Boolean(oidcClientId && oidcAuthority && oidcRedirectUri);
+  const enabled = config.oidcEnabled && Boolean(oidcClientId && oidcAuthority && oidcRedirectUri);
 
   const msal = useMemo(() => {
     if (!enabled) return null;
@@ -104,8 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clientId: oidcClientId,
         authority: oidcAuthority,
         redirectUri: oidcRedirectUri,
-        postLogoutRedirectUri: oidcRedirectUri,
-        navigateToLoginRequestUrl: false
+        postLogoutRedirectUri: oidcRedirectUri
       },
       cache: {
         cacheLocation: 'sessionStorage'

@@ -453,11 +453,9 @@ def create_app() -> FastAPI:
 
         cfg = {
             "apiBaseUrl": configured_api_base_url,
-            # Backwards-compatible alias used by the UI runtime config loader.
-            "backtestApiBaseUrl": configured_api_base_url,
             "oidcAuthority": settings.ui_oidc_config.get("authority"),
             "oidcClientId": settings.ui_oidc_config.get("clientId"),
-            "oidcScopes": settings.ui_oidc_config.get("scope") or settings.ui_oidc_config.get("scopes"),
+            "oidcScopes": settings.ui_oidc_config.get("scope"),
             "oidcRedirectUri": settings.ui_oidc_config.get("redirectUri"),
             "oidcAudience": settings.oidc_audience,
             "oidcEnabled": settings.browser_oidc_enabled,
@@ -471,7 +469,6 @@ def create_app() -> FastAPI:
         )
         content = "\n".join(
             [
-                f"window.__BACKTEST_UI_CONFIG__ = {json.dumps(cfg)};",
                 f"window.__API_UI_CONFIG__ = {json.dumps(cfg)};",
             ]
         )

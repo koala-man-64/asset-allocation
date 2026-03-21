@@ -1,13 +1,4 @@
-import type {
-  Alert,
-  AlertConfig,
-  ExecutionMetrics,
-  FinanceData,
-  MarketData,
-  Order,
-  Position,
-  RiskMetrics
-} from '@/types/data';
+import type { FinanceData, MarketData } from '@/types/data';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 import type {
   AdlsFilePreviewResponse,
@@ -87,13 +78,13 @@ export const DataService = {
   getDomainMetadata(
     layer: 'bronze' | 'silver' | 'gold' | 'platinum',
     domain: string,
-    params: { refresh?: boolean; cacheOnly?: boolean } = {}
+    params: { refresh?: boolean } = {}
   ): Promise<DomainMetadata> {
     return apiService.getDomainMetadata(layer, domain, params);
   },
 
   getDomainMetadataSnapshot(
-    params: { layers?: string; domains?: string; cacheOnly?: boolean; refresh?: boolean } = {}
+    params: { layers?: string; domains?: string; refresh?: boolean } = {}
   ): Promise<DomainMetadataSnapshotResponse> {
     return apiService.getDomainMetadataSnapshot(params);
   },
@@ -129,30 +120,6 @@ export const DataService = {
 
   getLineage(): Promise<unknown> {
     return apiService.getLineage();
-  },
-
-  async getPositions(_strategyId?: string): Promise<Position[]> {
-    return [];
-  },
-
-  async getOrders(_strategyId?: string): Promise<Order[]> {
-    return [];
-  },
-
-  async getAlerts(): Promise<Alert[]> {
-    return [];
-  },
-
-  async getAlertConfigs(): Promise<AlertConfig[]> {
-    return [];
-  },
-
-  async getRiskMetrics(_strategyId: string): Promise<RiskMetrics> {
-    throw new Error('Risk metrics are not available in this deployment.');
-  },
-
-  async getExecutionMetrics(_strategyId: string): Promise<ExecutionMetrics> {
-    throw new Error('Execution metrics are not available in this deployment.');
   },
 
   getJobLogs(

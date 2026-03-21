@@ -180,12 +180,6 @@ class AuthManager:
 
     def authenticate_headers(self, headers: Dict[str, str]) -> AuthContext:
         normalized = {str(k).lower(): str(v) for k, v in headers.items()}
-        if self._settings.api_key_auth_enabled and self._settings.api_key:
-            provided = (normalized.get(str(self._settings.api_key_header).lower()) or "").strip()
-            if provided and provided == self._settings.api_key:
-                logger.info("Auth success via api_key")
-                return AuthContext(mode="api_key", subject=None, claims={})
-
         if self._settings.oidc_auth_enabled:
             authorization = (normalized.get("authorization") or "").strip()
             if authorization and _is_bearer_auth(authorization):

@@ -27,9 +27,7 @@ def test_warmup_probe_retries_before_first_request(monkeypatch):
     client = AlphaVantageGatewayClient(
         AlphaVantageGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=600.0,
             warmup_enabled=True,
             warmup_max_attempts=3,
@@ -38,6 +36,7 @@ def test_warmup_probe_retries_before_first_request(monkeypatch):
             warmup_probe_timeout_seconds=1.0,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         first = client.get_listing_status_csv()
@@ -68,13 +67,12 @@ def test_warmup_can_be_disabled(monkeypatch):
     client = AlphaVantageGatewayClient(
         AlphaVantageGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=600.0,
             warmup_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         csv = client.get_listing_status_csv()
@@ -101,14 +99,13 @@ def test_get_earnings_calendar_csv_calls_calendar_route(monkeypatch):
     client = AlphaVantageGatewayClient(
         AlphaVantageGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=600.0,
             warmup_enabled=False,
             readiness_enabled=False,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         csv = client.get_earnings_calendar_csv(symbol="AAPL", horizon="6month")
@@ -141,9 +138,7 @@ def test_request_retries_after_504_with_extended_backoff(monkeypatch):
     client = AlphaVantageGatewayClient(
         AlphaVantageGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=600.0,
             warmup_enabled=True,
             warmup_max_attempts=1,
@@ -156,6 +151,7 @@ def test_request_retries_after_504_with_extended_backoff(monkeypatch):
             request_retry_max_delay_seconds=300.0,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         csv = client.get_listing_status_csv()
@@ -186,9 +182,7 @@ def test_request_raises_after_exhausting_504_retry_budget(monkeypatch):
     client = AlphaVantageGatewayClient(
         AlphaVantageGatewayClientConfig(
             base_url="http://asset-allocation-api",
-            api_key=None,
-            api_key_header="X-API-Key",
-            api_scope=None,
+            api_scope="api://asset-allocation/.default",
             timeout_seconds=600.0,
             warmup_enabled=True,
             warmup_max_attempts=1,
@@ -201,6 +195,7 @@ def test_request_raises_after_exhausting_504_retry_budget(monkeypatch):
             request_retry_max_delay_seconds=240.0,
         ),
         http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
     )
     try:
         try:

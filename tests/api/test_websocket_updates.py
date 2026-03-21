@@ -10,14 +10,13 @@ import anyio
 import pytest
 
 from api.service.app import create_app
-from api.service.auth import AuthContext
+from api.service.auth import AuthContext, AuthError
 from api.service.realtime_tickets import utc_now
 from tests.api._client import get_test_client
 from tests.api._websocket import WebSocketHandshakeError, connect_websocket
 
 
 def _set_required_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_KEY_HEADER", "X-API-Key")
     monkeypatch.setenv("API_CSP", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 
     monkeypatch.delenv("UI_DIST_DIR", raising=False)
@@ -172,19 +171,26 @@ async def test_websocket_job_log_stream(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_websocket_ticket_required_and_single_use_for_api_key_mode(
+async def test_websocket_ticket_required_and_single_use_for_oidc_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_required_env(tmp_path, monkeypatch)
-    monkeypatch.setenv("API_KEY", "secret")
+    monkeypatch.setenv("API_OIDC_ISSUER", "https://issuer.example.com")
+    monkeypatch.setenv("API_OIDC_AUDIENCE", "asset-allocation-api")
 
     app = create_app()
     async with app.router.lifespan_context(app):
+        def authenticate_headers(headers: dict[str, str]) -> AuthContext:
+            if headers.get("authorization") != "Bearer token":
+                raise AuthError(status_code=401, detail="Unauthorized.", www_authenticate="Bearer")
+            return AuthContext(mode="oidc", subject="user-123", claims={"sub": "user-123"})
+
+        monkeypatch.setattr(app.state.auth, "authenticate_headers", authenticate_headers)
         async with get_test_client(app, manage_lifespan=False) as client:
             unauthenticated = await client.post("/api/realtime/ticket")
             assert unauthenticated.status_code == 401
 
-            authenticated = await client.post("/api/realtime/ticket", headers={"X-API-Key": "secret"})
+            authenticated = await client.post("/api/realtime/ticket", headers={"Authorization": "Bearer token"})
             assert authenticated.status_code == 200
             payload = authenticated.json()
             assert set(payload) == {"ticket", "expiresAt"}
@@ -219,11 +225,18 @@ async def test_websocket_rejects_invalid_and_expired_tickets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_required_env(tmp_path, monkeypatch)
-    monkeypatch.setenv("API_KEY", "secret")
+    monkeypatch.setenv("API_OIDC_ISSUER", "https://issuer.example.com")
+    monkeypatch.setenv("API_OIDC_AUDIENCE", "asset-allocation-api")
 
     app = create_app()
 
     async with app.router.lifespan_context(app):
+        def authenticate_headers(headers: dict[str, str]) -> AuthContext:
+            if headers.get("authorization") != "Bearer token":
+                raise AuthError(status_code=401, detail="Unauthorized.", www_authenticate="Bearer")
+            return AuthContext(mode="oidc", subject="user-123", claims={"sub": "user-123"})
+
+        monkeypatch.setattr(app.state.auth, "authenticate_headers", authenticate_headers)
         with pytest.raises(WebSocketHandshakeError) as invalid_ticket:
             async with connect_websocket(
                 app,
@@ -234,7 +247,10 @@ async def test_websocket_rejects_invalid_and_expired_tickets(
         assert invalid_ticket.value.message["code"] == 4401
 
         async with get_test_client(app, manage_lifespan=False) as client:
-            ticket_response = await client.post("/api/realtime/ticket", headers={"X-API-Key": "secret"})
+            ticket_response = await client.post(
+                "/api/realtime/ticket",
+                headers={"Authorization": "Bearer token"},
+            )
             assert ticket_response.status_code == 200
             expired_ticket = ticket_response.json()["ticket"]
 
@@ -252,31 +268,6 @@ async def test_websocket_rejects_invalid_and_expired_tickets(
             ):
                 pass
         assert expired.value.message["code"] == 4401
-
-
-@pytest.mark.asyncio
-async def test_websocket_ticket_supports_api_key_or_oidc_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _set_required_env(tmp_path, monkeypatch)
-    monkeypatch.setenv("API_KEY", "secret")
-    monkeypatch.setenv("API_OIDC_ISSUER", "https://issuer.example.com")
-    monkeypatch.setenv("API_OIDC_AUDIENCE", "asset-allocation")
-
-    app = create_app()
-    async with app.router.lifespan_context(app):
-        async with get_test_client(app, manage_lifespan=False) as client:
-            response = await client.post("/api/realtime/ticket", headers={"X-API-Key": "secret"})
-            assert response.status_code == 200
-            ticket = response.json()["ticket"]
-
-        async with connect_websocket(
-            app,
-            f"/api/ws/updates?ticket={ticket}",
-            manage_lifespan=False,
-        ) as websocket:
-            await websocket.send_text("ping")
-            assert await websocket.receive_text() == "pong"
 
 
 @pytest.mark.asyncio

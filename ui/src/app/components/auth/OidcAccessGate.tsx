@@ -9,6 +9,9 @@ import { DataService } from '@/services/DataService';
 
 type AccessState = 'idle' | 'checking' | 'allowed' | 'forbidden' | 'error';
 
+const DEPLOYMENT_AUTH_MISCONFIGURED_BODY =
+  'This deployment requires browser OIDC before the UI can call protected API routes. Set UI_OIDC_CLIENT_ID, UI_OIDC_AUTHORITY, UI_OIDC_SCOPES, and UI_OIDC_REDIRECT_URI. API_KEY is not used by browser clients.';
+
 function AuthPanel({
   title,
   body,
@@ -99,8 +102,14 @@ export function OidcAccessGate({ children }: { children: ReactNode }) {
   const [accessState, setAccessState] = useState<AccessState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [retryNonce, setRetryNonce] = useState(0);
+  const browserOidcMisconfigured = config.authRequired && (!config.oidcEnabled || !auth.enabled);
 
   useEffect(() => {
+    if (browserOidcMisconfigured) {
+      setAccessState('idle');
+      setErrorMessage('');
+      return;
+    }
     if (!config.oidcEnabled || !config.authRequired) {
       setAccessState('allowed');
       setErrorMessage('');
@@ -141,7 +150,16 @@ export function OidcAccessGate({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.authenticated, auth.ready, retryNonce]);
+  }, [auth.authenticated, auth.ready, browserOidcMisconfigured, retryNonce]);
+
+  if (browserOidcMisconfigured) {
+    return (
+      <AuthPanel
+        title="Deployment auth misconfigured"
+        body={DEPLOYMENT_AUTH_MISCONFIGURED_BODY}
+      />
+    );
+  }
 
   if (!config.oidcEnabled || !config.authRequired) {
     return <>{children}</>;

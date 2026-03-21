@@ -86,7 +86,7 @@ python3 scripts/dependency_governance.py check --report artifacts/dependency_gov
 
 ## Current API Scope
 
-The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies`, `providers/alpha-vantage`, and `providers/massive`. Historical backtest naming still appears in compatibility surfaces such as `backtestApiBaseUrl` in `/config.js`, so treat `/api/docs` and `/api/openapi.json` as the authoritative route map.
+The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies`, `providers/alpha-vantage`, and `providers/massive`. Treat `/api/docs` and `/api/openapi.json` as the authoritative route map.
 
 ## Deployment
 
@@ -100,12 +100,10 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 
 ### Authentication
 
-- Public browser access should use Microsoft Entra OIDC, not a shared browser API key.
 - Production deploys are OIDC-only: configure `API_OIDC_*`, `UI_OIDC_*`, and `ASSET_ALLOCATION_API_SCOPE`.
-- Keep `API_KEY` only as a local/private compatibility fallback for non-browser callers while any internal callers are still being migrated.
 - UI-managed OIDC requires `UI_OIDC_AUTHORITY`, `UI_OIDC_CLIENT_ID`, and an absolute `UI_OIDC_REDIRECT_URI` alongside API OIDC.
 - Production auth should prefer role-based enforcement via `API_OIDC_REQUIRED_ROLES`; leave `API_OIDC_REQUIRED_SCOPES` empty unless every caller is delegated-user only.
-- Bronze jobs should authenticate to the API with the shared user-assigned managed identity via `ASSET_ALLOCATION_API_SCOPE`, not `X-API-Key`.
+- Bronze jobs authenticate to the API with the shared user-assigned managed identity via `ASSET_ALLOCATION_API_SCOPE`.
 
 ## Evidence
 

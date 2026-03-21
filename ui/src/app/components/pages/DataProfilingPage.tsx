@@ -134,7 +134,7 @@ export function DataProfilingPage() {
   }, [bins, column, domain, layer, sampleRows, topValues]);
 
   const chartData = profile?.bins ?? [];
-  const topBuckets = profile?.topValues ?? [];
+  const topBuckets = useMemo(() => profile?.topValues ?? [], [profile?.topValues]);
   const showChart = Boolean(profile && chartData.length > 0 && profile.kind !== 'string');
   const isStringProfile = profile?.kind === 'string';
 

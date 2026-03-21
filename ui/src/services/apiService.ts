@@ -196,6 +196,16 @@ export interface RequestConfig extends RequestInit {
   retryAttempts?: number;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export interface RequestMeta {
   requestId: string;
   status: number;
@@ -292,7 +302,8 @@ async function performRequest<T>(
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(
+    throw new ApiError(
+      response.status,
       `API Error: ${response.status} ${response.statusText} [requestId=${requestId}] - ${errorBody}`
     );
   }
@@ -831,7 +842,7 @@ export const apiService = {
   getDomainMetadata(
     layer: 'bronze' | 'silver' | 'gold' | 'platinum',
     domain: string,
-    params: { refresh?: boolean; cacheOnly?: boolean } = {}
+    params: { refresh?: boolean } = {}
   ): Promise<DomainMetadata> {
     return request<DomainMetadata>('/system/domain-metadata', {
       params: { layer, domain, ...params }
@@ -839,7 +850,7 @@ export const apiService = {
   },
 
   getDomainMetadataSnapshot(
-    params: { layers?: string; domains?: string; cacheOnly?: boolean; refresh?: boolean } = {}
+    params: { layers?: string; domains?: string; refresh?: boolean } = {}
   ): Promise<DomainMetadataSnapshotResponse> {
     return request<DomainMetadataSnapshotResponse>('/system/domain-metadata/snapshot', {
       params
@@ -1137,7 +1148,7 @@ export const apiService = {
 
   getPurgeCandidates(payload: PurgeCandidatesRequest): Promise<PurgeCandidatesResponse> {
     return request<PurgeCandidatesResponse>('/system/purge-candidates', {
-      params: payload,
+      params: { ...payload },
       timeoutMs: 30000,
       retryOnStatusCodes: [408, 425, 429, 500, 502, 503]
     });

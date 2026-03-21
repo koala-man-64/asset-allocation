@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from typing import List, Literal, Optional
 from urllib.parse import urlparse
 
-AuthMode = Literal["anonymous", "api_key", "oidc"]
-_FIXED_API_KEY_HEADER = "X-API-Key"
+AuthMode = Literal["anonymous", "oidc"]
 _FIXED_UI_API_BASE_URL = "/api"
 _LOCAL_RUNTIME_MARKER_ENV_VARS = (
     "CONTAINER_APP_ENV_DNS_SUFFIX",
@@ -42,9 +41,6 @@ def _validate_ui_redirect_uri(value: str) -> str:
 
 @dataclass(frozen=True)
 class ServiceSettings:
-    api_key: Optional[str]
-    api_key_header: str
-    api_key_auth_enabled: bool
     oidc_auth_enabled: bool
     anonymous_local_auth_enabled: bool
     oidc_issuer: Optional[str]
@@ -62,27 +58,16 @@ class ServiceSettings:
 
     @property
     def auth_summary(self) -> str:
-        methods: list[str] = []
-        if self.api_key_auth_enabled:
-            methods.append("api_key")
-        if self.oidc_auth_enabled:
-            methods.append("oidc")
-        if not methods:
-            return "anonymous-local"
-        return "+".join(methods)
+        return "oidc" if self.oidc_auth_enabled else "anonymous-local"
 
     @staticmethod
     def from_env() -> "ServiceSettings":
-        api_key = _get_optional_str("API_KEY")
-        api_key_header = _FIXED_API_KEY_HEADER
-
         oidc_issuer = _get_optional_str("API_OIDC_ISSUER")
         oidc_audience = _split_csv(_get_optional_str("API_OIDC_AUDIENCE"))
         oidc_jwks_url = _get_optional_str("API_OIDC_JWKS_URL")
         oidc_required_scopes = _split_csv(_get_optional_str("API_OIDC_REQUIRED_SCOPES"))
         oidc_required_roles = _split_csv(_get_optional_str("API_OIDC_REQUIRED_ROLES"))
 
-        api_key_auth_enabled = bool(api_key)
         oidc_inputs_present = bool(
             oidc_issuer
             or oidc_audience
@@ -115,11 +100,11 @@ class ServiceSettings:
             ui_redirect_uri = _validate_ui_redirect_uri(ui_redirect_uri)
 
         anonymous_local_auth_enabled = False
-        if not api_key_auth_enabled and not oidc_auth_enabled:
+        if not oidc_auth_enabled:
             if _is_local_runtime():
                 anonymous_local_auth_enabled = True
             else:
-                raise ValueError("Deployed runtime requires API_KEY and/or API OIDC configuration.")
+                raise ValueError("Deployed runtime requires API OIDC configuration.")
 
         postgres_dsn = _get_optional_str("POSTGRES_DSN")
         ui_oidc_config = {
@@ -131,9 +116,6 @@ class ServiceSettings:
         }
 
         return ServiceSettings(
-            api_key=api_key,
-            api_key_header=api_key_header,
-            api_key_auth_enabled=api_key_auth_enabled,
             oidc_auth_enabled=oidc_auth_enabled,
             anonymous_local_auth_enabled=anonymous_local_auth_enabled,
             oidc_issuer=oidc_issuer,

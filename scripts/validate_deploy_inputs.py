@@ -125,6 +125,12 @@ def validate_log_analytics() -> None:
 
 
 def validate_auth_configuration() -> None:
+    for deprecated_name in ("API_KEY", "ASSET_ALLOCATION_API_KEY", "VITE_BACKTEST_API_BASE_URL"):
+        if optional_value(deprecated_name):
+            fail(
+                f"{deprecated_name} is no longer supported. Remove the stale API-key/backtest compatibility setting."
+            )
+
     api_oidc_issuer = optional_value("API_OIDC_ISSUER")
     api_oidc_audience = optional_value("API_OIDC_AUDIENCE")
     api_oidc_jwks_url = optional_value("API_OIDC_JWKS_URL")
@@ -147,30 +153,28 @@ def validate_auth_configuration() -> None:
     if not api_oidc_audience:
         fail("API_OIDC_AUDIENCE is required for the production deploy workflow.")
 
-    ui_oidc_authority = optional_value("UI_OIDC_AUTHORITY")
-    ui_oidc_client_id = optional_value("UI_OIDC_CLIENT_ID")
-    ui_oidc_scopes = optional_value("UI_OIDC_SCOPES")
-    ui_oidc_redirect_uri = optional_value("UI_OIDC_REDIRECT_URI")
-    ui_oidc_inputs_present = any(
-        (
-            ui_oidc_authority,
-            ui_oidc_client_id,
-            ui_oidc_scopes,
-            ui_oidc_redirect_uri,
+    ui_oidc_values = {
+        "UI_OIDC_CLIENT_ID": optional_value("UI_OIDC_CLIENT_ID"),
+        "UI_OIDC_AUTHORITY": optional_value("UI_OIDC_AUTHORITY"),
+        "UI_OIDC_SCOPES": optional_value("UI_OIDC_SCOPES"),
+        "UI_OIDC_REDIRECT_URI": optional_value("UI_OIDC_REDIRECT_URI"),
+    }
+
+    if not any(ui_oidc_values.values()):
+        fail(
+            "Production deploy requires browser OIDC configuration for the UI. "
+            "Set UI_OIDC_CLIENT_ID, UI_OIDC_AUTHORITY, UI_OIDC_SCOPES, and "
+            "UI_OIDC_REDIRECT_URI. The deployed UI only supports OIDC."
         )
-    )
 
-    if not ui_oidc_inputs_present:
-        fail("Production deploy requires UI OIDC configuration.")
-    if not (ui_oidc_authority and ui_oidc_client_id):
-        fail("UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together.")
-    if not ui_oidc_scopes:
-        fail("UI_OIDC_SCOPES is required for the production deploy workflow.")
+    missing_ui_oidc = [name for name, value in ui_oidc_values.items() if not value]
+    if missing_ui_oidc:
+        fail(
+            "Production deploy requires complete browser OIDC configuration for the UI. "
+            f"Missing: {', '.join(missing_ui_oidc)}. The deployed UI only supports OIDC."
+        )
 
-    redirect = optional_value("UI_OIDC_REDIRECT_URI")
-    if not redirect:
-        fail("UI_OIDC_REDIRECT_URI is required when browser OIDC is configured.")
-    parsed = urlparse(redirect)
+    parsed = urlparse(ui_oidc_values["UI_OIDC_REDIRECT_URI"])
     if parsed.scheme != "https" or not (parsed.hostname or "").strip():
         fail("UI_OIDC_REDIRECT_URI must be an absolute https:// URL.")
 

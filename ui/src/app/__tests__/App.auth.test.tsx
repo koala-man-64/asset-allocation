@@ -6,6 +6,13 @@ import App from '../App';
 import { renderWithProviders } from '@/test/utils';
 import { DataService } from '@/services/DataService';
 
+const mockUseRealtime = vi.hoisted(() => vi.fn());
+const mockConfig = vi.hoisted(() => ({
+  apiBaseUrl: '/api',
+  oidcEnabled: true,
+  authRequired: true
+}));
+
 const mockAuth = vi.hoisted(() => ({
   enabled: true,
   ready: true,
@@ -19,7 +26,7 @@ const mockAuth = vi.hoisted(() => ({
 const consumePostLoginRedirectPath = vi.hoisted(() => vi.fn(() => '/system-status'));
 
 vi.mock('@/hooks/useRealtime', () => ({
-  useRealtime: () => undefined
+  useRealtime: mockUseRealtime
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -29,11 +36,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 vi.mock('@/config', () => ({
-  config: {
-    apiBaseUrl: '/api',
-    oidcEnabled: true,
-    authRequired: true
-  }
+  config: mockConfig
 }));
 
 vi.mock('@/services/DataService', () => ({
@@ -48,11 +51,15 @@ vi.mock('@/app/components/pages/SystemStatusPage', () => ({
 
 describe('App OIDC access flow', () => {
   beforeEach(() => {
+    mockConfig.apiBaseUrl = '/api';
+    mockConfig.oidcEnabled = true;
+    mockConfig.authRequired = true;
     mockAuth.enabled = true;
     mockAuth.ready = true;
     mockAuth.authenticated = false;
     mockAuth.userLabel = null;
     mockAuth.error = null;
+    mockUseRealtime.mockReset();
     mockAuth.signIn.mockReset();
     mockAuth.signOut.mockReset();
     consumePostLoginRedirectPath.mockReset();
@@ -70,6 +77,19 @@ describe('App OIDC access flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(mockAuth.signIn).toHaveBeenCalledWith('/system-status');
+  });
+
+  it('shows a deployment misconfiguration screen when auth is required but browser OIDC is unavailable', async () => {
+    mockConfig.oidcEnabled = false;
+    mockAuth.enabled = false;
+    window.history.pushState({}, 'System Status', '/system-status');
+
+    renderWithProviders(<App />);
+
+    expect(await screen.findByText('Deployment auth misconfigured')).toBeInTheDocument();
+    expect(screen.getByText(/UI_OIDC_CLIENT_ID/i)).toBeInTheDocument();
+    expect(DataService.getSystemHealthWithMeta).not.toHaveBeenCalled();
+    expect(mockUseRealtime).not.toHaveBeenCalled();
   });
 
   it('renders the protected route after the access probe succeeds', async () => {

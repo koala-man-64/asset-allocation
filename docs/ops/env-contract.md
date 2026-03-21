@@ -11,7 +11,7 @@ The checked-in source of truth is [env-contract.csv](env-contract.csv). It class
 
 - `secret`
   Source of truth: secret storage only.
-  Examples: `POSTGRES_DSN`, `API_KEY`, `ALPHA_VANTAGE_API_KEY`.
+  Examples: `POSTGRES_DSN`, `ALPHA_VANTAGE_API_KEY`, `MASSIVE_API_KEY`.
 - `deploy_var`
   Source of truth: checked-in deploy config or a small GitHub Variables set for true environment identity/auth/public contract.
   Examples: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ASSET_ALLOCATION_API_BASE_URL`, `SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID`.
