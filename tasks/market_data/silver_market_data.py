@@ -1,6 +1,6 @@
 
 import pandas as pd
-from datetime import datetime
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import Optional
 
@@ -15,12 +15,12 @@ from tasks.common.backfill import (
     apply_backfill_start_cutoff,
     filter_by_date,
     get_backfill_range,
-    get_latest_only_flag,
 )
 from tasks.common.watermarks import (
     check_blob_unchanged,
     load_last_success,
     load_watermarks,
+    normalize_watermark_blob_name,
     save_last_success,
     save_watermarks,
     should_process_blob_since_last_success,
@@ -96,13 +96,17 @@ def _empty_alpha26_market_frame() -> pd.DataFrame:
     )
 
 
+def _normalize_market_datetime_series(values) -> pd.Series:
+    return pd.to_datetime(values, errors="coerce", utc=True).dt.tz_localize(None)
+
+
 def _coerce_alpha26_market_bucket_frame(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for col in _ALPHA26_MARKET_MIN_COLUMNS:
         if col not in out.columns:
             out[col] = pd.NA
 
-    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["date"] = _normalize_market_datetime_series(out["date"])
     out["symbol"] = out["symbol"].astype("string").str.upper()
     for col in _ALPHA26_MARKET_NUMERIC_COLUMNS:
         out[col] = pd.to_numeric(out[col], errors="coerce")
@@ -116,37 +120,7 @@ def _coerce_alpha26_market_bucket_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _parse_alpha26_bucket_from_blob_name(blob_name: str) -> Optional[str]:
-    text = str(blob_name or "").strip("/")
-    parts = text.split("/")
-    if len(parts) < 3:
-        return None
-    if parts[0] != "market-data" or parts[1] != "buckets":
-        return None
-    filename = parts[2]
-    if "." in filename:
-        filename = filename.split(".", 1)[0]
-    bucket = filename.strip().upper()
-    if bucket not in set(layer_bucketing.ALPHABET_BUCKETS):
-        return None
-    return bucket
-
-
-def _split_market_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if df_bucket is None or df_bucket.empty:
-        empty = pd.DataFrame()
-        return empty, empty
-
-    out = _rename_market_columns(df_bucket)
-    out = _drop_removed_market_columns(out)
-    out = _ensure_numeric_market_columns(out)
-    if "Date" in out.columns:
-        out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
-    if "Symbol" not in out.columns:
-        out["Symbol"] = pd.NA
-    out["Symbol"] = out["Symbol"].astype("string").str.upper()
-    symbol = str(ticker or "").strip().upper()
-    symbol_mask = out["Symbol"] == symbol
-    return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
+    return bronze_bucketing.parse_bucket_from_blob_name(blob_name, expected_prefix="market-data")
 
 
 def _load_existing_silver_symbol_to_bucket_map() -> dict[str, str]:
@@ -178,7 +152,7 @@ def _validate_bronze_to_silver_market_bucket_contract(df_bucket: pd.DataFrame, *
         )
 
     date_col = normalized_cols["date"]
-    parsed_dates = pd.to_datetime(df_bucket[date_col], errors="coerce").dropna()
+    parsed_dates = _normalize_market_datetime_series(df_bucket[date_col]).dropna()
     if parsed_dates.empty:
         raise ValueError(
             f"bronze_to_silver contract violation for {source_name}: no parseable date values."
@@ -205,7 +179,7 @@ def _validate_silver_market_bucket_output_contract(df_bucket: pd.DataFrame, *, b
     if df_bucket.empty:
         return
 
-    parsed_dates = pd.to_datetime(df_bucket["date"], errors="coerce")
+    parsed_dates = _normalize_market_datetime_series(df_bucket["date"])
     if parsed_dates.isna().any():
         raise ValueError(
             f"bronze_to_silver contract violation for bucket={bucket}: invalid date values in output frame."
@@ -350,26 +324,14 @@ def _drop_index_artifact_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def process_file(blob_name: str) -> bool:
-    """
-    Backwards-compatible wrapper (tests/local tooling) that processes a blob by name.
-
-    Production uses `process_blob()` with `last_modified` metadata for freshness checks.
-    """
-    return process_blob({"name": blob_name}, watermarks={}) != "failed"
-
-
 def _process_symbol_frame(
     *,
     ticker: str,
     df_new: pd.DataFrame,
     source_name: str,
-    include_history: bool = True,
-    persist: bool = True,
-    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+    alpha26_bucket_frames: dict[str, list[pd.DataFrame]],
 ) -> str:
     bucket = layer_bucketing.bucket_letter(ticker)
-    silver_bucket_path = DataPaths.get_silver_market_bucket_path(bucket)
     out = df_new.copy()
     out = out.drop(columns=["source_hash", "ingested_at"], errors="ignore")
 
@@ -381,7 +343,7 @@ def _process_symbol_frame(
         mdc.write_error(f"Missing Date column in {source_name}; skipping {ticker}.")
         return "failed"
 
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out["Date"] = _normalize_market_datetime_series(out["Date"])
     out = out.dropna(subset=["Date"])
     if out.empty:
         return "skipped_empty"
@@ -396,50 +358,22 @@ def _process_symbol_frame(
     out = _ensure_numeric_market_columns(out)
 
     backfill_start, backfill_end = get_backfill_range()
-    if backfill_start or backfill_end:
-        out = filter_by_date(out, "Date", backfill_start, backfill_end)
-        latest_only = False
-    else:
-        latest_only = get_latest_only_flag("MARKET", default=True)
-
-    if not include_history:
-        # Alpha26 rebuild mode writes full symbol slices into bucket tables.
-        latest_only = False
-
-    if latest_only and "Date" in out.columns and not out.empty:
-        latest_date = out["Date"].max()
-        out = out[out["Date"] == latest_date].copy()
+    out = filter_by_date(out, "Date", backfill_start, backfill_end)
 
     out["Symbol"] = ticker
-    existing_bucket = (
-        delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, silver_bucket_path)
-        if (persist or include_history)
-        else None
-    )
-    df_history, df_other_symbols = _split_market_bucket_rows(existing_bucket, ticker=ticker)
-    if not include_history:
-        df_history = pd.DataFrame()
+    staged_frame = out.sort_values(by=["Date", "Symbol", "Volume"], ascending=[True, True, False])
+    staged_frame = staged_frame.drop_duplicates(subset=["Date", "Symbol"], keep="last")
+    staged_frame = staged_frame.reset_index(drop=True)
 
-    if df_history is None or df_history.empty:
-        df_merged = out
-    else:
-        if "Date" in df_history.columns:
-            df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
-        df_merged = pd.concat([df_history, out], ignore_index=True)
-
-    df_merged = df_merged.sort_values(by=["Date", "Symbol", "Volume"], ascending=[True, True, False])
-    df_merged = df_merged.drop_duplicates(subset=["Date", "Symbol"], keep="last")
-    df_merged = df_merged.reset_index(drop=True)
-
-    df_merged, _ = apply_backfill_start_cutoff(
-        df_merged,
+    staged_frame, _ = apply_backfill_start_cutoff(
+        staged_frame,
         date_col="Date",
         backfill_start=backfill_start,
         context=f"silver market {ticker}",
     )
 
-    df_merged = _drop_removed_market_columns(df_merged)
-    df_merged = _ensure_numeric_market_columns(df_merged)
+    staged_frame = _drop_removed_market_columns(staged_frame)
+    staged_frame = _ensure_numeric_market_columns(staged_frame)
     cols_to_drop = [
         "index",
         "Beta (5Y Monthly)",
@@ -450,143 +384,49 @@ def _process_symbol_frame(
         "Forward Dividend & Yield",
         "Market Cap",
     ]
-    df_merged = df_merged.drop(columns=[c for c in cols_to_drop if c in df_merged.columns])
+    staged_frame = staged_frame.drop(columns=[c for c in cols_to_drop if c in staged_frame.columns])
 
-    if backfill_start is not None and df_merged.empty:
-        if not persist:
-            return "ok"
-        if silver_client is not None:
-            df_remaining = normalize_columns_to_snake_case(df_other_symbols)
-            df_remaining = _repair_symbol_column_aliases(df_remaining, ticker=ticker)
-            df_remaining = _drop_index_artifact_columns(df_remaining)
-            df_remaining = _coerce_alpha26_market_bucket_frame(df_remaining)
-            if df_remaining.empty:
-                deleted = silver_client.delete_prefix(silver_bucket_path)
-                mdc.write_line(
-                    f"Silver market backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
-                    f"deleted {deleted} blob(s) under {silver_bucket_path}."
-                )
-            else:
-                delta_core.store_delta(df_remaining, cfg.AZURE_CONTAINER_SILVER, silver_bucket_path, mode="overwrite")
-                delta_core.vacuum_delta_table(
-                    cfg.AZURE_CONTAINER_SILVER,
-                    silver_bucket_path,
-                    retention_hours=0,
-                    dry_run=False,
-                    enforce_retention_duration=False,
-                    full=True,
-                )
-                mdc.write_line(
-                    f"Silver market backfill purge for {ticker}: removed symbol rows from {silver_bucket_path}."
-                )
-            return "ok"
-        mdc.write_warning(
-            f"Silver market backfill purge for {ticker} could not update {silver_bucket_path}: storage client unavailable."
-        )
-        return "failed"
+    if backfill_start is not None and staged_frame.empty:
+        return "ok"
 
     try:
-        df_merged = normalize_columns_to_snake_case(df_merged)
-        df_merged = _repair_symbol_column_aliases(df_merged, ticker=ticker)
-        df_merged = _drop_index_artifact_columns(df_merged)
-        df_merged = apply_precision_policy(
-            df_merged,
+        staged_frame = normalize_columns_to_snake_case(staged_frame)
+        staged_frame = _repair_symbol_column_aliases(staged_frame, ticker=ticker)
+        staged_frame = _drop_index_artifact_columns(staged_frame)
+        staged_frame = apply_precision_policy(
+            staged_frame,
             price_columns=_MARKET_PRICE_COLUMNS,
             calculated_columns=set(),
             price_scale=2,
             calculated_scale=4,
         )
-        if not persist:
-            if alpha26_bucket_frames is None:
-                raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
-            alpha26_bucket_frames.setdefault(bucket, []).append(df_merged.copy())
-        else:
-            df_other_symbols = normalize_columns_to_snake_case(df_other_symbols)
-            df_other_symbols = _repair_symbol_column_aliases(df_other_symbols, ticker=ticker)
-            df_other_symbols = _drop_index_artifact_columns(df_other_symbols)
-            df_bucket_to_store = pd.concat([df_other_symbols, df_merged], ignore_index=True)
-            df_bucket_to_store = _coerce_alpha26_market_bucket_frame(df_bucket_to_store)
-            delta_core.store_delta(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, silver_bucket_path, mode="overwrite")
-            if backfill_start is not None:
-                delta_core.vacuum_delta_table(
-                    cfg.AZURE_CONTAINER_SILVER,
-                    silver_bucket_path,
-                    retention_hours=0,
-                    dry_run=False,
-                    enforce_retention_duration=False,
-                    full=True,
-                )
-        applied_price_cols = sorted(col for col in _MARKET_PRICE_COLUMNS if col in df_merged.columns)
+        alpha26_bucket_frames.setdefault(bucket, []).append(staged_frame.copy())
+        applied_price_cols = sorted(col for col in _MARKET_PRICE_COLUMNS if col in staged_frame.columns)
         price_cols_str = ",".join(applied_price_cols) if applied_price_cols else "none"
         mdc.write_line(
             "precision_policy_applied domain=market "
-            f"ticker={ticker} price_cols={price_cols_str} calc_cols=none rows={len(df_merged)}"
+            f"ticker={ticker} price_cols={price_cols_str} calc_cols=none rows={len(staged_frame)}"
         )
     except Exception as exc:
-        mdc.write_error(f"Failed to write Silver Delta for {ticker}: {exc}")
+        mdc.write_error(f"Failed to stage Silver market rows for {ticker}: {exc}")
         return "failed"
 
-    if persist:
-        mdc.write_line(f"Updated Silver Delta bucket {silver_bucket_path} for {ticker} (rows={len(df_merged)})")
     return "ok"
-
-
-def process_blob(
-    blob: dict,
-    *,
-    watermarks: dict,
-    include_history: bool = True,
-    persist: bool = True,
-    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
-) -> str:
-    blob_name = blob["name"]  # market-data/{ticker}.csv
-    if not blob_name.endswith(".csv"):
-        return "skipped_non_csv"
-
-    if blob_name.endswith("whitelist.csv") or blob_name.endswith("blacklist.csv"):
-        return "skipped_list"
-
-    ticker = blob_name.replace("market-data/", "").replace(".csv", "")
-    mdc.write_line(f"Processing {ticker} from {blob_name}...")
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        return "skipped_unchanged"
-
-    try:
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_new = pd.read_csv(BytesIO(raw_bytes))
-    except Exception as exc:
-        mdc.write_error(f"Failed to read/parse {blob_name}: {exc}")
-        return "failed"
-
-    status = _process_symbol_frame(
-        ticker=ticker,
-        df_new=df_new,
-        source_name=blob_name,
-        include_history=include_history,
-        persist=persist,
-        alpha26_bucket_frames=alpha26_bucket_frames,
-    )
-    if status == "ok" and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
-        watermarks[blob_name] = signature
-    return status
 
 
 def process_alpha26_bucket_blob(
     blob: dict,
     *,
     watermarks: dict,
-    include_history: bool = False,
-    persist: bool = False,
+    alpha26_bucket_frames: dict[str, list[pd.DataFrame]],
     force_reprocess: bool = False,
-    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
 ) -> str:
     blob_name = str(blob.get("name", ""))
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if not blob_name.endswith(".parquet"):
         return "skipped_non_parquet"
 
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(watermark_key))
     if unchanged and not force_reprocess:
         return "skipped_unchanged"
 
@@ -602,8 +442,8 @@ def process_alpha26_bucket_blob(
 
     if df_bucket is None or df_bucket.empty:
         if signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
-            watermarks[blob_name] = signature
+            signature["updated_at"] = datetime.now(UTC).isoformat()
+            watermarks[watermark_key] = signature
         bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
         mdc.write_line(
             f"layer_handoff_status transition=bronze_to_silver status=ok source={blob_name} bucket={bucket} "
@@ -648,8 +488,6 @@ def process_alpha26_bucket_blob(
             ticker=ticker,
             df_new=group.copy(),
             source_name=blob_name,
-            include_history=include_history,
-            persist=persist,
             alpha26_bucket_frames=alpha26_bucket_frames,
         )
         if status == "failed":
@@ -659,8 +497,8 @@ def process_alpha26_bucket_blob(
             output_symbols += 1
 
     if not has_failed and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
-        watermarks[blob_name] = signature
+        signature["updated_at"] = datetime.now(UTC).isoformat()
+        watermarks[watermark_key] = signature
     bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
     status_text = "failed" if has_failed else "ok"
     mdc.write_line(
@@ -781,10 +619,11 @@ def _restore_blob_watermark(
     blob_name: str,
     prior_signature: Optional[dict],
 ) -> None:
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if prior_signature is None:
-        watermarks.pop(blob_name, None)
+        watermarks.pop(watermark_key, None)
         return
-    watermarks[blob_name] = dict(prior_signature)
+    watermarks[watermark_key] = dict(prior_signature)
 
 
 def _detect_missing_alpha26_market_buckets() -> tuple[bool, set[str]]:
@@ -896,23 +735,12 @@ def main():
     layer_bucketing.silver_layout_mode()
     force_rebuild = layer_bucketing.silver_alpha26_force_rebuild()
     
-    # List all files in Bronze market-data folder
-    # Assuming mdc has a list_blobs or similar, otherwise use client directly
-    # mdc.list_blobs is not explicitly shown in context, using client.
-    # azure.storage.blob.ContainerClient.list_blobs
-    
     mdc.write_line("Listing Bronze files...")
-    blobs = bronze_client.list_blob_infos(name_starts_with="market-data/")
     watermarks = load_watermarks("bronze_market_data")
     last_success = load_last_success("silver_market_data")
     watermarks_dirty = False
 
-    # Convert to list to enable progress tracking/filtering
-    blob_list = [
-        b
-        for b in blobs
-        if str(b.get("name", "")).startswith("market-data/buckets/") and str(b.get("name", "")).endswith(".parquet")
-    ]
+    blob_list = bronze_bucketing.list_active_bucket_blob_infos("market", bronze_client)
 
     checkpoint_skipped = 0
     candidate_blobs: list[dict] = []
@@ -925,7 +753,8 @@ def main():
             f"missing_bucket_tables={missing_list}; forcing bronze replay."
         )
     for blob in blob_list:
-        prior = watermarks.get(blob["name"])
+        watermark_key = normalize_watermark_blob_name(blob.get("name"))
+        prior = watermarks.get(watermark_key)
         should_process = should_process_blob_since_last_success(
             blob,
             prior_signature=prior,
@@ -955,15 +784,14 @@ def main():
     alpha26_column_count: Optional[int] = len(_ALPHA26_MARKET_MIN_COLUMNS)
     for blob in candidate_blobs:
         blob_name = str(blob.get("name", ""))
-        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        watermark_key = normalize_watermark_blob_name(blob_name)
+        prior_signature = dict(watermarks[watermark_key]) if isinstance(watermarks.get(watermark_key), dict) else None
         alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
         status = process_alpha26_bucket_blob(
             blob,
             watermarks=watermarks,
-            include_history=False,
-            persist=False,
-            force_reprocess=bootstrap_missing,
             alpha26_bucket_frames=alpha26_bucket_frames,
+            force_reprocess=force_checkpoint_rebuild,
         )
         if status == "ok":
             processed += 1
@@ -1067,14 +895,15 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-market-job"
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=job_name,
-            run=main,
-            on_success=(
-                lambda: write_system_health_marker(layer="silver", domain="market", job_name=job_name),
-                trigger_next_job_from_env,
-            ),
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(
+                    lambda: write_system_health_marker(layer="silver", domain="market", job_name=job_name),
+                    trigger_next_job_from_env,
+                ),
+            )
         )
-    )

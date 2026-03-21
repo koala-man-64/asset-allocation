@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import * as RechartsPrimitive from 'recharts';
+import type { DefaultLegendContentProps, LegendPayload, TooltipContentProps } from 'recharts';
 
 import { cn } from './utils';
 
@@ -96,6 +97,9 @@ ${colorConfig
 
 const ChartTooltip = RechartsPrimitive.Tooltip;
 
+type ChartTooltipValue = number | string | ReadonlyArray<number | string>;
+type ChartTooltipName = string | number;
+
 function ChartTooltipContent({
   active,
   payload,
@@ -110,7 +114,7 @@ function ChartTooltipContent({
   color,
   nameKey,
   labelKey
-}: React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
+}: TooltipContentProps<ChartTooltipValue, ChartTooltipName> &
   React.ComponentProps<'div'> & {
     hideLabel?: boolean;
     hideIndicator?: boolean;
@@ -162,8 +166,11 @@ function ChartTooltipContent({
       {!nestLabel ? tooltipLabel : null}
       <div className="grid gap-1.5">
         {payload.map((item, index) => {
-          const key = `${nameKey || item.name || item.dataKey || 'value'}`;
-          const itemConfig = getPayloadConfigFromPayload(config, item, key);
+          const itemConfig = getPayloadConfigFromPayload(
+            config,
+            item,
+            `${nameKey || item.name || item.dataKey || 'value'}`
+          );
           const indicatorColor = color || item.payload.fill || item.color;
 
           return (
@@ -239,7 +246,7 @@ function ChartLegendContent({
   verticalAlign = 'bottom',
   nameKey
 }: React.ComponentProps<'div'> &
-  Pick<RechartsPrimitive.LegendProps, 'payload' | 'verticalAlign'> & {
+  Pick<DefaultLegendContentProps, 'payload' | 'verticalAlign'> & {
     hideIcon?: boolean;
     nameKey?: string;
   }) {
@@ -257,13 +264,13 @@ function ChartLegendContent({
         className
       )}
     >
-      {payload.map((item) => {
+      {payload.map((item: LegendPayload) => {
         const key = `${nameKey || item.dataKey || 'value'}`;
         const itemConfig = getPayloadConfigFromPayload(config, item, key);
 
         return (
           <div
-            key={item.value}
+            key={String(item.dataKey ?? item.value ?? key)}
             className={cn(
               '[&>svg]:text-muted-foreground flex items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3'
             )}

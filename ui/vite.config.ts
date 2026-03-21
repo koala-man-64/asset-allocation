@@ -71,6 +71,9 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       setupFiles: './src/test/setup.ts',
       css: false,
+      testTimeout: 15000,
+      hookTimeout: 15000,
+      fileParallelism: false,
       exclude: [...configDefaults.exclude, '**/.pnpm-store/**'],
     },
     plugins: [

@@ -28,8 +28,13 @@ function dispatchRealtimeEvent(eventName: string, topics: string[]): void {
   window.dispatchEvent(new CustomEvent(eventName, { detail: { topics: filtered } }));
 }
 
-export function buildJobLogTopic(jobName: string): string {
-  return `job-logs:${String(jobName || '').trim()}`;
+export function buildJobLogTopic(jobName: string, executionName?: string | null): string {
+  const normalizedJobName = String(jobName || '').trim();
+  const normalizedExecutionName = String(executionName || '').trim();
+  if (!normalizedExecutionName) {
+    return `job-logs:${normalizedJobName}`;
+  }
+  return `job-logs:${normalizedJobName}/executions/${normalizedExecutionName}`;
 }
 
 export function buildContainerAppLogTopic(appName: string): string {

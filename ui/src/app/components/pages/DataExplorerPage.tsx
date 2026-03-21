@@ -1,10 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/app/components/ui/button';
 import { Label } from '@/app/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/app/components/ui/select';
 import { DataService } from '@/services/DataService';
 import type { AdlsFilePreviewResponse, AdlsHierarchyEntry } from '@/services/apiService';
-import { ChevronDown, ChevronRight, Database, File, FileText, Folder, RefreshCw } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Database,
+  File,
+  FileText,
+  Folder,
+  RefreshCw
+} from 'lucide-react';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import { formatPreviewContent } from '@/utils/formatPreviewContent';
 
@@ -31,12 +45,20 @@ const TEXT_FILE_EXTENSIONS = new Set([
 ]);
 
 const normalizeFolderPath = (value: string): string => {
-  const cleaned = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/g, '').replace(/\/+$/g, '');
+  const cleaned = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+/g, '')
+    .replace(/\/+$/g, '');
   return cleaned ? `${cleaned}/` : '';
 };
 
 const normalizeFilePath = (value: string): string => {
-  return String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/g, '').replace(/\/+$/g, '');
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+/g, '')
+    .replace(/\/+$/g, '');
 };
 
 const formatBytes = (value?: number | null): string => {
@@ -172,7 +194,10 @@ export const DataExplorerPage: React.FC = () => {
   const [domain, setDomain] = useState<DomainKey>('market');
   const domainOptions = useMemo(() => DOMAIN_OPTIONS_BY_LAYER[layer], [layer]);
   const [maxDeltaFiles, setMaxDeltaFiles] = useState<string>('0');
-  const rootPath = useMemo(() => normalizeFolderPath(EXPLORER_ROOT_PATHS[layer][domain]), [domain, layer]);
+  const rootPath = useMemo(
+    () => normalizeFolderPath(EXPLORER_ROOT_PATHS[layer][domain]),
+    [domain, layer]
+  );
   const scanLimit = 5000;
   const previewMaxBytes = 262144;
 
@@ -269,14 +294,17 @@ export const DataExplorerPage: React.FC = () => {
   const rootMeta = treeMetaByPath[rootPath];
   const rootLoading = Boolean(loadingPaths[rootPath]);
 
-  const handleToggleFolder = (folderPath: string) => {
-    const normalized = normalizeFolderPath(folderPath);
-    const shouldExpand = !expandedFolders[normalized];
-    setExpandedFolders((prev) => ({ ...prev, [normalized]: shouldExpand }));
-    if (shouldExpand && !treeByPath[normalized]) {
-      void loadFolder(normalized);
-    }
-  };
+  const handleToggleFolder = useCallback(
+    (folderPath: string) => {
+      const normalized = normalizeFolderPath(folderPath);
+      const shouldExpand = !expandedFolders[normalized];
+      setExpandedFolders((prev) => ({ ...prev, [normalized]: shouldExpand }));
+      if (shouldExpand && !treeByPath[normalized]) {
+        void loadFolder(normalized);
+      }
+    },
+    [expandedFolders, loadFolder, treeByPath]
+  );
 
   const refreshExplorer = useCallback(async () => {
     if (refreshing) {
@@ -301,7 +329,15 @@ export const DataExplorerPage: React.FC = () => {
     } finally {
       setRefreshing(false);
     }
-  }, [expandedFolders, loadFolder, loadPreview, maxDeltaFiles, refreshing, rootPath, selectedFilePath]);
+  }, [
+    expandedFolders,
+    loadFolder,
+    loadPreview,
+    maxDeltaFiles,
+    refreshing,
+    rootPath,
+    selectedFilePath
+  ]);
 
   const renderEntries = useCallback(
     (entries: AdlsHierarchyEntry[], depth: number): React.ReactNode => {
@@ -374,12 +410,14 @@ export const DataExplorerPage: React.FC = () => {
               <File className="h-4 w-4 shrink-0 text-muted-foreground" />
             )}
             <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-            <span className="shrink-0 text-[11px] text-muted-foreground">{formatBytes(entry.size)}</span>
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {formatBytes(entry.size)}
+            </span>
           </button>
         );
       });
     },
-    [expandedFolders, loadPreview, loadingPaths, selectedFilePath, treeByPath]
+    [expandedFolders, handleToggleFolder, loadPreview, loadingPaths, selectedFilePath, treeByPath]
   );
 
   const selectedFileLabel = useMemo(() => {
@@ -396,7 +434,8 @@ export const DataExplorerPage: React.FC = () => {
     });
   }, [preview?.contentPreview, preview?.contentType, selectedFilePath]);
 
-  const isTablePreview = preview?.previewMode === 'delta-table' || preview?.previewMode === 'parquet-table';
+  const isTablePreview =
+    preview?.previewMode === 'delta-table' || preview?.previewMode === 'parquet-table';
   const previewTableColumns = preview?.tableColumns ?? [];
   const previewTableRows = preview?.tableRows ?? [];
   const previewRowCount = preview?.tableRowCount ?? previewTableRows.length;
@@ -501,7 +540,8 @@ export const DataExplorerPage: React.FC = () => {
         <div className="mcm-panel flex min-h-[420px] flex-col overflow-hidden p-0">
           <div className="border-b border-border/60 px-4 py-3">
             <p className="font-mono text-xs text-muted-foreground">
-              {rootMeta ? `container=${rootMeta.container}` : 'container=...'} | path={rootPath || '/'}
+              {rootMeta ? `container=${rootMeta.container}` : 'container=...'} | path=
+              {rootPath || '/'}
             </p>
             {rootMeta?.truncated ? (
               <p className="mt-1 font-mono text-xs text-amber-600">
@@ -516,7 +556,9 @@ export const DataExplorerPage: React.FC = () => {
             ) : rootEntries.length ? (
               renderEntries(rootEntries, 0)
             ) : (
-              <div className="p-2 font-mono text-sm text-muted-foreground">No folders or files found for this path.</div>
+              <div className="p-2 font-mono text-sm text-muted-foreground">
+                No folders or files found for this path.
+              </div>
             )}
           </div>
         </div>
@@ -531,9 +573,13 @@ export const DataExplorerPage: React.FC = () => {
 
           <div className="flex-1 overflow-auto p-4">
             {!selectedFilePath ? (
-              <div className="font-mono text-sm text-muted-foreground">Choose a file to preview plaintext content.</div>
+              <div className="font-mono text-sm text-muted-foreground">
+                Choose a file to preview plaintext content.
+              </div>
             ) : previewLoading ? (
-              <div className="font-mono text-sm text-muted-foreground">Loading preview for {selectedFileLabel}...</div>
+              <div className="font-mono text-sm text-muted-foreground">
+                Loading preview for {selectedFileLabel}...
+              </div>
             ) : previewError ? (
               <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 font-mono text-sm text-destructive">
                 <strong>Error:</strong> {previewError}
@@ -541,14 +587,19 @@ export const DataExplorerPage: React.FC = () => {
             ) : preview && isTablePreview ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-muted-foreground">
-                  <span>{preview.previewMode === 'delta-table' ? 'delta snapshot' : 'parquet preview'}</span>
-                  {preview.resolvedTablePath ? <span>table={preview.resolvedTablePath}</span> : null}
+                  <span>
+                    {preview.previewMode === 'delta-table' ? 'delta snapshot' : 'parquet preview'}
+                  </span>
+                  {preview.resolvedTablePath ? (
+                    <span>table={preview.resolvedTablePath}</span>
+                  ) : null}
                   {preview.tableVersion !== null && preview.tableVersion !== undefined ? (
                     <span>version={preview.tableVersion}</span>
                   ) : (
                     <span>version=latest</span>
                   )}
-                  {preview.processedDeltaFiles !== null && preview.processedDeltaFiles !== undefined ? (
+                  {preview.processedDeltaFiles !== null &&
+                  preview.processedDeltaFiles !== undefined ? (
                     <span>commits={formatTwoDigitCount(preview.processedDeltaFiles)}</span>
                   ) : null}
                   <span>
@@ -579,7 +630,10 @@ export const DataExplorerPage: React.FC = () => {
                       <tbody>
                         {previewTableRows.length ? (
                           previewTableRows.map((row, rowIndex) => (
-                            <tr key={`${selectedFilePath}-${rowIndex}`} className="border-b border-border/40 align-top last:border-b-0">
+                            <tr
+                              key={`${selectedFilePath}-${rowIndex}`}
+                              className="border-b border-border/40 align-top last:border-b-0"
+                            >
                               <td className="border-r border-border/40 px-3 py-2 text-right text-muted-foreground">
                                 {rowIndex + 1}
                               </td>
@@ -611,14 +665,20 @@ export const DataExplorerPage: React.FC = () => {
                     </table>
                   </div>
                 ) : (
-                  <div className="font-mono text-sm text-muted-foreground">Preview returned no table columns.</div>
+                  <div className="font-mono text-sm text-muted-foreground">
+                    Preview returned no table columns.
+                  </div>
                 )}
               </div>
             ) : preview && !preview.isPlainText ? (
               <div className="space-y-2 font-mono text-sm text-muted-foreground">
-                <div>This file does not appear to be plaintext and cannot be rendered as text preview.</div>
+                <div>
+                  This file does not appear to be plaintext and cannot be rendered as text preview.
+                </div>
                 {preview.contentType ? <div>contentType={preview.contentType}</div> : null}
-                {preview.truncated ? <div>Preview bytes truncated at {preview.maxBytes.toLocaleString()}.</div> : null}
+                {preview.truncated ? (
+                  <div>Preview bytes truncated at {preview.maxBytes.toLocaleString()}.</div>
+                ) : null}
               </div>
             ) : preview ? (
               <div className="space-y-2">
@@ -631,7 +691,9 @@ export const DataExplorerPage: React.FC = () => {
                 <div className="font-mono text-xs text-muted-foreground">
                   encoding={preview.encoding || 'unknown'}
                   {preview.contentType ? ` | contentType=${preview.contentType}` : ''}
-                  {preview.truncated ? ` | truncated at ${preview.maxBytes.toLocaleString()} bytes` : ''}
+                  {preview.truncated
+                    ? ` | truncated at ${preview.maxBytes.toLocaleString()} bytes`
+                    : ''}
                 </div>
                 <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background p-3 font-mono text-xs leading-5">
                   {formattedPreviewContent}

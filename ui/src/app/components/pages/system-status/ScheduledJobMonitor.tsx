@@ -32,9 +32,11 @@ import {
   getStatusBadge,
   getStatusIcon,
   normalizeAzureJobName,
-  normalizeAzurePortalUrl
+  normalizeAzurePortalUrl,
+  resolveManagedJobName
 } from './SystemStatusHelpers';
 import { getDomainOrderIndex } from './domainOrdering';
+import { getLogStreamFeedback } from './logStreamFeedback';
 import { apiService } from '@/services/apiService';
 import {
   addConsoleLogStreamListener,
@@ -45,7 +47,15 @@ import {
 import { normalizeDomainKey } from './SystemPurgeControls';
 import { formatSystemStatusText } from './systemStatusText';
 
-import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, ScrollText, Square } from 'lucide-react';
+import {
+  CalendarDays,
+  ChevronDown,
+  ExternalLink,
+  Loader2,
+  Play,
+  ScrollText,
+  Square
+} from 'lucide-react';
 
 const LIVE_LOG_LINE_LIMIT = 200;
 
@@ -54,7 +64,11 @@ const runStartEpoch = (raw?: string | null): number => {
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 };
 
-function mergeLogLines(existing: string[], incoming: string[], limit = LIVE_LOG_LINE_LIMIT): string[] {
+function mergeLogLines(
+  existing: string[],
+  incoming: string[],
+  limit = LIVE_LOG_LINE_LIMIT
+): string[] {
   const next = [...existing];
   const windowed = new Set(existing.slice(-limit));
 
@@ -96,17 +110,30 @@ type LogState = {
   loading: boolean;
   error: string | null;
   runStart: string | null;
+  executionName: string | null;
 };
 
 type LogResponseLike = {
   logs?: Array<string | number>;
   consoleLogs?: Array<string | number>;
   runs?: Array<{
+    executionName?: string | null;
     tail?: Array<string | number>;
     consoleLogs?: Array<string | number>;
     error?: string | null;
   }>;
 };
+
+function extractExecutionName(payload: LogResponseLike): string | null {
+  const runs = Array.isArray(payload?.runs) ? payload.runs : [];
+  for (const run of runs) {
+    const executionName = typeof run?.executionName === 'string' ? run.executionName.trim() : '';
+    if (executionName) {
+      return executionName;
+    }
+  }
+  return null;
+}
 
 export function ScheduledJobMonitor({
   dataLayers,
@@ -201,7 +228,12 @@ export function ScheduledJobMonitor({
       for (const domain of layer.domains || []) {
         const domainName = String(domain.name || '').trim();
         if (!domainName) continue;
-        const jobName = String(domain.jobName || '').trim();
+        const jobName = resolveManagedJobName({
+          jobName: domain.jobName,
+          jobUrl: domain.jobUrl,
+          layerName: layer.name,
+          domainName
+        });
         if (!jobName) continue;
 
         const jobKey = normalizeAzureJobName(jobName);
@@ -275,6 +307,13 @@ export function ScheduledJobMonitor({
     );
     return expanded?.jobName ?? null;
   }, [expandedRow, scheduledJobs]);
+  const expandedExecutionName = expandedJobName
+    ? (logStateByJob[expandedJobName]?.executionName ?? null)
+    : null;
+  const expandedTopic =
+    expandedJobName && expandedExecutionName
+      ? buildJobLogTopic(expandedJobName, expandedExecutionName)
+      : null;
 
   const fetchLogs = (jobName: string, runStart: string | null) => {
     logControllers.current[jobName]?.abort();
@@ -287,7 +326,9 @@ export function ScheduledJobMonitor({
         lines: prev[jobName]?.lines ?? [],
         loading: true,
         error: null,
-        runStart
+        runStart,
+        executionName:
+          prev[jobName]?.runStart === runStart ? (prev[jobName]?.executionName ?? null) : null
       }
     }));
 
@@ -310,13 +351,15 @@ export function ScheduledJobMonitor({
         const firstError = (payload?.runs ?? []).find((run) => Boolean(run?.error))?.error ?? null;
         const formattedFirstError = formatSystemStatusText(firstError);
         const logs = combined.slice(-LIVE_LOG_LINE_LIMIT);
+        const executionName = extractExecutionName(payload);
         setLogStateByJob((prev) => ({
           ...prev,
           [jobName]: {
             lines: logs,
             loading: false,
             error: logs.length === 0 && formattedFirstError ? formattedFirstError : null,
-            runStart
+            runStart,
+            executionName
           }
         }));
       })
@@ -328,24 +371,23 @@ export function ScheduledJobMonitor({
             lines: [],
             loading: false,
             error: formatSystemStatusText(error),
-            runStart
+            runStart,
+            executionName: null
           }
         }));
       });
   };
 
   useEffect(() => {
-    if (!expandedJobName) return;
-    const topic = buildJobLogTopic(expandedJobName);
-    requestRealtimeSubscription([topic]);
-    return () => requestRealtimeUnsubscription([topic]);
-  }, [expandedJobName]);
+    if (!expandedTopic) return;
+    requestRealtimeSubscription([expandedTopic]);
+    return () => requestRealtimeUnsubscription([expandedTopic]);
+  }, [expandedTopic]);
 
   useEffect(() => {
-    if (!expandedJobName) return;
-    const topic = buildJobLogTopic(expandedJobName);
+    if (!expandedJobName || !expandedTopic) return;
     return addConsoleLogStreamListener((detail) => {
-      if (detail.topic !== topic) {
+      if (detail.topic !== expandedTopic) {
         return;
       }
 
@@ -365,12 +407,13 @@ export function ScheduledJobMonitor({
             lines: mergeLogLines(current?.lines ?? [], incoming),
             loading: false,
             error: null,
-            runStart: current?.runStart ?? null
+            runStart: current?.runStart ?? null,
+            executionName: current?.executionName ?? null
           }
         };
       });
     });
-  }, [expandedJobName]);
+  }, [expandedJobName, expandedTopic]);
 
   useEffect(() => {
     const controllers = logControllers.current;
@@ -472,6 +515,7 @@ export function ScheduledJobMonitor({
                       const isExpanded = expandedRow === rowKey;
                       const runStart = job.jobRun?.startTime ?? null;
                       const logState = logStateByJob[job.jobName];
+                      const logFeedback = getLogStreamFeedback(logState?.error, 'job');
 
                       const handleToggle = () => {
                         if (!isExpanded) {
@@ -615,19 +659,25 @@ export function ScheduledJobMonitor({
                                       className="h-7 w-7"
                                       disabled={Boolean(triggeringJob) || Boolean(jobControl)}
                                       onClick={() =>
-                                        String(job.jobRun?.status || '').trim().toLowerCase() === 'running'
+                                        String(job.jobRun?.status || '')
+                                          .trim()
+                                          .toLowerCase() === 'running'
                                           ? void setJobSuspended(job.jobName, true)
                                           : void triggerJob(job.jobName)
                                       }
                                       aria-label={
-                                        String(job.jobRun?.status || '').trim().toLowerCase() === 'running'
+                                        String(job.jobRun?.status || '')
+                                          .trim()
+                                          .toLowerCase() === 'running'
                                           ? `Stop ${job.jobName}`
                                           : `Run ${job.jobName}`
                                       }
                                     >
                                       {triggeringJob === job.jobName ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : String(job.jobRun?.status || '').trim().toLowerCase() === 'running' ? (
+                                      ) : String(job.jobRun?.status || '')
+                                          .trim()
+                                          .toLowerCase() === 'running' ? (
                                         <Square className="h-4 w-4" />
                                       ) : (
                                         <Play className="h-4 w-4" />
@@ -635,7 +685,9 @@ export function ScheduledJobMonitor({
                                     </Button>
                                   </TooltipTrigger>
                                   <TooltipContent side="left">
-                                    {String(job.jobRun?.status || '').trim().toLowerCase() === 'running'
+                                    {String(job.jobRun?.status || '')
+                                      .trim()
+                                      .toLowerCase() === 'running'
                                       ? 'Stop job'
                                       : 'Trigger job'}
                                   </TooltipContent>
@@ -734,20 +786,29 @@ export function ScheduledJobMonitor({
                                       {logState?.loading && (
                                         <div className="text-muted-foreground">Loading logs…</div>
                                       )}
-                                      {!logState?.loading && logState?.error && (
-                                        <div className="break-words text-destructive">
-                                          Failed to load logs: {logState.error}
-                                        </div>
-                                      )}
                                       {!logState?.loading &&
-                                        !logState?.error &&
+                                        logFeedback.tone === 'error' &&
+                                        logFeedback.message && (
+                                          <div className="break-words text-destructive">
+                                            Failed to load logs: {logFeedback.message}
+                                          </div>
+                                        )}
+                                      {!logState?.loading &&
+                                        logFeedback.tone === 'info' &&
+                                        logFeedback.message && (
+                                          <div className="text-muted-foreground">
+                                            {logFeedback.message}
+                                          </div>
+                                        )}
+                                      {!logState?.loading &&
+                                        logFeedback.tone === 'none' &&
                                         (logState?.lines?.length ?? 0) === 0 && (
                                           <div className="text-muted-foreground">
                                             No log output available.
                                           </div>
                                         )}
                                       {!logState?.loading &&
-                                        !logState?.error &&
+                                        logFeedback.tone === 'none' &&
                                         (logState?.lines?.length ?? 0) > 0 && (
                                           <div className="space-y-1">
                                             {(logState?.lines ?? [])

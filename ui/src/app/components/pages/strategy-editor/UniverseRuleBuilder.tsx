@@ -176,7 +176,12 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
     if (value.root.clauses.length !== 1) return;
     const firstClause = value.root.clauses[0];
     if (isUniverseGroup(firstClause)) return;
-    if (firstClause.table || firstClause.column || firstClause.value !== undefined || firstClause.values?.length) {
+    if (
+      firstClause.table ||
+      firstClause.column ||
+      firstClause.value !== undefined ||
+      firstClause.values?.length
+    ) {
       return;
     }
 
@@ -228,7 +233,10 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
     updateUniverse(removeNodeAtPath(value, path));
   };
 
-  const updateCondition = (path: NodePath, updater: (condition: UniverseCondition) => UniverseCondition) => {
+  const updateCondition = (
+    path: NodePath,
+    updater: (condition: UniverseCondition) => UniverseCondition
+  ) => {
     updateUniverse(
       updateNodeAtPath(value, path, (node) => {
         if (isUniverseGroup(node)) return node;
@@ -257,7 +265,10 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
     updateCondition(path, (condition) => ({
       ...condition,
       column: columnName,
-      operator: (column?.operators.includes(condition.operator) ? condition.operator : column?.operators[0]) || 'eq',
+      operator:
+        (column?.operators.includes(condition.operator)
+          ? condition.operator
+          : column?.operators[0]) || 'eq',
       value: undefined,
       values: undefined
     }));
@@ -267,7 +278,8 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
     updateCondition(path, (condition) => ({
       ...condition,
       operator,
-      value: isNullOperator(operator) || isMultiValueOperator(operator) ? undefined : condition.value,
+      value:
+        isNullOperator(operator) || isMultiValueOperator(operator) ? undefined : condition.value,
       values: isMultiValueOperator(operator) ? condition.values : undefined
     }));
   };
@@ -373,10 +385,7 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
       const availableOperators = selectedColumn?.operators || [];
 
       return (
-        <div
-          key={path.join('-') || 'condition-root'}
-          className={surfaceClassName}
-        >
+        <div key={path.join('-') || 'condition-root'} className={surfaceClassName}>
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
               <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
@@ -389,7 +398,8 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
               </div>
               {selectedColumn ? (
                 <div className="text-xs text-muted-foreground">
-                  Data type: <span className="font-medium text-foreground">{selectedColumn.dataType}</span>
+                  Data type:{' '}
+                  <span className="font-medium text-foreground">{selectedColumn.dataType}</span>
                 </div>
               ) : null}
             </div>
@@ -481,7 +491,9 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
             <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
               {path.length === 0 ? 'Root Group' : 'Nested Group'}
             </div>
-            <div className="text-sm font-medium text-foreground">{formatUniverseOperator(node.operator)}</div>
+            <div className="text-sm font-medium text-foreground">
+              {formatUniverseOperator(node.operator)}
+            </div>
             <div className="text-xs text-muted-foreground">{node.clauses.length} clauses</div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -560,7 +572,9 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
         </div>
 
         {catalogQuery.isLoading ? (
-          <p className="px-5 pt-5 text-sm text-muted-foreground">Loading gold tables and columns...</p>
+          <p className="px-5 pt-5 text-sm text-muted-foreground">
+            Loading gold tables and columns...
+          </p>
         ) : null}
         {catalogQuery.error ? (
           <div className="mx-5 mt-5 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
@@ -576,7 +590,8 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
           <div>
             <h4 className="text-base font-semibold text-foreground">Universe Preview</h4>
             <p className="text-sm text-muted-foreground">
-              Preview the symbols that match the current rule set using the latest available gold rows.
+              Preview the symbols that match the current rule set using the latest available gold
+              rows.
             </p>
           </div>
           <Button
@@ -604,19 +619,25 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
                   <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
                     Matching universe
                   </div>
-                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">{preview.symbolCount}</div>
+                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">
+                    {preview.symbolCount}
+                  </div>
                 </div>
                 <div className={mutedSurfaceClassName}>
                   <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
                     Tables used
                   </div>
-                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">{preview.tablesUsed.length}</div>
+                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">
+                    {preview.tablesUsed.length}
+                  </div>
                 </div>
                 <div className={mutedSurfaceClassName}>
                   <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
                     Sample returned
                   </div>
-                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">{preview.sampleSymbols.length}</div>
+                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">
+                    {preview.sampleSymbols.length}
+                  </div>
                 </div>
               </div>
 
@@ -643,7 +664,9 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
                   </div>
                 </div>
               ) : (
-                <div className="text-sm text-muted-foreground">No symbols matched the current universe.</div>
+                <div className="text-sm text-muted-foreground">
+                  No symbols matched the current universe.
+                </div>
               )}
 
               {preview.warnings.length ? (

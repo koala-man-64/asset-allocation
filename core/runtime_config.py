@@ -41,7 +41,6 @@ _DB_CONNECTIVITY_ERROR_SNIPPETS = (
 class RuntimeConfigItem:
     scope: str
     key: str
-    enabled: bool
     value: str
     description: Optional[str]
     updated_at: Optional[datetime]
@@ -70,32 +69,19 @@ DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     "MASSIVE_TIMEOUT_SECONDS",
     "MASSIVE_MAX_WORKERS",
     "MASSIVE_FINANCE_FRESH_DAYS",
-    "MASSIVE_PREFER_OFFICIAL_SDK",
-    "SILVER_LATEST_ONLY",
-    "SILVER_MARKET_LATEST_ONLY",
-    "SILVER_FINANCE_LATEST_ONLY",
     "SILVER_FINANCE_CATCHUP_MAX_PASSES",
-    "SILVER_FINANCE_USE_BRONZE_MANIFEST",
-    "SILVER_EARNINGS_LATEST_ONLY",
-    "SILVER_PRICE_TARGET_LATEST_ONLY",
-    "FINANCE_RUN_MANIFESTS_ENABLED",
     "FINANCE_PIPELINE_SHARED_LOCK_NAME",
     "BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS",
     "SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS",
-    "FEATURE_ENGINEERING_MAX_WORKERS",
     "TRIGGER_NEXT_JOB_NAME",
-    "TRIGGER_NEXT_JOB_REQUIRED",
     "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS",
     "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS",
     "SYSTEM_HEALTH_TTL_SECONDS",
     "SYSTEM_HEALTH_MAX_AGE_SECONDS",
     "SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON",
     "SYSTEM_HEALTH_VERBOSE_IDS",
-    "SYSTEM_HEALTH_MARKERS_ENABLED",
     "SYSTEM_HEALTH_MARKERS_CONTAINER",
     "SYSTEM_HEALTH_MARKERS_PREFIX",
-    "SYSTEM_HEALTH_MARKERS_DUAL_READ",
-    "SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS",
     # System health: Azure control-plane probes (monitoring/system_health.py).
     "SYSTEM_HEALTH_ARM_API_VERSION",
     "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS",
@@ -103,7 +89,6 @@ DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     "SYSTEM_HEALTH_ARM_JOBS",
     "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB",
     # System health: Azure Monitor Metrics (monitoring/system_health.py + monitoring/monitor_metrics.py).
-    "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED",
     "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION",
     "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES",
     "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL",
@@ -111,14 +96,11 @@ DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     "SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS",
     "SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS",
     "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON",
-    # System health: Azure Log Analytics (monitoring/system_health.py + monitoring/log_analytics.py).
-    "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED",
-    "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID",
+    # System health: Azure Log Analytics query tuning. Connectivity bootstrap is deploy-time config.
     "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS",
     "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES",
     "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON",
     # System health: Azure Resource Health (monitoring/system_health.py).
-    "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED",
     "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION",
     "DOMAIN_METADATA_MAX_SCANNED_BLOBS",
 }
@@ -133,10 +115,8 @@ _INT_KEYS = {
     "MASSIVE_MAX_WORKERS",
     "MASSIVE_FINANCE_FRESH_DAYS",
     "SILVER_FINANCE_CATCHUP_MAX_PASSES",
-    "FEATURE_ENGINEERING_MAX_WORKERS",
     "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS",
     "SYSTEM_HEALTH_MAX_AGE_SECONDS",
-    "SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS",
     "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB",
     "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES",
     "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES",
@@ -157,22 +137,7 @@ _FLOAT_KEYS = {
     "BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS",
     "SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS",
 }
-_BOOL_KEYS = {
-    "SILVER_LATEST_ONLY",
-    "SILVER_MARKET_LATEST_ONLY",
-    "SILVER_FINANCE_LATEST_ONLY",
-    "SILVER_FINANCE_USE_BRONZE_MANIFEST",
-    "SILVER_EARNINGS_LATEST_ONLY",
-    "SILVER_PRICE_TARGET_LATEST_ONLY",
-    "FINANCE_RUN_MANIFESTS_ENABLED",
-    "TRIGGER_NEXT_JOB_REQUIRED",
-    "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED",
-    "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED",
-    "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED",
-    "SYSTEM_HEALTH_MARKERS_ENABLED",
-    "SYSTEM_HEALTH_MARKERS_DUAL_READ",
-    "MASSIVE_PREFER_OFFICIAL_SDK",
-}
+_BOOL_KEYS: set[str] = set()
 _REQUIRED_NONEMPTY_KEYS = {
     "DEBUG_SYMBOLS",
     "SYSTEM_HEALTH_TTL_SECONDS",
@@ -297,7 +262,7 @@ def list_runtime_config(
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT scope, key, enabled, value, description, updated_at, updated_by
+                SELECT scope, key, value, description, updated_at, updated_by
                 FROM core.runtime_config
                 {where}
                 ORDER BY scope, key
@@ -312,11 +277,10 @@ def list_runtime_config(
             RuntimeConfigItem(
                 scope=str(row[0] or ""),
                 key=str(row[1] or ""),
-                enabled=bool(row[2]),
-                value=str(row[3] or ""),
-                description=str(row[4]) if row[4] is not None else None,
-                updated_at=row[5],
-                updated_by=str(row[6]) if row[6] is not None else None,
+                value=str(row[2] or ""),
+                description=str(row[3]) if row[3] is not None else None,
+                updated_at=row[4],
+                updated_by=str(row[5]) if row[5] is not None else None,
             )
         )
     return out
@@ -329,7 +293,7 @@ def get_effective_runtime_config(
     keys: Optional[Iterable[str]] = None,
 ) -> dict[str, RuntimeConfigItem]:
     """
-    Returns enabled runtime config entries merged by precedence.
+    Returns runtime config entries merged by precedence.
 
     Precedence is defined by order in `scopes_by_precedence` (first wins).
     """
@@ -347,8 +311,6 @@ def get_effective_runtime_config(
         for item in by_scope.get(scope, []):
             if item.key in out:
                 continue
-            if not item.enabled:
-                continue
             out[item.key] = item
     return out
 
@@ -358,7 +320,6 @@ def upsert_runtime_config(
     dsn: Optional[str],
     scope: str = "global",
     key: str,
-    enabled: bool,
     value: str,
     description: Optional[str] = None,
     actor: Optional[str] = None,
@@ -376,17 +337,16 @@ def upsert_runtime_config(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO core.runtime_config(scope, key, enabled, value, description, updated_at, updated_by)
-                VALUES (%s, %s, %s, %s, %s, now(), %s)
+                INSERT INTO core.runtime_config(scope, key, value, description, updated_at, updated_by)
+                VALUES (%s, %s, %s, %s, now(), %s)
                 ON CONFLICT (scope, key) DO UPDATE
-                SET enabled = EXCLUDED.enabled,
-                    value = EXCLUDED.value,
+                SET value = EXCLUDED.value,
                     description = COALESCE(EXCLUDED.description, core.runtime_config.description),
                     updated_at = now(),
                     updated_by = EXCLUDED.updated_by
-                RETURNING scope, key, enabled, value, description, updated_at, updated_by
+                RETURNING scope, key, value, description, updated_at, updated_by
                 """,
-                (scope_value, key_value, bool(enabled), str(value or ""), description, actor),
+                (scope_value, key_value, str(value or ""), description, actor),
             )
             row = cur.fetchone()
 
@@ -396,11 +356,10 @@ def upsert_runtime_config(
     return RuntimeConfigItem(
         scope=str(row[0] or ""),
         key=str(row[1] or ""),
-        enabled=bool(row[2]),
-        value=str(row[3] or ""),
-        description=str(row[4]) if row[4] is not None else None,
-        updated_at=row[5],
-        updated_by=str(row[6]) if row[6] is not None else None,
+        value=str(row[2] or ""),
+        description=str(row[3]) if row[3] is not None else None,
+        updated_at=row[4],
+        updated_by=str(row[5]) if row[5] is not None else None,
     )
 
 
@@ -431,7 +390,7 @@ def apply_runtime_config_to_env(
     raise_on_error: bool = False,
 ) -> dict[str, str]:
     """
-    Applies enabled config values as process env var overrides (os.environ).
+    Applies runtime config values as process env var overrides (os.environ).
 
     Returns a map of key -> value for keys applied.
     """

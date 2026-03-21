@@ -97,9 +97,12 @@ async function fetchWithOptionalTimeout(
 
   if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
     timeoutController = new AbortController();
-    timeoutHandle = setTimeout(() => {
-      timeoutController?.abort();
-    }, Math.max(1, Math.floor(timeoutMs)));
+    timeoutHandle = setTimeout(
+      () => {
+        timeoutController?.abort();
+      },
+      Math.max(1, Math.floor(timeoutMs))
+    );
 
     if (init.signal) {
       if (init.signal.aborted) {
@@ -119,7 +122,7 @@ async function fetchWithOptionalTimeout(
       signal: mergedSignal ?? undefined
     });
   } catch (error) {
-    if (timeoutController?.signal.aborted && !(init.signal?.aborted)) {
+    if (timeoutController?.signal.aborted && !init.signal?.aborted) {
       throw new Error(
         `API timeout after ${Math.floor(timeoutMs || 0)}ms [requestId=${requestId}] - ${endpointLabel}`
       );
@@ -191,6 +194,16 @@ export interface RequestConfig extends RequestInit {
   timeoutMs?: number;
   retryOnStatusCodes?: number[] | false;
   retryAttempts?: number;
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
 }
 
 export interface RequestMeta {
@@ -289,7 +302,8 @@ async function performRequest<T>(
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(
+    throw new ApiError(
+      response.status,
       `API Error: ${response.status} ${response.statusText} [requestId=${requestId}] - ${errorBody}`
     );
   }
@@ -591,7 +605,6 @@ export interface PurgeResponse {
 }
 
 export interface DebugSymbolsResponse {
-  enabled: boolean;
   symbols: string;
   updatedAt?: string | null;
   updatedBy?: string | null;
@@ -610,7 +623,6 @@ export interface RuntimeConfigCatalogResponse {
 export interface RuntimeConfigItem {
   scope: string;
   key: string;
-  enabled: boolean;
   value: string;
   description?: string | null;
   updatedAt?: string | null;
@@ -783,6 +795,17 @@ export interface DomainMetadataSnapshotResponse {
   warnings?: string[];
 }
 
+export interface SystemStatusViewResponse {
+  version: number;
+  generatedAt: string;
+  systemHealth: SystemHealth;
+  metadataSnapshot: DomainMetadataSnapshotResponse;
+  sources: {
+    systemHealth: 'cache' | 'live-refresh';
+    metadataSnapshot: 'persisted-snapshot';
+  };
+}
+
 export const apiService = {
   // --- Data Endpoints ---
 
@@ -819,7 +842,7 @@ export const apiService = {
   getDomainMetadata(
     layer: 'bronze' | 'silver' | 'gold' | 'platinum',
     domain: string,
-    params: { refresh?: boolean; cacheOnly?: boolean } = {}
+    params: { refresh?: boolean } = {}
   ): Promise<DomainMetadata> {
     return request<DomainMetadata>('/system/domain-metadata', {
       params: { layer, domain, ...params }
@@ -827,11 +850,19 @@ export const apiService = {
   },
 
   getDomainMetadataSnapshot(
-    params: { layers?: string; domains?: string; cacheOnly?: boolean; refresh?: boolean } = {}
+    params: { layers?: string; domains?: string; refresh?: boolean } = {}
   ): Promise<DomainMetadataSnapshotResponse> {
     return request<DomainMetadataSnapshotResponse>('/system/domain-metadata/snapshot', {
       params
     });
+  },
+
+  getSystemStatusView(
+    params: {
+      refresh?: boolean;
+    } = {}
+  ): Promise<SystemStatusViewResponse> {
+    return request<SystemStatusViewResponse>('/system/status-view', { params });
   },
 
   getPersistedDomainMetadataSnapshotCache(): Promise<DomainMetadataSnapshotResponse> {
@@ -894,10 +925,7 @@ export const apiService = {
     });
   },
 
-  startContainerApp(
-    appName: string,
-    signal?: AbortSignal
-  ): Promise<ContainerAppControlResponse> {
+  startContainerApp(appName: string, signal?: AbortSignal): Promise<ContainerAppControlResponse> {
     return request<ContainerAppControlResponse>(
       `/system/container-apps/${encodeURIComponent(appName)}/start`,
       {
@@ -907,10 +935,7 @@ export const apiService = {
     );
   },
 
-  stopContainerApp(
-    appName: string,
-    signal?: AbortSignal
-  ): Promise<ContainerAppControlResponse> {
+  stopContainerApp(appName: string, signal?: AbortSignal): Promise<ContainerAppControlResponse> {
     return request<ContainerAppControlResponse>(
       `/system/container-apps/${encodeURIComponent(appName)}/stop`,
       {
@@ -967,13 +992,16 @@ export const apiService = {
     const normalizedDomain = String(domain || '').trim();
     if (layer === 'gold' && normalizedDomain.startsWith('regime/')) {
       const dataset = normalizedDomain.slice('regime/'.length);
-      return request<Record<string, unknown>[]>(`/data/gold/regime/${encodeURIComponent(dataset)}`, {
-        params: {
-          limit,
-          date_sort: options?.sortByDate
-        },
-        signal: resolvedSignal
-      });
+      return request<Record<string, unknown>[]>(
+        `/data/gold/regime/${encodeURIComponent(dataset)}`,
+        {
+          params: {
+            limit,
+            date_sort: options?.sortByDate
+          },
+          signal: resolvedSignal
+        }
+      );
     }
     const endpoint = `/data/${layer}/${normalizedDomain}`;
     return request<Record<string, unknown>[]>(endpoint, {
@@ -993,8 +1021,7 @@ export const apiService = {
     signal?: AbortSignal
   ): Promise<ValidationReport> {
     const ticker = typeof tickerOrSignal === 'string' ? tickerOrSignal : undefined;
-    const resolvedSignal =
-      tickerOrSignal instanceof AbortSignal ? tickerOrSignal : signal;
+    const resolvedSignal = tickerOrSignal instanceof AbortSignal ? tickerOrSignal : signal;
     return request<ValidationReport>(`/data/quality/${layer}/${domain}/validation`, {
       params: { ticker },
       signal: resolvedSignal
@@ -1008,7 +1035,11 @@ export const apiService = {
   },
 
   getAdlsTree(
-    params: { layer: 'bronze' | 'silver' | 'gold' | 'platinum'; path?: string; maxEntries?: number },
+    params: {
+      layer: 'bronze' | 'silver' | 'gold' | 'platinum';
+      path?: string;
+      maxEntries?: number;
+    },
     signal?: AbortSignal
   ): Promise<AdlsTreeResponse> {
     return request<AdlsTreeResponse>('/data/adls/tree', {
@@ -1056,15 +1087,18 @@ export const apiService = {
     const normalizedDomain = String(domain || '').trim();
     if (layer === 'gold' && normalizedDomain.startsWith('regime/')) {
       const dataset = normalizedDomain.slice('regime/'.length);
-      return request<DataProfilingResponse>(`/data/gold/regime/${encodeURIComponent(dataset)}/profile`, {
-        params: {
-          column,
-          bins: params.bins,
-          sampleRows: params.sampleRows,
-          topValues: params.topValues
-        },
-        signal
-      });
+      return request<DataProfilingResponse>(
+        `/data/gold/regime/${encodeURIComponent(dataset)}/profile`,
+        {
+          params: {
+            column,
+            bins: params.bins,
+            sampleRows: params.sampleRows,
+            topValues: params.topValues
+          },
+          signal
+        }
+      );
     }
     return request<DataProfilingResponse>(`/data/${layer}/profile`, {
       params: {
@@ -1114,7 +1148,7 @@ export const apiService = {
 
   getPurgeCandidates(payload: PurgeCandidatesRequest): Promise<PurgeCandidatesResponse> {
     return request<PurgeCandidatesResponse>('/system/purge-candidates', {
-      params: payload,
+      params: { ...payload },
       timeoutMs: 30000,
       retryOnStatusCodes: [408, 425, 429, 500, 502, 503]
     });
@@ -1165,10 +1199,16 @@ export const apiService = {
     return request<DebugSymbolsResponse>('/system/debug-symbols');
   },
 
-  setDebugSymbols(payload: { enabled: boolean; symbols?: string }): Promise<DebugSymbolsResponse> {
+  setDebugSymbols(payload: { symbols: string }): Promise<DebugSymbolsResponse> {
     return request<DebugSymbolsResponse>('/system/debug-symbols', {
-      method: 'POST',
+      method: 'PUT',
       body: JSON.stringify(payload)
+    });
+  },
+
+  deleteDebugSymbols(): Promise<{ deleted: boolean }> {
+    return request<{ deleted: boolean }>('/system/debug-symbols', {
+      method: 'DELETE'
     });
   },
 
@@ -1185,7 +1225,6 @@ export const apiService = {
   setRuntimeConfig(payload: {
     key: string;
     scope?: string;
-    enabled: boolean;
     value: string;
     description?: string;
   }): Promise<RuntimeConfigItem> {

@@ -9,7 +9,6 @@ from tests.api._client import get_test_client
 
 @pytest.mark.asyncio
 async def test_create_purge_candidates_operation_completes_with_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
 
     def _fake_collect(*args, **kwargs):
         return (
@@ -65,7 +64,6 @@ async def test_create_purge_candidates_operation_completes_with_result(monkeypat
 
 @pytest.mark.asyncio
 async def test_create_purge_candidates_operation_sets_failed_status_on_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
 
     def _failing_collect(*args, **kwargs):
         raise RuntimeError("preview exploded")

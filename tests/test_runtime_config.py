@@ -4,16 +4,10 @@ from core import runtime_config
 from core.runtime_config import normalize_env_override
 
 
-def test_normalize_env_override_bool_truthy():
-    assert normalize_env_override("SILVER_LATEST_ONLY", "true") == "true"
-    assert normalize_env_override("SILVER_LATEST_ONLY", "1") == "true"
-    assert normalize_env_override("SILVER_LATEST_ONLY", "Yes") == "true"
-
-
-def test_normalize_env_override_bool_falsey():
-    assert normalize_env_override("SILVER_LATEST_ONLY", "false") == "false"
-    assert normalize_env_override("SILVER_LATEST_ONLY", "0") == "false"
-    assert normalize_env_override("SILVER_LATEST_ONLY", "off") == "false"
+def test_normalize_env_override_passthrough_for_unmanaged_keys():
+    assert normalize_env_override("LEGACY_FLAG", "true") == "true"
+    assert normalize_env_override("LEGACY_FLAG", "1") == "1"
+    assert normalize_env_override("LEGACY_FLAG", "off") == "off"
 
 
 def test_normalize_env_override_debug_symbols_to_uppercase_csv():

@@ -2,13 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ExternalLink, Loader2, ScrollText } from 'lucide-react';
 
 import { Button } from '@/app/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from '@/app/components/ui/card';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from '@/app/components/ui/select';
 import {
   Table,
@@ -16,7 +22,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow,
+  TableRow
 } from '@/app/components/ui/table';
 import type { JobLogsResponse } from '@/services/apiService';
 import { DataService } from '@/services/DataService';
@@ -25,19 +31,21 @@ import {
   buildJobLogTopic,
   requestRealtimeSubscription,
   requestRealtimeUnsubscription,
-  type ConsoleLogStreamLine,
+  type ConsoleLogStreamLine
 } from '@/services/realtimeBus';
 import {
+  effectiveJobStatus,
   formatTimeAgo,
   getAzureJobExecutionsUrl,
   getStatusBadge,
   getStatusIcon,
-  normalizeAzurePortalUrl,
-  normalizeJobStatus,
+  normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
+import { getLogStreamFeedback } from './logStreamFeedback';
 import { formatSystemStatusText } from './systemStatusText';
 
 const LOG_LINE_LIMIT = 200;
+const LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 16;
 
 export type JobLogStreamTarget = {
   name: string;
@@ -66,19 +74,18 @@ type LogState = {
 
 function sortJobsForDisplay(jobs: JobLogStreamTarget[]): JobLogStreamTarget[] {
   return [...jobs].sort((left, right) => {
-    const leftRunning = normalizeJobStatus(left.runningState || left.recentStatus) === 'running' ? 1 : 0;
-    const rightRunning = normalizeJobStatus(right.runningState || right.recentStatus) === 'running' ? 1 : 0;
-    if (leftRunning !== rightRunning) {
-      return rightRunning - leftRunning;
+    const labelComparison = left.label.localeCompare(right.label, undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    });
+    if (labelComparison !== 0) {
+      return labelComparison;
     }
 
-    const leftStart = left.startTime ? Date.parse(left.startTime) : Number.NEGATIVE_INFINITY;
-    const rightStart = right.startTime ? Date.parse(right.startTime) : Number.NEGATIVE_INFINITY;
-    if (leftStart !== rightStart) {
-      return rightStart - leftStart;
-    }
-
-    return left.label.localeCompare(right.label);
+    return left.name.localeCompare(right.name, undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    });
   });
 }
 
@@ -106,7 +113,7 @@ function normalizeLogLine(
     timestamp,
     stream_s,
     message,
-    executionName,
+    executionName
   };
 }
 
@@ -148,13 +155,34 @@ function extractJobLogLines(response: JobLogsResponse): ConsoleTailLine[] {
         normalizeLogLine({
           message: String(line || ''),
           executionName: run?.executionName,
-          timestamp: run?.startTime ?? null,
+          timestamp: run?.startTime ?? null
         })
       )
       .filter((line): line is ConsoleTailLine => line !== null);
   });
 
   return combined.slice(-LOG_LINE_LIMIT);
+}
+
+function extractLatestExecutionName(response: JobLogsResponse): string | null {
+  const runs = Array.isArray(response?.runs) ? response.runs : [];
+  for (const run of runs) {
+    const executionName = typeof run?.executionName === 'string' ? run.executionName.trim() : '';
+    if (executionName) {
+      return executionName;
+    }
+
+    if (Array.isArray(run?.consoleLogs)) {
+      for (const entry of run.consoleLogs) {
+        const lineExecutionName =
+          typeof entry?.executionName === 'string' ? entry.executionName.trim() : '';
+        if (lineExecutionName) {
+          return lineExecutionName;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function formatConsoleTimestamp(timestamp?: string | null): string | null {
@@ -172,18 +200,29 @@ function formatConsoleTimestamp(timestamp?: string | null): string | null {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false,
+    hour12: false
   }).format(new Date(parsed));
+}
+
+function isNearBottom(
+  element: HTMLElement,
+  thresholdPx = LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+): boolean {
+  const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+  return remaining <= thresholdPx;
 }
 
 export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   const [selectedJobName, setSelectedJobName] = useState('');
+  const [selectedExecutionName, setSelectedExecutionName] = useState<string | null>(null);
   const [logState, setLogState] = useState<LogState>({
     lines: [],
     loading: false,
-    error: null,
+    error: null
   });
   const requestControllerRef = useRef<AbortController | null>(null);
+  const logViewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
   const sortedJobs = useMemo(() => sortJobsForDisplay(jobs), [jobs]);
 
   const selectedJob = useMemo(
@@ -191,11 +230,16 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     [sortedJobs, selectedJobName]
   );
   const selectedJobStartTime = selectedJob?.startTime ?? null;
-  const selectedJobTopic = selectedJobName ? buildJobLogTopic(selectedJobName) : null;
+  const selectedJobTopic =
+    selectedJobName && selectedExecutionName
+      ? buildJobLogTopic(selectedJobName, selectedExecutionName)
+      : null;
+  const logFeedback = getLogStreamFeedback(logState.error, 'job');
 
   useEffect(() => {
     if (!sortedJobs.length) {
       setSelectedJobName('');
+      setSelectedExecutionName(null);
       setLogState({ lines: [], loading: false, error: null });
       return;
     }
@@ -215,6 +259,11 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   }, []);
 
   useEffect(() => {
+    shouldAutoScrollRef.current = true;
+    setSelectedExecutionName(null);
+  }, [selectedJobName, selectedJobStartTime]);
+
+  useEffect(() => {
     if (!selectedJobName) {
       setLogState({ lines: [], loading: false, error: null });
       return;
@@ -227,20 +276,22 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     setLogState({ lines: [], loading: true, error: null });
     DataService.getJobLogs(selectedJobName, { runs: 1 }, controller.signal)
       .then((response) => {
+        setSelectedExecutionName(extractLatestExecutionName(response));
         setLogState({
           lines: extractJobLogLines(response),
           loading: false,
-          error: null,
+          error: null
         });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) {
           return;
         }
+        setSelectedExecutionName(null);
         setLogState({
           lines: [],
           loading: false,
-          error: formatSystemStatusText(error),
+          error: formatSystemStatusText(error)
         });
       });
 
@@ -279,10 +330,18 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
       setLogState((current) => ({
         lines: mergeLogLines(current.lines, incoming),
         loading: false,
-        error: null,
+        error: null
       }));
     });
   }, [selectedJobTopic]);
+
+  useEffect(() => {
+    const viewport = logViewportRef.current;
+    if (!viewport || !shouldAutoScrollRef.current) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [logState.lines, logState.loading, logState.error, selectedJobName]);
 
   if (!sortedJobs.length) {
     return (
@@ -300,7 +359,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
 
   const executionUrl = getAzureJobExecutionsUrl(selectedJob?.jobUrl);
   const portalUrl = normalizeAzurePortalUrl(selectedJob?.jobUrl);
-  const status = normalizeJobStatus(selectedJob?.recentStatus || selectedJob?.runningState);
+  const status = effectiveJobStatus(selectedJob?.recentStatus, selectedJob?.runningState);
 
   return (
     <Card className="h-full flex flex-col">
@@ -360,7 +419,9 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
 
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-md border bg-muted/20 p-3">
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                Status
+              </div>
               <div className="mt-2 flex items-center gap-2 text-sm">
                 {getStatusIcon(status)}
                 {getStatusBadge(status)}
@@ -392,20 +453,32 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
               {selectedJob ? selectedJob.name : 'No job selected'}
             </span>
           </div>
-          <div className="max-h-80 overflow-auto overflow-x-auto px-3 py-2 text-xs font-mono leading-relaxed">
+          <div
+            ref={logViewportRef}
+            className="max-h-80 overflow-auto overflow-x-auto px-3 py-2 text-xs font-mono leading-relaxed"
+            data-testid="job-log-stream-tail"
+            onScroll={(event) => {
+              shouldAutoScrollRef.current = isNearBottom(event.currentTarget);
+            }}
+          >
             {logState.loading ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading logs…
               </div>
             ) : null}
-            {!logState.loading && logState.error ? (
-              <div className="break-words text-destructive">Failed to load logs: {logState.error}</div>
+            {!logState.loading && logFeedback.tone === 'error' && logFeedback.message ? (
+              <div className="break-words text-destructive">
+                Failed to load logs: {logFeedback.message}
+              </div>
             ) : null}
-            {!logState.loading && !logState.error && logState.lines.length === 0 ? (
+            {!logState.loading && logFeedback.tone === 'info' && logFeedback.message ? (
+              <div className="text-muted-foreground">{logFeedback.message}</div>
+            ) : null}
+            {!logState.loading && logFeedback.tone === 'none' && logState.lines.length === 0 ? (
               <div className="text-muted-foreground">No log output available.</div>
             ) : null}
-            {!logState.loading && !logState.error && logState.lines.length > 0 ? (
+            {!logState.loading && logFeedback.tone === 'none' && logState.lines.length > 0 ? (
               <Table className="min-w-full text-xs">
                 <TableHeader>
                   <TableRow className="hover:[&>td]:bg-transparent">

@@ -11,7 +11,6 @@ from tests.api._client import get_test_client
 
 @pytest.mark.asyncio
 async def test_list_ranking_schemas_returns_repo_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         RankingRepository,
@@ -29,7 +28,6 @@ async def test_list_ranking_schemas_returns_repo_rows(monkeypatch: pytest.Monkey
 
 @pytest.mark.asyncio
 async def test_ranking_catalog_endpoint_returns_gold_tables(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         ranking_endpoints,
@@ -56,7 +54,6 @@ async def test_ranking_catalog_endpoint_returns_gold_tables(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_preview_rankings_accepts_draft_schema(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         ranking_endpoints,
@@ -107,7 +104,6 @@ async def test_preview_rankings_accepts_draft_schema(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.asyncio
 async def test_save_ranking_schema_rejects_unknown_universe_reference(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(UniverseRepository, "get_universe_config", lambda self, name: None)
 
@@ -148,7 +144,6 @@ async def test_save_ranking_schema_rejects_unknown_universe_reference(monkeypatc
 
 @pytest.mark.asyncio
 async def test_materialize_rankings_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         ranking_endpoints,

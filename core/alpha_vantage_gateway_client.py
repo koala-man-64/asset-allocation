@@ -6,9 +6,11 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
+
+from core.api_gateway_auth import build_access_token_provider
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 600.0
@@ -101,8 +103,7 @@ def _env_int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class AlphaVantageGatewayClientConfig:
     base_url: str
-    api_key: Optional[str]
-    api_key_header: str
+    api_scope: Optional[str]
     timeout_seconds: float
     warmup_enabled: bool = _DEFAULT_API_WARMUP_ENABLED
     warmup_max_attempts: int = _DEFAULT_API_WARMUP_MAX_ATTEMPTS
@@ -129,10 +130,12 @@ class AlphaVantageGatewayClient:
         config: AlphaVantageGatewayClientConfig,
         *,
         http_client: Optional[httpx.Client] = None,
+        access_token_provider: Optional[Callable[[], str]] = None,
     ) -> None:
         self.config = config
         self._owns_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(config.timeout_seconds), trust_env=False)
+        self._access_token_provider = access_token_provider
         self._warmup_lock = threading.Lock()
         self._warmup_attempted = False
         self._warmup_succeeded = not config.warmup_enabled
@@ -146,14 +149,11 @@ class AlphaVantageGatewayClient:
         if not base_url:
             raise ValueError("ASSET_ALLOCATION_API_BASE_URL is required for Alpha Vantage ETL via API gateway.")
 
-        api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(
-            os.environ.get("API_KEY")
-        )
-        api_key_header = (
-            _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY_HEADER"))
-            or _strip_or_none(os.environ.get("API_KEY_HEADER"))
-            or "X-API-Key"
-        )
+        api_scope = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_SCOPE"))
+        if not api_scope:
+            raise ValueError(
+                "ASSET_ALLOCATION_API_SCOPE is required for Alpha Vantage ETL via the Asset Allocation API gateway."
+            )
 
         timeout_seconds = _env_float(
             "ASSET_ALLOCATION_API_TIMEOUT_SECONDS",
@@ -167,7 +167,6 @@ class AlphaVantageGatewayClient:
             )
             timeout_seconds = _MIN_API_GATEWAY_TIMEOUT_SECONDS
 
-        warmup_enabled = _env_bool("ASSET_ALLOCATION_API_WARMUP_ENABLED", _DEFAULT_API_WARMUP_ENABLED)
         warmup_max_attempts = max(1, _env_int("ASSET_ALLOCATION_API_WARMUP_ATTEMPTS", _DEFAULT_API_WARMUP_MAX_ATTEMPTS))
         warmup_base_delay_seconds = max(
             0.0,
@@ -181,7 +180,6 @@ class AlphaVantageGatewayClient:
             0.1,
             _env_float("ASSET_ALLOCATION_API_WARMUP_PROBE_TIMEOUT_SECONDS", _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS),
         )
-        readiness_enabled = _env_bool("ASSET_ALLOCATION_API_READINESS_ENABLED", _DEFAULT_API_READINESS_ENABLED)
         readiness_max_attempts = max(
             1,
             _env_int("ASSET_ALLOCATION_API_READINESS_ATTEMPTS", _DEFAULT_API_READINESS_MAX_ATTEMPTS),
@@ -206,15 +204,14 @@ class AlphaVantageGatewayClient:
         return AlphaVantageGatewayClient(
             AlphaVantageGatewayClientConfig(
                 base_url=str(base_url).rstrip("/"),
-                api_key=api_key,
-                api_key_header=str(api_key_header),
+                api_scope=api_scope,
                 timeout_seconds=float(timeout_seconds),
-                warmup_enabled=warmup_enabled,
+                warmup_enabled=True,
                 warmup_max_attempts=warmup_max_attempts,
                 warmup_base_delay_seconds=warmup_base_delay_seconds,
                 warmup_max_delay_seconds=warmup_max_delay_seconds,
                 warmup_probe_timeout_seconds=warmup_probe_timeout_seconds,
-                readiness_enabled=readiness_enabled,
+                readiness_enabled=True,
                 readiness_max_attempts=readiness_max_attempts,
                 readiness_sleep_seconds=readiness_sleep_seconds,
                 request_retry_attempts=request_retry_attempts,
@@ -235,8 +232,18 @@ class AlphaVantageGatewayClient:
 
     def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self.config.api_key:
-            headers[str(self.config.api_key_header)] = str(self.config.api_key)
+        if self._access_token_provider is None:
+            if not self.config.api_scope:
+                raise AlphaVantageGatewayAuthError(
+                    "ASSET_ALLOCATION_API_SCOPE is required for bearer-token access to the Asset Allocation API gateway."
+                )
+            self._access_token_provider = build_access_token_provider(self.config.api_scope)
+        try:
+            headers["Authorization"] = f"Bearer {self._access_token_provider()}"
+        except Exception as exc:
+            raise AlphaVantageGatewayAuthError(
+                "Failed to acquire bearer token for the Asset Allocation API gateway."
+            ) from exc
         caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME"))
         caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME"))
         if caller_job:

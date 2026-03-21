@@ -13,18 +13,13 @@ from tests.api._client import get_test_client
 
 
 def test_background_workers_default_off_in_test_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("BACKGROUND_WORKERS_ENABLED", raising=False)
     monkeypatch.setenv("TEST_MODE", "true")
 
     assert _background_workers_enabled() is False
 
 
-def test_background_workers_explicit_override(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_background_workers_always_off_in_test_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TEST_MODE", "true")
-    monkeypatch.setenv("BACKGROUND_WORKERS_ENABLED", "true")
-    assert _background_workers_enabled() is True
-
-    monkeypatch.setenv("BACKGROUND_WORKERS_ENABLED", "false")
     assert _background_workers_enabled() is False
 
 
@@ -51,7 +46,6 @@ async def test_app_lifespan_with_postgres_dsn_defaults_workers_off_in_tests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
-    monkeypatch.delenv("BACKGROUND_WORKERS_ENABLED", raising=False)
 
     app = create_app()
     async with get_test_client(app) as client:

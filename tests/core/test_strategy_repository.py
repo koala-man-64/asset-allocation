@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from core.strategy_repository import StrategyRepository
+from core.strategy_repository import StrategyRepository, normalize_strategy_config_document
 
 
 class _FakeCursor:
@@ -197,3 +197,52 @@ def test_delete_strategy_deletes_from_core_schema(monkeypatch) -> None:
     assert "DELETE FROM core.strategies" in sql
     assert "RETURNING name" in sql
     assert params == ("momentum",)
+
+
+def test_normalize_strategy_config_document_removes_disabled_structures() -> None:
+    normalized = normalize_strategy_config_document(
+        {
+            "rebalance": "monthly",
+            "regimePolicy": {
+                "enabled": False,
+                "modelName": "legacy-regime",
+            },
+            "exits": [
+                {"enabled": False, "kind": "stop_loss"},
+                {"enabled": True, "kind": "take_profit", "threshold": 0.1},
+            ],
+        }
+    )
+
+    assert "regimePolicy" not in normalized
+    assert normalized["exits"] == [{"kind": "take_profit", "threshold": 0.1}]
+
+
+def test_save_strategy_strips_legacy_enabled_fields(monkeypatch) -> None:
+    cursor = _FakeCursor()
+
+    monkeypatch.setattr(
+        "core.strategy_repository.connect",
+        lambda _dsn: _FakeConnection(cursor),
+    )
+
+    repo = StrategyRepository("postgresql://user:pass@localhost/db")
+    repo.save_strategy(
+        name="momentum",
+        config={
+            "rebalance": "monthly",
+            "regimePolicy": {"enabled": True, "modelName": "steady"},
+            "exits": [
+                {"enabled": False, "kind": "stop_loss"},
+                {"enabled": True, "kind": "take_profit", "threshold": 0.2},
+            ],
+        },
+        strategy_type="configured",
+        description="Monthly momentum",
+    )
+
+    _sql, params = cursor.execute_calls[0]
+    assert params is not None
+    persisted = json.loads(params[1])
+    assert persisted["regimePolicy"] == {"modelName": "steady"}
+    assert persisted["exits"] == [{"kind": "take_profit", "threshold": 0.2}]

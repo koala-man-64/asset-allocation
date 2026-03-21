@@ -44,6 +44,16 @@ def test_compute_features_adds_expected_columns() -> None:
     assert len(out) == 8
 
 
+def test_compute_features_accepts_iso_date_strings() -> None:
+    df = _make_finance_df(4)
+    df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
+
+    out = compute_features(df)
+
+    assert len(out) == 4
+    assert out.iloc[-1]["date"] == pd.Timestamp("2020-10-01")
+
+
 def test_compute_features_preserves_optional_valuation_metrics() -> None:
     df = _make_finance_df(8)
     df["market_cap"] = np.linspace(1_000_000, 1_100_000, len(df))
@@ -114,7 +124,6 @@ def test_preflight_accepts_minimal_piotroski_contract() -> None:
     preflight = _preflight_feature_schema(_make_finance_df(4))
 
     assert preflight["missing_requirements"] == []
-    assert preflight["recoverable_drift"] == []
 
 
 def test_preflight_reports_missing_piotroski_inputs() -> None:

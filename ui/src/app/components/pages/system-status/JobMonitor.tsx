@@ -125,7 +125,10 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                 const runTimeAgo = latestRun?.startTime
                   ? `${formatTimeAgo(latestRun.startTime)} ago`
                   : 'UNKNOWN';
-                const isRunning = String(job.status || '').trim().toLowerCase() === 'running';
+                const isRunning =
+                  String(job.status || '')
+                    .trim()
+                    .toLowerCase() === 'running';
                 const isTriggering = Boolean(job.jobName) && triggeringJob === job.jobName;
                 const isStopping =
                   Boolean(job.jobName) &&
@@ -209,12 +212,9 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                             )}
                           </TooltipTrigger>
                           <TooltipContent side="left">
-                            {executionsUrl
-                              ? 'Open execution history'
-                              : 'Azure link not configured'}
+                            {executionsUrl ? 'Open execution history' : 'Azure link not configured'}
                           </TooltipContent>
                         </Tooltip>
-
 
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -257,8 +257,8 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
               )}
             </TableBody>
           </Table>
-        </div >
-      </CardContent >
-    </Card >
+        </div>
+      </CardContent>
+    </Card>
   );
 }

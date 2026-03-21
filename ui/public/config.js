@@ -10,11 +10,7 @@
 // The backend mounts `/api/*` in all deployment modes.
 const defaultApiBaseUrl = '/api';
 
-window.__BACKTEST_UI_CONFIG__ = window.__BACKTEST_UI_CONFIG__ || {};
-window.__BACKTEST_UI_CONFIG__.backtestApiBaseUrl =
-  window.__BACKTEST_UI_CONFIG__.backtestApiBaseUrl || defaultApiBaseUrl;
-
-// Compatibility for older/newer clients.
-window.__API_UI_CONFIG__ = window.__API_UI_CONFIG__ || {};
-window.__API_UI_CONFIG__.apiBaseUrl =
-  window.__API_UI_CONFIG__.apiBaseUrl || window.__BACKTEST_UI_CONFIG__.backtestApiBaseUrl;
+window.__API_UI_CONFIG__ = {
+  ...(window.__API_UI_CONFIG__ || {}),
+  apiBaseUrl: (window.__API_UI_CONFIG__ || {}).apiBaseUrl || defaultApiBaseUrl,
+};

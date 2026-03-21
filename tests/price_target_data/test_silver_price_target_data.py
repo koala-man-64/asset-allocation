@@ -245,3 +245,72 @@ def test_write_alpha26_price_target_buckets_partial_update_fails_closed_without_
             {"A": [pd.DataFrame({"obs_date": [pd.Timestamp("2024-01-01")], "symbol": ["AMZN"]})]},
             touched_buckets={"A"},
         )
+
+
+def test_main_runs_price_target_reconciliation_and_records_metadata(monkeypatch):
+    saved_last_success: dict = {}
+    reconciliation_calls: list[list[dict]] = []
+
+    def _save_last_success(_name: str, metadata=None):
+        if metadata:
+            saved_last_success.update(metadata)
+
+    def _run_reconciliation(*, bronze_blob_list):
+        reconciliation_calls.append(list(bronze_blob_list))
+        return 2, 5
+
+    monkeypatch.setattr(silver, "bronze_client", object())
+    monkeypatch.setattr(
+        silver.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda _domain, _client: [],
+    )
+    monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
+    monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver, "save_last_success", _save_last_success)
+    monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver, "_run_price_target_reconciliation", _run_reconciliation)
+    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver.mdc, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver.mdc, "write_error", lambda *_args, **_kwargs: None)
+
+    assert silver.main() == 0
+    assert reconciliation_calls == [[]]
+    assert saved_last_success.get("reconciled_orphans") == 2
+    assert saved_last_success.get("reconciliation_deleted_blobs") == 5
+
+
+def test_main_fails_closed_when_price_target_reconciliation_fails(monkeypatch):
+    save_last_success_calls = {"count": 0}
+
+    monkeypatch.setattr(silver, "bronze_client", object())
+    monkeypatch.setattr(
+        silver.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda _domain, _client: [],
+    )
+    monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
+    monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        silver,
+        "save_last_success",
+        lambda *_args, **_kwargs: save_last_success_calls.__setitem__("count", save_last_success_calls["count"] + 1),
+    )
+    monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(
+        silver,
+        "_run_price_target_reconciliation",
+        lambda *, bronze_blob_list: (_ for _ in ()).throw(RuntimeError("reconciliation boom")),
+    )
+    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver.mdc, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver.mdc, "write_error", lambda *_args, **_kwargs: None)
+
+    assert silver.main() == 1
+    assert save_last_success_calls["count"] == 0

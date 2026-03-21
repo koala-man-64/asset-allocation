@@ -28,6 +28,8 @@ from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
 logger = logging.getLogger("asset_allocation.monitoring.system_health")
 DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_version
 DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX = "system/health_markers"
+DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS = 5.0
+DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB = 3
 
 
 def _utc_now() -> datetime:
@@ -87,6 +89,44 @@ def _require_float(name: str, *, min_value: float = 0.1, max_value: float = 120.
     raw = _require_env(name)
     try:
         value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid float for {name}={raw!r}") from exc
+    if value < min_value or value > max_value:
+        raise ValueError(f"{name} must be in [{min_value}, {max_value}] (got {value}).")
+    return value
+
+
+def _env_int_or_default(
+    name: str,
+    default: int,
+    *,
+    min_value: int = 1,
+    max_value: int = 365 * 24 * 3600,
+) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid int for {name}={raw!r}") from exc
+    if value < min_value or value > max_value:
+        raise ValueError(f"{name} must be in [{min_value}, {max_value}] (got {value}).")
+    return value
+
+
+def _env_float_or_default(
+    name: str,
+    default: float,
+    *,
+    min_value: float = 0.1,
+    max_value: float = 120.0,
+) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
     except ValueError as exc:
         raise ValueError(f"Invalid float for {name}={raw!r}") from exc
     if value < min_value or value > max_value:
@@ -439,6 +479,79 @@ union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
     return out
 
 
+def _query_recent_bronze_finance_ingest_summaries(
+    client: AzureLogAnalyticsClient,
+    *,
+    workspace_id: str,
+    job_name: str,
+    lookback_hours: int,
+) -> List[Dict[str, Any]]:
+    job_kql = _escape_kql_literal(job_name)
+    end = _utc_now()
+    start = end - timedelta(hours=max(lookback_hours, 1))
+    timespan = f"{start.isoformat()}/{end.isoformat()}"
+    query = f"""
+let jobName = '{job_kql}';
+union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+| extend job = tostring(
+    column_ifexists('ContainerJobName_s',
+        column_ifexists('ContainerName_s',
+            column_ifexists('ContainerAppJobName_s',
+                column_ifexists('JobName_s',
+                    column_ifexists('JobName',
+                        column_ifexists('ContainerAppName_s', '')
+                    )
+                )
+            )
+        )
+    )
+)
+| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
+| extend msg = tostring(
+    column_ifexists('Log_s',
+        column_ifexists('Log',
+            column_ifexists('LogMessage_s',
+                column_ifexists('Message',
+                    column_ifexists('message', '')
+                )
+            )
+        )
+    )
+)
+| where ((job != '' and job contains jobName) or (resource contains jobName))
+| where msg has 'Bronze Massive finance ingest complete:'
+| extend processed = tolong(extract(@"processed=([0-9]+)", 1, msg))
+| extend written = tolong(extract(@"written=([0-9]+)", 1, msg))
+| where isnotnull(processed) and isnotnull(written)
+| order by TimeGenerated desc
+| take 5
+| project TimeGenerated, processed, written, msg
+""".strip()
+    payload = client.query(workspace_id=workspace_id, query=query, timespan=timespan)
+    rows = extract_first_table_rows(payload)
+    out: List[Dict[str, Any]] = []
+    seen_timestamps: set[str] = set()
+    for row in rows:
+        timestamp = str(row.get("TimeGenerated") or "").strip()
+        if not timestamp or timestamp in seen_timestamps:
+            continue
+        seen_timestamps.add(timestamp)
+        try:
+            processed = int(row.get("processed") or 0)
+            written = int(row.get("written") or 0)
+        except Exception:
+            continue
+        out.append(
+            {
+                "timeGenerated": timestamp,
+                "processed": processed,
+                "written": written,
+                "message": str(row.get("msg") or "").strip(),
+            }
+        )
+    return out
+
+
 def _load_freshness_overrides() -> Dict[str, Dict[str, Any]]:
     raw = os.environ.get("SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON", "")
     text = raw.strip()
@@ -523,8 +636,6 @@ def _resolve_freshness_policy(
 
 
 def _marker_probe_config() -> MarkerProbeConfig:
-    enabled_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_ENABLED", "true")
-
     container = (
         os.environ.get("SYSTEM_HEALTH_MARKERS_CONTAINER")
         or os.environ.get("AZURE_CONTAINER_COMMON")
@@ -533,7 +644,7 @@ def _marker_probe_config() -> MarkerProbeConfig:
     prefix = os.environ.get("SYSTEM_HEALTH_MARKERS_PREFIX", DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX).strip()
 
     return MarkerProbeConfig(
-        enabled=_is_truthy(enabled_raw),
+        enabled=bool(container),
         container=container,
         prefix=prefix or DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX,
     )
@@ -639,7 +750,7 @@ def _resolve_last_updated_with_marker_probes(
     marker_cfg: MarkerProbeConfig,
 ) -> DomainTimestampResolution:
     if not marker_cfg.enabled:
-        message = "Marker probes are disabled."
+        message = "Marker probes are not configured."
         logger.error(message)
         return DomainTimestampResolution(
             status="error",
@@ -748,7 +859,10 @@ def _load_job_schedule_metadata(
         return {}
 
     api_version = _env_or_default("SYSTEM_HEALTH_ARM_API_VERSION", DEFAULT_ARM_API_VERSION)
-    timeout_raw = _env_or_default("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "5")
+    timeout_raw = _env_or_default(
+        "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS",
+        str(DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS),
+    )
     try:
         timeout_seconds = float(timeout_raw)
     except Exception:
@@ -1110,6 +1224,66 @@ def _bronze_symbol_jump_alerts(
                 "message": (
                     f"Latest Bronze symbol count jumped from {previous_count} to {current_count} "
                     f"({ratio:.2f}x; previous={previous.get('timeGenerated')}, current={current.get('timeGenerated')})."
+                ),
+            }
+            )
+    return alerts
+
+
+def _bronze_finance_zero_write_alerts(
+    *,
+    job_names: Sequence[str],
+    checked_iso: str,
+    log_client: Optional[AzureLogAnalyticsClient],
+    workspace_id: str,
+) -> List[Dict[str, Any]]:
+    if log_client is None or not workspace_id:
+        return []
+
+    try:
+        lookback_hours = _require_int(
+            "SYSTEM_HEALTH_BRONZE_FINANCE_ZERO_WRITE_LOOKBACK_HOURS",
+            min_value=1,
+            max_value=24 * 365,
+        )
+    except ValueError:
+        lookback_hours = 24 * 7
+
+    alerts: List[Dict[str, Any]] = []
+    for job_name in job_names:
+        if str(job_name or "").strip().lower() != "bronze-finance-job":
+            continue
+        try:
+            summaries = _query_recent_bronze_finance_ingest_summaries(
+                log_client,
+                workspace_id=workspace_id,
+                job_name=job_name,
+                lookback_hours=lookback_hours,
+            )
+        except Exception as exc:
+            logger.warning("Bronze finance zero-write probe failed for job=%s: %s", job_name, exc, exc_info=True)
+            continue
+        if not summaries:
+            continue
+        latest = summaries[0]
+        processed = int(latest.get("processed") or 0)
+        written = int(latest.get("written") or 0)
+        if processed <= 0 or written != 0:
+            continue
+        alerts.append(
+            {
+                "id": _alert_id(
+                    severity="error",
+                    title="Bronze finance wrote zero rows",
+                    component=job_name,
+                ),
+                "severity": "error",
+                "title": "Bronze finance wrote zero rows",
+                "component": job_name,
+                "timestamp": checked_iso,
+                "message": (
+                    f"Latest Bronze finance run processed {processed} symbol(s) but wrote {written} row(s). "
+                    f"summary={latest.get('message') or 'n/a'}"
                 ),
             }
         )
@@ -1513,17 +1687,17 @@ def collect_system_health_snapshot(
 
     logger.info(
         "System health ARM probe config: subscription_set=%s resource_group_set=%s apps=%s jobs=%s "
-        "arm_api_version_set=%s arm_timeout_set=%s resource_health_enabled_set=%s monitor_metrics_enabled_set=%s "
-        "log_analytics_enabled_set=%s job_exec_limit_set=%s",
+        "arm_api_version_set=%s arm_timeout_set=%s resource_health_api_version_set=%s monitor_metrics_api_version_set=%s "
+        "log_analytics_workspace_set=%s job_exec_limit_set=%s",
         bool(subscription_id),
         bool(resource_group),
         len(app_names),
         len(job_names),
         _env_has_value("SYSTEM_HEALTH_ARM_API_VERSION"),
         _env_has_value("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS"),
-        _env_has_value("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED"),
-        _env_has_value("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED"),
-        _env_has_value("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"),
+        _env_has_value("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION"),
+        _env_has_value("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION"),
+        _env_has_value("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID"),
         _env_has_value("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB"),
     )
 
@@ -1531,17 +1705,23 @@ def collect_system_health_snapshot(
     if arm_enabled:
         try:
             api_version = _env_or_default("SYSTEM_HEALTH_ARM_API_VERSION", DEFAULT_ARM_API_VERSION)
-            timeout_seconds = _require_float(
-                "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0
+            timeout_seconds = _env_float_or_default(
+                "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS",
+                DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS,
+                min_value=0.5,
+                max_value=30.0,
             )
-            resource_health_enabled = _require_bool("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED")
-            resource_health_api_version = (
-                _require_env("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION")
-                if resource_health_enabled
-                else DEFAULT_RESOURCE_HEALTH_API_VERSION
+            resource_health_enabled = True
+            resource_health_api_version = _env_or_default(
+                "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION",
+                DEFAULT_RESOURCE_HEALTH_API_VERSION,
             )
 
-            monitor_metrics_enabled = _require_bool("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED")
+            containerapp_metric_names = _split_csv(
+                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
+            )
+            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS"))
+            monitor_metrics_enabled = bool(containerapp_metric_names or job_metric_names)
             monitor_metrics_api_version = (
                 _require_env("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION")
                 if monitor_metrics_enabled
@@ -1582,15 +1762,10 @@ def collect_system_health_snapshot(
                             "message": f"SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON parse error: {exc}",
                             }
                         )
-            containerapp_metric_names = _split_csv(
-                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
-            )
-            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS"))
-
-            log_analytics_enabled = _require_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED")
-            log_analytics_workspace_id = (
-                _require_env("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") if log_analytics_enabled else ""
-            )
+            log_analytics_workspace_id = str(
+                os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") or ""
+            ).strip()
+            log_analytics_enabled = bool(log_analytics_workspace_id)
             log_analytics_timeout_seconds = (
                 _require_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0)
                 if log_analytics_enabled
@@ -1623,23 +1798,6 @@ def collect_system_health_snapshot(
                         "message": f"SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON parse error: {exc}",
                     }
                 )
-
-            if log_analytics_enabled and not log_analytics_workspace_id:
-                log_analytics_enabled = False
-                alerts.append(
-                    {
-                        "id": _alert_id(
-                            severity="warning",
-                            title="Log Analytics monitoring disabled",
-                            component="AzureLogAnalytics",
-                        ),
-                        "severity": "warning",
-                        "title": "Log Analytics monitoring disabled",
-                        "component": "AzureLogAnalytics",
-                        "timestamp": _iso(now),
-                        "message": "Log Analytics enabled but workspace ID is missing.",
-                    }
-                    )
 
             arm_cfg = ArmConfig(
                 subscription_id=subscription_id,
@@ -1743,8 +1901,11 @@ def collect_system_health_snapshot(
 
                     if job_names:
                         logger.info("Collecting Azure job health: count=%s", len(job_names))
-                        max_executions_per_job = _require_int(
-                            "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", min_value=1, max_value=25
+                        max_executions_per_job = _env_int_or_default(
+                            "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB",
+                            DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB,
+                            min_value=1,
+                            max_value=25,
                         )
                         job_resources, runs = collect_jobs_and_executions(
                             arm,
@@ -1835,6 +1996,18 @@ def collect_system_health_snapshot(
                                 "error" if alert.get("severity") == "error" else "stale"
                                 for alert in bronze_jump_alerts
                             )
+                        bronze_finance_zero_write_alerts = _bronze_finance_zero_write_alerts(
+                            job_names=job_names,
+                            checked_iso=checked_iso,
+                            log_client=log_client,
+                            workspace_id=log_analytics_workspace_id,
+                        )
+                        if bronze_finance_zero_write_alerts:
+                            alerts.extend(bronze_finance_zero_write_alerts)
+                            statuses.extend(
+                                "error" if alert.get("severity") == "error" else "stale"
+                                for alert in bronze_finance_zero_write_alerts
+                            )
                 finally:
                     if log_client is not None:
                         log_client.close()
@@ -1852,11 +2025,11 @@ def collect_system_health_snapshot(
                 {
                     "id": _alert_id(
                         severity="warning",
-                        title="Azure monitoring disabled",
+                        title="Azure monitoring unavailable",
                         component="AzureControlPlane",
                     ),
                     "severity": "warning",
-                    "title": "Azure monitoring disabled",
+                    "title": "Azure monitoring unavailable",
                     "component": "AzureControlPlane",
                     "timestamp": checked_iso,
                     "message": f"Control-plane probe error: {exc}",
@@ -1864,7 +2037,7 @@ def collect_system_health_snapshot(
             )
     else:
         logger.warning(
-            "System health ARM probes disabled: subscription_set=%s resource_group_set=%s apps=%s jobs=%s",
+            "System health ARM probes not configured: subscription_set=%s resource_group_set=%s apps=%s jobs=%s",
             bool(subscription_id),
             bool(resource_group),
             len(app_names),

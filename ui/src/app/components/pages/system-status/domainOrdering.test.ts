@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { DataLayer } from '@/types/strategy';
 
-import {
-  getDomainOrderEntries,
-  getDomainOrderIndex
-} from './domainOrdering';
+import { getDomainOrderEntries, getDomainOrderIndex } from './domainOrdering';
 
 const makeDomain = (name: string) => ({
   name,

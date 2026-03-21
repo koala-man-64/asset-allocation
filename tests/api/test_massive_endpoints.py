@@ -1,7 +1,7 @@
 import pytest
 
 from api.service.app import create_app
-from api.service.massive_gateway import MassiveGateway, MassiveNotConfiguredError, get_current_caller_context
+from api.service.massive_gateway import MassiveError, MassiveGateway, MassiveNotConfiguredError, get_current_caller_context
 from massive_provider.errors import MassiveNotFoundError, MassiveRateLimitError
 from tests.api._client import get_test_client
 
@@ -74,6 +74,24 @@ async def test_massive_unified_snapshot_returns_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_massive_tickers_returns_json(monkeypatch):
+    def fake_tickers(self, *, market="stocks", locale="us", active=True):
+        assert market == "stocks"
+        assert locale == "us"
+        assert active is True
+        return [{"Symbol": "AAPL"}, {"Symbol": "^VIX"}]
+
+    monkeypatch.setattr(MassiveGateway, "get_tickers", fake_tickers)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/providers/massive/tickers?market=stocks&locale=us&active=true")
+
+    assert resp.status_code == 200
+    assert resp.json()["results"] == [{"Symbol": "AAPL"}, {"Symbol": "^VIX"}]
+
+
+@pytest.mark.asyncio
 async def test_massive_financials_returns_json(monkeypatch):
     def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
         assert symbol == "AAPL"
@@ -95,6 +113,29 @@ async def test_massive_financials_returns_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_massive_ratios_returns_json(monkeypatch):
+    def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
+        assert symbol == "AAPL"
+        assert report == "valuation"
+        assert timeframe is None
+        assert sort == "date.desc"
+        assert limit == 1
+        assert pagination is False
+        return {"results": [{"ticker": symbol}]}
+
+    monkeypatch.setattr(MassiveGateway, "get_finance_report", fake_financials)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get(
+            "/api/providers/massive/fundamentals/ratios?symbol=AAPL&sort=date.desc&limit=1&pagination=false"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["results"][0]["ticker"] == "AAPL"
+
+
+@pytest.mark.asyncio
 async def test_massive_missing_symbol_maps_to_404(monkeypatch):
     def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
         del symbol, report, timeframe, sort, limit, pagination
@@ -107,6 +148,21 @@ async def test_massive_missing_symbol_maps_to_404(monkeypatch):
         resp = await client.get("/api/providers/massive/financials/balance_sheet?symbol=BAD")
 
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_massive_provider_bad_request_maps_to_400(monkeypatch):
+    def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
+        del symbol, report, timeframe, sort, limit, pagination
+        raise MassiveError("invalid query parameter", status_code=400, detail="invalid query parameter")
+
+    monkeypatch.setattr(MassiveGateway, "get_finance_report", fake_financials)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/providers/massive/financials/balance_sheet?symbol=AAPL")
+
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

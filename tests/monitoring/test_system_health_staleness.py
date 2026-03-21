@@ -140,7 +140,7 @@ def test_marker_disabled_returns_error() -> None:
     )
 
     assert resolved.status == "error"
-    assert "Marker probes are disabled." in str(resolved.error)
+    assert "Marker probes are not configured." in str(resolved.error)
 
 
 def test_resolve_domain_schedule_uses_manual_trigger_metadata() -> None:

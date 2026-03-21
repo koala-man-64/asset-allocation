@@ -81,11 +81,9 @@ class _FakeJobLogAnalyticsClient:
 
 
 def _set_job_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "bronze-market-job")
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-id")
 
 

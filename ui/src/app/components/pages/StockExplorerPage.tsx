@@ -361,7 +361,9 @@ export function StockExplorerPage() {
                           </div>
                         </TableCell>
                         <TableCell className="min-w-[240px]">
-                          <div className="truncate font-medium text-foreground">{row.name || '—'}</div>
+                          <div className="truncate font-medium text-foreground">
+                            {row.name || '—'}
+                          </div>
                           <div className="truncate font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
                             {row.industry || ''}
                           </div>

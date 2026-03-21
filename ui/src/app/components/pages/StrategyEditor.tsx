@@ -77,7 +77,6 @@ const DEFAULT_REGIME_EXPOSURES: TargetGrossExposureByRegime = {
 };
 
 const DEFAULT_REGIME_POLICY: RegimePolicy = {
-  enabled: false,
   modelName: 'default-regime',
   targetGrossExposureByRegime: DEFAULT_REGIME_EXPOSURES,
   blockOnTransition: true,
@@ -120,7 +119,7 @@ function buildEmptyStrategy(): StrategyDetail {
       holdingPeriod: 21,
       costModel: 'default',
       intrabarConflictPolicy: 'stop_first',
-      regimePolicy: buildDefaultRegimePolicy(),
+      regimePolicy: undefined,
       exits: []
     }
   };
@@ -135,14 +134,16 @@ function normalizeStrategyDetail(strategy: StrategyDetail): StrategyDetail {
     config: {
       ...base.config,
       ...strategy.config,
-      regimePolicy: {
-        ...buildDefaultRegimePolicy(),
-        ...(incomingPolicy || {}),
-        targetGrossExposureByRegime: {
-          ...DEFAULT_REGIME_EXPOSURES,
-          ...(incomingPolicy?.targetGrossExposureByRegime || {})
-        }
-      },
+      regimePolicy: incomingPolicy
+        ? {
+            ...buildDefaultRegimePolicy(),
+            ...incomingPolicy,
+            targetGrossExposureByRegime: {
+              ...DEFAULT_REGIME_EXPOSURES,
+              ...(incomingPolicy.targetGrossExposureByRegime || {})
+            }
+          }
+        : undefined,
       exits: strategy.config.exits || []
     }
   };
@@ -157,10 +158,13 @@ function getNextRuleId(type: ExitRuleType, existingRules: ExitRule[]): string {
   return `${type}-${counter}`;
 }
 
-function buildExitRule(type: ExitRuleType, id: string, overrides: Partial<ExitRule> = {}): ExitRule {
+function buildExitRule(
+  type: ExitRuleType,
+  id: string,
+  overrides: Partial<ExitRule> = {}
+): ExitRule {
   const baseRule: ExitRule = {
     id,
-    enabled: true,
     type,
     scope: 'position',
     action: 'exit_full',
@@ -306,7 +310,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
   const watchedRankingSchema = watch('config.rankingSchemaName') || '__none__';
   const watchedPolicy = watch('config.intrabarConflictPolicy');
   const watchedLongOnly = watch('config.longOnly');
-  const watchedRegimePolicy = watch('config.regimePolicy') || buildDefaultRegimePolicy();
+  const watchedRegimePolicy = watch('config.regimePolicy');
+  const hasRegimePolicy = Boolean(watchedRegimePolicy);
+  const effectiveRegimePolicy = watchedRegimePolicy || buildDefaultRegimePolicy();
   const watchedExits = watch('config.exits') || [];
 
   const addExitRule = () => {
@@ -324,7 +330,6 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
     update(
       index,
       buildExitRule(nextType, currentRule.id, {
-        enabled: currentRule.enabled,
         minHoldBars: currentRule.minHoldBars,
         priority: currentRule.priority
       })
@@ -339,7 +344,8 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
         <SheetHeader>
           <SheetTitle>{isEditing ? 'Edit Run Configuration' : 'New Run Configuration'}</SheetTitle>
           <SheetDescription>
-            Attach saved universe and ranking configs, adjust cadence, selection, and exit settings, then save the run configuration to Postgres.
+            Attach saved universe and ranking configs, adjust cadence, selection, and exit settings,
+            then save the run configuration to Postgres.
           </SheetDescription>
         </SheetHeader>
 
@@ -399,10 +405,14 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                   <Select
                     value={watchedUniverseConfig}
                     onValueChange={(value) =>
-                      setValue('config.universeConfigName', value === '__none__' ? undefined : value, {
-                        shouldDirty: true,
-                        shouldTouch: true
-                      })
+                      setValue(
+                        'config.universeConfigName',
+                        value === '__none__' ? undefined : value,
+                        {
+                          shouldDirty: true,
+                          shouldTouch: true
+                        }
+                      )
                     }
                   >
                     <SelectTrigger id="strategy-universe-config">
@@ -446,10 +456,14 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                   <Select
                     value={watchedRankingSchema}
                     onValueChange={(value) =>
-                      setValue('config.rankingSchemaName', value === '__none__' ? undefined : value, {
-                        shouldDirty: true,
-                        shouldTouch: true
-                      })
+                      setValue(
+                        'config.rankingSchemaName',
+                        value === '__none__' ? undefined : value,
+                        {
+                          shouldDirty: true,
+                          shouldTouch: true
+                        }
+                      )
                     }
                   >
                     <SelectTrigger id="ranking-schema">
@@ -465,7 +479,8 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Attach a saved ranking schema to enable date-by-date platinum materialization for this strategy.
+                    Attach a saved ranking schema to enable date-by-date platinum materialization
+                    for this strategy.
                   </p>
                 </div>
               </div>
@@ -529,7 +544,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Long Only</p>
-                    <p className="text-xs text-muted-foreground">Milestone 1 keeps exit scope to positions only.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Milestone 1 keeps exit scope to positions only.
+                    </p>
                   </div>
                   <Switch
                     aria-label="Toggle long only strategy"
@@ -550,134 +567,170 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground">Regime Policy</h3>
                   <p className="text-xs text-muted-foreground">
-                    Gate entries or rebalance actions using the gold regime monitor and scale gross exposure by confirmed regime.
+                    Gate entries or rebalance actions using the gold regime monitor and scale gross
+                    exposure by confirmed regime.
                   </p>
                 </div>
-                <Switch
-                  aria-label="Toggle regime policy"
-                  checked={Boolean(watchedRegimePolicy.enabled)}
-                  onCheckedChange={(checked) =>
-                    setValue('config.regimePolicy.enabled', Boolean(checked), {
-                      shouldDirty: true,
-                      shouldTouch: true
-                    })
-                  }
-                />
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <div className="grid gap-2 xl:col-span-2">
-                  <Label htmlFor="regime-model-name">Model Name</Label>
-                  <Input
-                    id="regime-model-name"
-                    {...register('config.regimePolicy.modelName')}
-                    placeholder="default-regime"
-                  />
-                </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="regime-on-blocked">Blocked Action</Label>
-                  <Select
-                    value={watchedRegimePolicy.onBlocked}
-                    onValueChange={(value) =>
-                      setValue('config.regimePolicy.onBlocked', value as RegimeBlockedAction, {
+                {hasRegimePolicy ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      setValue('config.regimePolicy', undefined, {
                         shouldDirty: true,
                         shouldTouch: true
                       })
                     }
                   >
-                    <SelectTrigger id="regime-on-blocked">
-                      <SelectValue placeholder="Select blocked action" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {REGIME_BLOCKED_ACTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                    Remove Policy
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={() =>
+                      setValue('config.regimePolicy', buildDefaultRegimePolicy(), {
+                        shouldDirty: true,
+                        shouldTouch: true
+                      })
+                    }
+                  >
+                    Add Policy
+                  </Button>
+                )}
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
-                  <div>
-                    <p className="text-sm font-medium">Block On Transition</p>
-                    <p className="text-xs text-muted-foreground">Stops new risk during the 25-28 vol hysteresis band.</p>
-                  </div>
-                  <Switch
-                    aria-label="Toggle block on transition"
-                    checked={Boolean(watchedRegimePolicy.blockOnTransition)}
-                    onCheckedChange={(checked) =>
-                      setValue('config.regimePolicy.blockOnTransition', Boolean(checked), {
-                        shouldDirty: true,
-                        shouldTouch: true
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
-                  <div>
-                    <p className="text-sm font-medium">Block On Unclassified</p>
-                    <p className="text-xs text-muted-foreground">Keeps the strategy conservative when regime inputs are missing or unresolved.</p>
-                  </div>
-                  <Switch
-                    aria-label="Toggle block on unclassified"
-                    checked={Boolean(watchedRegimePolicy.blockOnUnclassified)}
-                    onCheckedChange={(checked) =>
-                      setValue('config.regimePolicy.blockOnUnclassified', Boolean(checked), {
-                        shouldDirty: true,
-                        shouldTouch: true
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
-                  <div>
-                    <p className="text-sm font-medium">Honor Halt Flag</p>
-                    <p className="text-xs text-muted-foreground">Applies the VIX 32.0 two-day halt overlay before new risk is opened.</p>
-                  </div>
-                  <Switch
-                    aria-label="Toggle honor halt flag"
-                    checked={Boolean(watchedRegimePolicy.honorHaltFlag)}
-                    onCheckedChange={(checked) =>
-                      setValue('config.regimePolicy.honorHaltFlag', Boolean(checked), {
-                        shouldDirty: true,
-                        shouldTouch: true
-                      })
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <h4 className="text-sm font-medium text-foreground">Target Gross Exposure By Regime</h4>
-                  <p className="text-xs text-muted-foreground">
-                    These multipliers only apply when the regime is confirmed and not blocked by transition, unclassified, or halt overlays.
-                  </p>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-                  {REGIME_CODES.map((regime) => (
-                    <div key={regime.value} className="grid gap-2">
-                      <Label htmlFor={`regime-exposure-${regime.value}`}>{regime.label}</Label>
+              {hasRegimePolicy ? (
+                <>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-2 xl:col-span-2">
+                      <Label htmlFor="regime-model-name">Model Name</Label>
                       <Input
-                        id={`regime-exposure-${regime.value}`}
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        {...register(
-                          `config.regimePolicy.targetGrossExposureByRegime.${regime.value}` as const,
-                          { valueAsNumber: true }
-                        )}
+                        id="regime-model-name"
+                        {...register('config.regimePolicy.modelName')}
+                        placeholder="default-regime"
                       />
                     </div>
-                  ))}
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="regime-on-blocked">Blocked Action</Label>
+                      <Select
+                        value={effectiveRegimePolicy.onBlocked}
+                        onValueChange={(value) =>
+                          setValue('config.regimePolicy.onBlocked', value as RegimeBlockedAction, {
+                            shouldDirty: true,
+                            shouldTouch: true
+                          })
+                        }
+                      >
+                        <SelectTrigger id="regime-on-blocked">
+                          <SelectValue placeholder="Select blocked action" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {REGIME_BLOCKED_ACTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium">Block On Transition</p>
+                        <p className="text-xs text-muted-foreground">
+                          Stops new risk during the 25-28 vol hysteresis band.
+                        </p>
+                      </div>
+                      <Switch
+                        aria-label="Toggle block on transition"
+                        checked={Boolean(effectiveRegimePolicy.blockOnTransition)}
+                        onCheckedChange={(checked) =>
+                          setValue('config.regimePolicy.blockOnTransition', Boolean(checked), {
+                            shouldDirty: true,
+                            shouldTouch: true
+                          })
+                        }
+                      />
+                    </div>
+
+                    <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium">Block On Unclassified</p>
+                        <p className="text-xs text-muted-foreground">
+                          Keeps the strategy conservative when regime inputs are missing or
+                          unresolved.
+                        </p>
+                      </div>
+                      <Switch
+                        aria-label="Toggle block on unclassified"
+                        checked={Boolean(effectiveRegimePolicy.blockOnUnclassified)}
+                        onCheckedChange={(checked) =>
+                          setValue('config.regimePolicy.blockOnUnclassified', Boolean(checked), {
+                            shouldDirty: true,
+                            shouldTouch: true
+                          })
+                        }
+                      />
+                    </div>
+
+                    <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium">Honor Halt Flag</p>
+                        <p className="text-xs text-muted-foreground">
+                          Applies the VIX 32.0 two-day halt overlay before new risk is opened.
+                        </p>
+                      </div>
+                      <Switch
+                        aria-label="Toggle honor halt flag"
+                        checked={Boolean(effectiveRegimePolicy.honorHaltFlag)}
+                        onCheckedChange={(checked) =>
+                          setValue('config.regimePolicy.honorHaltFlag', Boolean(checked), {
+                            shouldDirty: true,
+                            shouldTouch: true
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <h4 className="text-sm font-medium text-foreground">
+                        Target Gross Exposure By Regime
+                      </h4>
+                      <p className="text-xs text-muted-foreground">
+                        These multipliers only apply when the regime is confirmed and not blocked by
+                        transition, unclassified, or halt overlays.
+                      </p>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                      {REGIME_CODES.map((regime) => (
+                        <div key={regime.value} className="grid gap-2">
+                          <Label htmlFor={`regime-exposure-${regime.value}`}>{regime.label}</Label>
+                          <Input
+                            id={`regime-exposure-${regime.value}`}
+                            type="number"
+                            step="0.05"
+                            min="0"
+                            {...register(
+                              `config.regimePolicy.targetGrossExposureByRegime.${regime.value}` as const,
+                              { valueAsNumber: true }
+                            )}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                  No regime policy configured. Add one to make regime gating part of this run
+                  configuration.
                 </div>
-              </div>
+              )}
             </div>
 
             <div className="space-y-4 border-t pt-4">
@@ -685,12 +738,16 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground">Exit Rules</h3>
                   <p className="text-xs text-muted-foreground">
-                    Milestone 1 supports position-scope full exits only. Array order is the tie-breaker when priorities match.
+                    Milestone 1 supports position-scope full exits only. Array order is the
+                    tie-breaker when priorities match.
                   </p>
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Select value={newRuleType} onValueChange={(value) => setNewRuleType(value as ExitRuleType)}>
+                  <Select
+                    value={newRuleType}
+                    onValueChange={(value) => setNewRuleType(value as ExitRuleType)}
+                  >
                     <SelectTrigger className="min-w-[220px]">
                       <SelectValue placeholder="Choose rule type" />
                     </SelectTrigger>
@@ -727,7 +784,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                             <Label htmlFor={`exit-rule-type-${index}`}>Rule Type</Label>
                             <Select
                               value={ruleType}
-                              onValueChange={(value) => changeRuleType(index, value as ExitRuleType)}
+                              onValueChange={(value) =>
+                                changeRuleType(index, value as ExitRuleType)
+                              }
                             >
                               <SelectTrigger id={`exit-rule-type-${index}`}>
                                 <SelectValue placeholder="Select rule type" />
@@ -808,19 +867,14 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
 
                           <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
                             <div>
-                              <p className="text-sm font-medium">Enabled</p>
-                              <p className="text-xs text-muted-foreground">Scope: position, action: exit_full</p>
+                              <p className="text-sm font-medium">Rule Shape</p>
+                              <p className="text-xs text-muted-foreground">
+                                Scope: position, action: exit_full
+                              </p>
                             </div>
-                            <Switch
-                              aria-label={`Toggle exit rule ${index + 1}`}
-                              checked={Boolean(currentRule?.enabled)}
-                              onCheckedChange={(checked) =>
-                                setValue(`config.exits.${index}.enabled` as const, Boolean(checked), {
-                                  shouldDirty: true,
-                                  shouldTouch: true
-                                })
-                              }
-                            />
+                            <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                              Active when present
+                            </span>
                           </div>
                         </div>
 
@@ -828,12 +882,23 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                           <div className="grid gap-2">
                             <Label htmlFor={`exit-rule-price-field-${index}`}>Price Field</Label>
                             <Select
-                              value={currentRule?.priceField || (ruleType === 'take_profit_fixed' ? 'high' : ruleType === 'time_stop' ? 'close' : 'low')}
+                              value={
+                                currentRule?.priceField ||
+                                (ruleType === 'take_profit_fixed'
+                                  ? 'high'
+                                  : ruleType === 'time_stop'
+                                    ? 'close'
+                                    : 'low')
+                              }
                               onValueChange={(value) =>
-                                setValue(`config.exits.${index}.priceField` as const, value as ExitRulePriceField, {
-                                  shouldDirty: true,
-                                  shouldTouch: true
-                                })
+                                setValue(
+                                  `config.exits.${index}.priceField` as const,
+                                  value as ExitRulePriceField,
+                                  {
+                                    shouldDirty: true,
+                                    shouldTouch: true
+                                  }
+                                )
                               }
                             >
                               <SelectTrigger id={`exit-rule-price-field-${index}`}>
@@ -875,7 +940,15 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                               <Input
                                 id={`exit-rule-reference-${index}`}
                                 readOnly
-                                value={currentRule?.reference || (ruleType === 'take_profit_fixed' || ruleType === 'stop_loss_fixed' ? 'entry_price' : ruleType === 'time_stop' ? '' : 'highest_since_entry')}
+                                value={
+                                  currentRule?.reference ||
+                                  (ruleType === 'take_profit_fixed' ||
+                                  ruleType === 'stop_loss_fixed'
+                                    ? 'entry_price'
+                                    : ruleType === 'time_stop'
+                                      ? ''
+                                      : 'highest_since_entry')
+                                }
                               />
                             </div>
                           )}

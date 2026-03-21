@@ -17,7 +17,7 @@ properties:
       cronExpression: "0 4 * * 1-5"
       parallelism: 1
       replicaCompletionCount: 1
-    replicaRetryLimit: 2
+    replicaRetryLimit: 0
     replicaTimeout: 14400
     registries:
     - server: assetallocationacr.azurecr.io
@@ -58,16 +58,14 @@ properties:
         value: ${RESOURCE_GROUP}
       - name: ASSET_ALLOCATION_API_BASE_URL
         value: ${ASSET_ALLOCATION_API_BASE_URL}
-      - name: JOB_STARTUP_API_WAKE_ENABLED
-        value: "true"
+      - name: ASSET_ALLOCATION_API_SCOPE
+        value: ${ASSET_ALLOCATION_API_SCOPE}
       - name: JOB_STARTUP_API_CONTAINER_APPS
         value: ${JOB_STARTUP_API_CONTAINER_APPS}
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: TRIGGER_NEXT_JOB_NAME
         value: ${SILVER_PRICE_TARGET_JOB}
-      - name: TRIGGER_NEXT_JOB_REQUIRED
-        value: "true"
       - name: AZURE_CONTAINER_GOLD
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_STORAGE_ACCOUNT_NAME

@@ -574,7 +574,7 @@ def _resolve_regime_revision(
     regime_model_version: int | None = None,
 ) -> tuple[str | None, int | None, dict[str, Any] | None]:
     policy = strategy_config.regimePolicy
-    if policy is None or not policy.enabled:
+    if policy is None:
         return None, None, None
 
     resolved_name = str(regime_model_name or policy.modelName or DEFAULT_REGIME_MODEL_NAME).strip()
@@ -728,7 +728,7 @@ def _regime_context_for_session(
     policy: RegimePolicy | None,
     regime_row: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    if policy is None or not policy.enabled or not regime_row:
+    if policy is None or not regime_row:
         return {
             "blocked": False,
             "blocked_reason": None,

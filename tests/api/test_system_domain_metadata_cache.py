@@ -71,8 +71,9 @@ def test_write_and_read_cached_domain_metadata_snapshot_round_trip(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
+async def test_domain_metadata_returns_cached_snapshot_when_refresh_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         system,
         "_read_cached_domain_metadata_snapshot",
@@ -85,7 +86,7 @@ async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: p
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market&cacheOnly=true")
+        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market")
 
     assert response.status_code == 200
     payload = response.json()
@@ -97,22 +98,50 @@ async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_refresh_bypasses_document_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
+async def test_domain_metadata_refresh_collects_live_metadata_and_persists_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
 
     captured: dict[str, object] = {}
 
-    def _read(layer: str, domain: str, force_refresh: bool = False) -> dict[str, object]:
+    def _collect(*, layer: str, domain: str, force_refresh: bool = False) -> dict[str, object]:
         captured["layer"] = layer
         captured["domain"] = domain
         captured["force_refresh"] = force_refresh
         return {
             **_metadata_payload(layer=layer, domain=domain),
+        }
+
+    def _write(
+        *,
+        layer: str,
+        domain: str,
+        metadata: dict[str, object],
+        snapshot_path: str,
+        ui_snapshot_path: str,
+    ) -> dict[str, object]:
+        captured["write_layer"] = layer
+        captured["write_domain"] = domain
+        captured["snapshot_path"] = snapshot_path
+        captured["ui_snapshot_path"] = ui_snapshot_path
+        captured["metadata"] = metadata
+        return {
+            **metadata,
             "cachedAt": "2026-02-20T13:00:00+00:00",
             "cacheSource": "snapshot",
         }
 
-    monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", _read)
+    invalidated: list[bool] = []
+
+    monkeypatch.setattr(system, "collect_domain_metadata", _collect)
+    monkeypatch.setattr(system, "_domain_metadata_cache_path", lambda: "metadata/domain-metadata.json")
+    monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
+    monkeypatch.setattr(
+        system.domain_metadata_snapshots,
+        "write_domain_metadata_snapshot_documents",
+        _write,
+    )
+    monkeypatch.setattr(system, "_invalidate_domain_metadata_document_cache", lambda: invalidated.append(True))
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -122,22 +151,128 @@ async def test_domain_metadata_refresh_bypasses_document_cache(monkeypatch: pyte
     payload = response.json()
     assert payload["layer"] == "gold"
     assert payload["domain"] == "finance"
-    assert payload["cacheSource"] == "snapshot"
+    assert payload["cacheSource"] == "live-refresh"
     assert payload["cachedAt"] == "2026-02-20T13:00:00+00:00"
+    assert response.headers.get("X-Domain-Metadata-Source") == "live-refresh"
 
     assert captured["layer"] == "gold"
     assert captured["domain"] == "finance"
     assert captured["force_refresh"] is True
+    assert captured["write_layer"] == "gold"
+    assert captured["write_domain"] == "finance"
+    assert captured["snapshot_path"] == "metadata/domain-metadata.json"
+    assert captured["ui_snapshot_path"] == "metadata/ui-cache/domain.json"
+    assert captured["metadata"] == _metadata_payload(layer="gold", domain="finance")
+    assert invalidated == [True]
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
+async def test_system_status_view_returns_system_health_and_metadata_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-03-17T12:00:00+00:00")
+    monkeypatch.setattr(
+        system,
+        "_resolve_system_health_payload",
+        lambda request, refresh: (
+            {
+                "overall": "healthy",
+                "dataLayers": [],
+                "recentJobs": [],
+                "alerts": [],
+                "resources": [],
+            },
+            False,
+            False,
+        ),
+    )
+    monkeypatch.setattr(
+        system,
+        "_build_domain_metadata_snapshot_payload",
+        lambda **kwargs: {
+            "version": 1,
+            "updatedAt": "2026-03-17T11:59:00+00:00",
+            "entries": {
+                "bronze/market": {
+                    **_metadata_payload(layer="bronze", domain="market"),
+                    "cacheSource": "snapshot",
+                }
+            },
+            "warnings": [],
+        },
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/status-view")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["version"] == 1
+    assert payload["generatedAt"] == "2026-03-17T12:00:00+00:00"
+    assert payload["systemHealth"]["overall"] == "healthy"
+    assert sorted(payload["metadataSnapshot"]["entries"].keys()) == ["bronze/market"]
+    assert payload["sources"] == {
+        "systemHealth": "live-refresh",
+        "metadataSnapshot": "persisted-snapshot",
+    }
+    assert response.headers.get("X-System-Health-Cache") == "miss"
+    assert response.headers.get("X-Domain-Metadata-Source") == "persisted-snapshot"
+
+
+@pytest.mark.asyncio
+async def test_system_status_view_refresh_bypasses_system_health_cache_and_domain_doc_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    health_calls: list[bool] = []
+    metadata_refresh_flags: list[bool] = []
+
+    def _collect_system_health(*, include_resource_ids: bool = False) -> dict[str, object]:
+        health_calls.append(include_resource_ids)
+        return {
+            "overall": "healthy",
+            "dataLayers": [],
+            "recentJobs": [],
+            "alerts": [],
+            "resources": [],
+        }
+
+    def _load_snapshot(force_refresh: bool = False) -> dict[str, object]:
+        metadata_refresh_flags.append(force_refresh)
+        return {
+            "version": 1,
+            "updatedAt": "2026-03-17T12:00:00+00:00",
+            "entries": {},
+        }
+
+    monkeypatch.setattr(system, "collect_system_health_snapshot", _collect_system_health)
+    monkeypatch.setattr(system, "_load_domain_metadata_document", _load_snapshot)
+    monkeypatch.setattr(
+        system,
+        "collect_domain_metadata",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("live metadata collection is not expected")),
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        first = await client.get("/api/system/status-view")
+        second = await client.get("/api/system/status-view")
+        refreshed = await client.get("/api/system/status-view?refresh=true")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert refreshed.status_code == 200
+    assert len(health_calls) == 2
+    assert metadata_refresh_flags == [False, False, True]
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_snapshot_miss_returns_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", lambda layer, domain, force_refresh=False: None)
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market&cacheOnly=true")
+        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market")
 
     assert response.status_code == 200
     payload = response.json()
@@ -153,7 +288,6 @@ async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_load_domain_metadata_document",
@@ -179,9 +313,7 @@ async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: py
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get(
-            "/api/system/domain-metadata/snapshot?layers=bronze&domains=market,finance&cacheOnly=true"
-        )
+        response = await client.get("/api/system/domain-metadata/snapshot?layers=bronze&domains=market,finance")
 
     assert response.status_code == 200
     payload = response.json()
@@ -198,7 +330,6 @@ async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_domain_metadata_snapshot_never_live_fills_missing_entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_load_domain_metadata_document",
@@ -207,9 +338,7 @@ async def test_domain_metadata_snapshot_never_live_fills_missing_entries(monkeyp
 
     app = create_app()
     async with get_test_client(app) as client:
-        response = await client.get(
-            "/api/system/domain-metadata/snapshot?layers=bronze&domains=market&cacheOnly=false"
-        )
+        response = await client.get("/api/system/domain-metadata/snapshot?layers=bronze&domains=market")
 
     assert response.status_code == 200
     payload = response.json()
@@ -218,8 +347,27 @@ async def test_domain_metadata_snapshot_never_live_fills_missing_entries(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_domain_metadata_rejects_removed_cache_only_param() -> None:
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market&cacheOnly=true")
+
+    assert response.status_code == 400
+    assert "Unsupported query parameter(s): cacheOnly" in response.json().get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_snapshot_rejects_removed_cache_only_param() -> None:
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/domain-metadata/snapshot?layers=bronze&cacheOnly=true")
+
+    assert response.status_code == 400
+    assert "Unsupported query parameter(s): cacheOnly" in response.json().get("detail", "")
+
+
+@pytest.mark.asyncio
 async def test_domain_metadata_snapshot_rejects_invalid_layer_filter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -231,7 +379,6 @@ async def test_domain_metadata_snapshot_rejects_invalid_layer_filter(monkeypatch
 
 @pytest.mark.asyncio
 async def test_domain_metadata_snapshot_returns_304_when_etag_matches(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_load_domain_metadata_document",
@@ -266,7 +413,6 @@ async def test_domain_metadata_snapshot_returns_304_when_etag_matches(monkeypatc
 
 @pytest.mark.asyncio
 async def test_persisted_ui_domain_metadata_cache_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
@@ -305,11 +451,104 @@ async def test_persisted_ui_domain_metadata_cache_round_trip(monkeypatch: pytest
     assert read_response.headers.get("X-Domain-Metadata-UI-Cache") == "hit"
 
 
+def test_refresh_domain_metadata_snapshot_emits_realtime_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[tuple[str, list[dict[str, str]]]] = []
+
+    monkeypatch.setattr(
+        system,
+        "collect_domain_metadata",
+        lambda **kwargs: _metadata_payload(layer="gold", domain="finance"),
+    )
+    monkeypatch.setattr(system, "_domain_metadata_cache_path", lambda: "metadata/domain-metadata.json")
+    monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
+    monkeypatch.setattr(
+        system.domain_metadata_snapshots,
+        "write_domain_metadata_snapshot_documents",
+        lambda **kwargs: {
+            **_metadata_payload(layer="gold", domain="finance"),
+            "cachedAt": "2026-03-17T12:05:00+00:00",
+            "cacheSource": "snapshot",
+        },
+    )
+    monkeypatch.setattr(system, "_invalidate_domain_metadata_document_cache", lambda: None)
+    monkeypatch.setattr(
+        system,
+        "_emit_domain_metadata_snapshot_changed",
+        lambda reason, targets: captured.append((reason, targets)),
+    )
+
+    payload = system._refresh_domain_metadata_snapshot("gold", "finance")
+
+    assert payload["cacheSource"] == "live-refresh"
+    assert captured == [("refresh", [{"layer": "gold", "domain": "finance"}])]
+
+
+@pytest.mark.asyncio
+async def test_put_domain_metadata_snapshot_cache_emits_realtime_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted: list[tuple[str, list[dict[str, str]]]] = []
+
+    monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-03-17T14:00:00+00:00")
+    monkeypatch.setattr(system.mdc, "save_common_json_content", lambda data, path: None)
+    monkeypatch.setattr(
+        system,
+        "_emit_domain_metadata_snapshot_changed",
+        lambda reason, targets: emitted.append((reason, targets)),
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.put(
+            "/api/system/domain-metadata/snapshot/cache",
+            json={
+                "version": 1,
+                "updatedAt": None,
+                "entries": {
+                    "bronze/market": {
+                        **_metadata_payload(layer="bronze", domain="market"),
+                        "cacheSource": "snapshot",
+                    }
+                },
+                "warnings": [],
+            },
+        )
+
+    assert response.status_code == 200
+    assert emitted == [("ui-cache-write", [{"layer": "bronze", "domain": "market"}])]
+
+
+def test_mark_purged_domain_metadata_snapshots_emits_realtime_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marked: list[tuple[str, str, str | None]] = []
+    emitted: list[tuple[str, list[dict[str, str]]]] = []
+
+    monkeypatch.setattr(
+        system.domain_metadata_snapshots,
+        "mark_domain_metadata_snapshot_purged",
+        lambda layer, domain, container=None: marked.append((layer, domain, container)),
+    )
+    monkeypatch.setattr(system, "_invalidate_domain_metadata_document_cache", lambda: None)
+    monkeypatch.setattr(
+        system,
+        "_emit_domain_metadata_snapshot_changed",
+        lambda reason, targets: emitted.append((reason, targets)),
+    )
+
+    system._mark_purged_domain_metadata_snapshots(
+        [{"layer": "gold", "domain": "market", "container": "gold-container"}]
+    )
+
+    assert marked == [("gold", "market", "gold-container")]
+    assert emitted == [("purge", [{"layer": "gold", "domain": "market", "container": "gold-container"}])]
+
+
 @pytest.mark.asyncio
 async def test_persisted_ui_domain_metadata_cache_miss_returns_empty_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(system.mdc, "get_common_json_content", lambda path: None)
 
     app = create_app()

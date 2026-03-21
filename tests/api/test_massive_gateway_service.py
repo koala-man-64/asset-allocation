@@ -268,3 +268,36 @@ def test_gateway_finance_report_maps_valuation_to_ratios() -> None:
     assert captured["ticker"] == "AAPL"
     assert captured["params"] == {"sort": "date.desc", "limit": 1}
     assert captured["pagination"] is False
+
+
+def test_gateway_finance_report_logs_empty_payload_anomaly(caplog) -> None:
+    class _FakeClient:
+        def get_balance_sheet(self, **kwargs):
+            return {"status": "OK", "request_id": "req-empty", "results": []}
+
+        def get_cash_flow_statement(self, **kwargs):
+            raise AssertionError("unexpected cash flow call")
+
+        def get_income_statement(self, **kwargs):
+            raise AssertionError("unexpected income statement call")
+
+        def get_ratios(self, **kwargs):
+            raise AssertionError("unexpected ratios call")
+
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    with caplog.at_level("WARNING", logger="asset-allocation.api.massive"):
+        payload = gateway.get_finance_report(
+            symbol="AAPL",
+            report="balance_sheet",
+            timeframe="quarterly",
+            sort="period_end.asc",
+            limit=100,
+            pagination=True,
+        )
+
+    assert payload["results"] == []
+    assert "Massive finance provider anomaly" in caplog.text
+    assert "symbol=AAPL" in caplog.text
+    assert "report=balance_sheet" in caplog.text

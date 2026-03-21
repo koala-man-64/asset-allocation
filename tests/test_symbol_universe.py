@@ -1,10 +1,13 @@
 import pandas as pd
+import pytest
 from datetime import datetime, timedelta, timezone
 
+import core.core as core_module
 from core.core import (
     _parse_alpha_vantage_listing_status_csv,
     _symbols_refresh_due,
     merge_symbol_sources,
+    strip_source_availability_columns,
     upsert_symbols_to_db,
 )
 
@@ -38,7 +41,7 @@ def test_merge_symbol_sources_prefers_nasdaq_name_and_keeps_massive_metadata():
     assert row["source_nasdaq"] == True
     assert row["source_massive"] == True
     assert row["source_alpha_vantage"] == True
-    assert row["source_alphavantage"] == True
+    assert "source_alphavantage" not in merged.columns
     assert "source" not in merged.columns
 
 
@@ -55,7 +58,7 @@ def test_merge_symbol_sources_includes_alpha_only_symbols():
     assert row["source_nasdaq"] == False
     assert row["source_massive"] == False
     assert row["source_alpha_vantage"] == True
-    assert row["source_alphavantage"] == True
+    assert "source_alphavantage" not in merged.columns
 
 
 class _FakeCursor:
@@ -82,22 +85,19 @@ def test_upsert_symbols_coerces_source_flags_to_bool():
                 "Symbol": "AAPL",
                 "source_nasdaq": True,
                 "source_massive": True,
-                "source_alpha_vantage": False,
-                "source_alphavantage": True,
+                "source_alpha_vantage": True,
             },
             {
                 "Symbol": "SPY",
                 "source_nasdaq": float("nan"),
                 "source_massive": float("nan"),
                 "source_alpha_vantage": float("nan"),
-                "source_alphavantage": float("nan"),
             },
             {
                 "Symbol": "QQQ",
                 "source_nasdaq": 1.0,
                 "source_massive": 1.0,
                 "source_alpha_vantage": 0.0,
-                "source_alphavantage": 1.0,
             },
         ]
     )
@@ -110,21 +110,17 @@ def test_upsert_symbols_coerces_source_flags_to_bool():
     assert "source_nasdaq" in sql
     assert "source_massive" in sql
     assert "source_alpha_vantage" in sql
-    assert "source_alphavantage" in sql
 
-    # row tuple shape: (symbol, source_nasdaq, source_massive, source_alpha_vantage, source_alphavantage)
+    # row tuple shape: (symbol, source_nasdaq, source_massive, source_alpha_vantage)
     assert rows[0][1] is True
     assert rows[0][2] is True
-    assert rows[0][3] is False
-    assert rows[0][4] is True
+    assert rows[0][3] is True
     assert rows[1][1] is False
     assert rows[1][2] is False
     assert rows[1][3] is False
-    assert rows[1][4] is False
     assert rows[2][1] is True
     assert rows[2][2] is True
     assert rows[2][3] is False
-    assert rows[2][4] is True
 
 
 def test_symbols_refresh_due_when_never_refreshed():
@@ -143,3 +139,36 @@ def test_symbols_refresh_due_true_when_stale():
     cur = _FakeCursor()
     cur.fetchone_result = (datetime.now(timezone.utc) - timedelta(hours=36),)
     assert _symbols_refresh_due(cur, interval_hours=24.0) is True
+
+
+def test_strip_source_availability_columns_removes_provider_flags():
+    df = pd.DataFrame(
+        [
+            {
+                "Symbol": "AAPL",
+                "Name": "Apple",
+                "source_nasdaq": True,
+                "source_massive": True,
+                "source_alpha_vantage": True,
+            }
+        ]
+    )
+
+    stripped = strip_source_availability_columns(df)
+
+    assert list(stripped.columns) == ["Symbol", "Name"]
+
+
+def test_get_symbols_no_longer_calls_sync_symbols_to_db(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(core_module, "refresh_symbols_to_db_if_due", lambda: None)
+    monkeypatch.setattr(core_module, "get_symbols_from_db", lambda: pd.DataFrame({"Symbol": ["AAPL"]}))
+    monkeypatch.setattr(core_module.cfg, "TICKERS_TO_ADD", [])
+    monkeypatch.setattr(
+        core_module,
+        "sync_symbols_to_db",
+        lambda _df: (_ for _ in ()).throw(AssertionError("sync_symbols_to_db should not be called")),
+    )
+
+    df = core_module.get_symbols()
+
+    assert df["Symbol"].tolist() == ["AAPL"]

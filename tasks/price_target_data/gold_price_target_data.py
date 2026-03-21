@@ -2,7 +2,7 @@ import os
 import re
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Sequence, Tuple, Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -31,8 +31,6 @@ from tasks.common.postgres_gold_sync import (
 class FeatureJobConfig:
     silver_container: str
     gold_container: str
-    max_workers: int
-    tickers: Sequence[str]
 
 
 @dataclass(frozen=True)
@@ -236,112 +234,17 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict[str, Any]:
-    from core import core as mdc
-    from core import delta_core
-
-    ticker, raw_path, gold_path, silver_container, gold_container, backfill_start_iso = task
-
-    df_raw = delta_core.load_delta(silver_container, raw_path)
-    if df_raw is None or df_raw.empty:
-        return {"ticker": ticker, "status": "skipped_no_data", "raw_path": raw_path}
-
-    try:
-        df_features = compute_features(df_raw)
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_compute", "raw_path": raw_path, "error": str(exc)}
-
-    backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
-    df_features, _ = apply_backfill_start_cutoff(
-        df_features,
-        date_col="obs_date",
-        backfill_start=backfill_start,
-        context=f"gold price-target {ticker}",
-    )
-
-    if backfill_start is not None and df_features.empty:
-        gold_client = mdc.get_storage_client(gold_container)
-        if gold_client is None:
-            return {
-                "ticker": ticker,
-                "status": "failed_write",
-                "gold_path": gold_path,
-                "error": f"Storage client unavailable for cutoff purge {gold_path}.",
-            }
-        deleted = gold_client.delete_prefix(gold_path)
-        return {
-            "ticker": ticker,
-            "status": "ok",
-            "rows": 0,
-            "gold_path": gold_path,
-            "purged_blobs": deleted,
-        }
-
-    df_features = project_gold_output_frame(df_features, domain="price-target")
-
-    try:
-        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
-        if backfill_start is not None:
-            delta_core.vacuum_delta_table(
-                gold_container,
-                gold_path,
-                retention_hours=0,
-                dry_run=False,
-                enforce_retention_duration=False,
-                full=True,
-            )
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
-
-    return {"ticker": ticker, "status": "ok", "rows": len(df_features), "gold_path": gold_path}
-
-
-def _get_max_workers() -> int:
-    try:
-        available_cpus = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
-    except Exception:
-        available_cpus = os.cpu_count() or 1
-
-    default_workers = available_cpus if available_cpus <= 2 else available_cpus - 1
-
-    configured = os.environ.get("FEATURE_ENGINEERING_MAX_WORKERS")
-    if configured:
-        try:
-            parsed = int(configured)
-            if parsed > 0:
-                return min(parsed, available_cpus)
-        except ValueError:
-            pass
-    return max(1, default_workers)
-
-
 def _build_job_config() -> FeatureJobConfig:
-    silver_container = os.environ.get("AZURE_CONTAINER_SILVER") or "silver"
-    gold_container = os.environ.get("AZURE_CONTAINER_GOLD") or "gold"
-
-    from core import core as mdc
-    from core import config as common_cfg
-
-    df_symbols = mdc.get_symbols()
-    df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
-
-    if hasattr(common_cfg, "DEBUG_SYMBOLS") and common_cfg.DEBUG_SYMBOLS:
-        mdc.write_line(
-            f"DEBUG MODE: Restricting execution to {len(common_cfg.DEBUG_SYMBOLS)} symbols: {common_cfg.DEBUG_SYMBOLS}"
-        )
-        df_symbols = df_symbols[df_symbols["Symbol"].isin(common_cfg.DEBUG_SYMBOLS)]
-
-    tickers = [str(symbol).strip() for symbol in df_symbols["Symbol"].tolist() if str(symbol).strip()]
-    tickers = list(dict.fromkeys(tickers))
-
-    max_workers = _get_max_workers()
-    mdc.write_line(f"Price target feature engineering configured for {len(tickers)} tickers (max_workers={max_workers})")
+    silver_container = os.environ.get("AZURE_CONTAINER_SILVER")
+    gold_container = os.environ.get("AZURE_CONTAINER_GOLD")
+    if not silver_container or not str(silver_container).strip():
+        raise ValueError("Environment variable 'AZURE_CONTAINER_SILVER' is required.")
+    if not gold_container or not str(gold_container).strip():
+        raise ValueError("Environment variable 'AZURE_CONTAINER_GOLD' is required.")
 
     return FeatureJobConfig(
-        silver_container=silver_container,
-        gold_container=gold_container,
-        max_workers=max_workers,
-        tickers=tickers,
+        silver_container=str(silver_container).strip(),
+        gold_container=str(gold_container).strip(),
     )
 
 
@@ -727,29 +630,49 @@ def main() -> int:
         backfill_start_iso=backfill_start_iso,
         watermarks=watermarks,
     )
-    if watermarks_dirty:
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    if failed == 0:
+        try:
+            reconciliation_orphans, reconciliation_deleted_blobs = _run_price_target_reconciliation(
+                silver_container=job_cfg.silver_container,
+                gold_container=job_cfg.gold_container,
+            )
+        except Exception as exc:
+            reconciliation_failed = 1
+            mdc.write_error(f"Gold price-target reconciliation failed: {exc}")
+            mdc.write_line(
+                "reconciliation_result layer=gold domain=price-target "
+                "status=failed orphan_count=unknown deleted_blobs=unknown cutoff_rows_dropped=unknown"
+            )
+    if watermarks_dirty and reconciliation_failed == 0:
         save_watermarks("gold_price_target_features", watermarks)
-    total_failed = failed
+    total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Gold price-target alpha26 complete: "
         f"processed_buckets={processed} skipped_unchanged={skipped_unchanged} "
         f"skipped_missing_source={skipped_missing_source} symbols={alpha26_symbols} "
-        f"index_path={alpha26_index_path or 'unavailable'} failed={total_failed}"
+        f"index_path={alpha26_index_path or 'unavailable'} reconciled_orphans={reconciliation_orphans} "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} failed={total_failed}"
     )
     return 0 if total_failed == 0 else 1
 
 
 if __name__ == "__main__":
+    from core import core as mdc
     from tasks.common.job_entrypoint import run_logged_job
     from tasks.common.job_trigger import ensure_api_awake_from_env
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "gold-price-target-job"
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=job_name,
-            run=main,
-            on_success=(lambda: write_system_health_marker(layer="gold", domain="price-target", job_name=job_name),),
+
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(lambda: write_system_health_marker(layer="gold", domain="price-target", job_name=job_name),),
+            )
         )
-    )

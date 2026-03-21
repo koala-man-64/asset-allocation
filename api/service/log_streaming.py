@@ -21,12 +21,12 @@ CONSOLE_LOG_STREAM_EVENT = "CONSOLE_LOG_STREAM"
 _RESOURCE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,126}[A-Za-z0-9]?")
 
 
-def _is_truthy(raw: Optional[str]) -> bool:
-    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-
-
-def build_job_log_topic(job_name: str) -> str:
-    return f"{JOB_LOG_TOPIC_PREFIX}{str(job_name or '').strip()}"
+def build_job_log_topic(job_name: str, execution_name: Optional[str] = None) -> str:
+    job = str(job_name or "").strip()
+    execution = str(execution_name or "").strip()
+    if not execution:
+        return f"{JOB_LOG_TOPIC_PREFIX}{job}"
+    return f"{JOB_LOG_TOPIC_PREFIX}{job}/executions/{execution}"
 
 
 def build_container_app_log_topic(app_name: str) -> str:
@@ -38,6 +38,7 @@ class LogStreamSpec:
     topic: str
     resource_type: Literal["job", "container-app"]
     resource_name: str
+    execution_name: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -69,17 +70,32 @@ class _TopicHistory:
 def parse_log_stream_topic(topic: str) -> Optional[LogStreamSpec]:
     raw = str(topic or "").strip()
     if raw.startswith(JOB_LOG_TOPIC_PREFIX):
-        name = raw[len(JOB_LOG_TOPIC_PREFIX) :].strip()
+        remainder = raw[len(JOB_LOG_TOPIC_PREFIX) :].strip()
+        execution_name: Optional[str] = None
+        if "/executions/" in remainder:
+            name, execution_name = remainder.split("/executions/", 1)
+            name = name.strip()
+            execution_name = execution_name.strip() or None
+        else:
+            name = remainder
         kind: Literal["job", "container-app"] = "job"
     elif raw.startswith(CONTAINER_APP_LOG_TOPIC_PREFIX):
         name = raw[len(CONTAINER_APP_LOG_TOPIC_PREFIX) :].strip()
+        execution_name = None
         kind = "container-app"
     else:
         return None
 
     if not name or not _RESOURCE_NAME_PATTERN.fullmatch(name):
         return None
-    return LogStreamSpec(topic=raw, resource_type=kind, resource_name=name)
+    if execution_name is not None and not _RESOURCE_NAME_PATTERN.fullmatch(execution_name):
+        return None
+    return LogStreamSpec(
+        topic=raw,
+        resource_type=kind,
+        resource_name=name,
+        execution_name=execution_name,
+    )
 
 
 def _split_csv(raw: Optional[str]) -> list[str]:
@@ -91,11 +107,6 @@ def _escape_kql_literal(value: str) -> str:
 
 
 def _load_streaming_config() -> Optional[LogStreamingConfig]:
-    if not _is_truthy(os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED")):
-        return None
-    if not _is_truthy(os.environ.get("REALTIME_LOG_STREAM_ENABLED", "true")):
-        return None
-
     workspace_id_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
     workspace_id = workspace_id_raw.strip() if workspace_id_raw else ""
     if not workspace_id:
@@ -138,10 +149,12 @@ def _resource_is_allowlisted(spec: LogStreamSpec) -> bool:
     return spec.resource_name in _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS"))
 
 
-def _build_job_query(job_name: str, *, limit: int) -> str:
+def _build_job_query(job_name: str, *, execution_name: Optional[str] = None, limit: int) -> str:
     job_kql = _escape_kql_literal(job_name)
+    execution_kql = _escape_kql_literal(execution_name or "")
     return f"""
 let jobName = '{job_kql}';
+let execFilter = '{execution_kql}';
 union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
 | extend job = tostring(
     column_ifexists('ContainerJobName_s',
@@ -194,7 +207,15 @@ union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
         )
     )
 )
-| where ((job != '' and job contains jobName) or (resource contains strcat('/jobs/', jobName)) or (resource contains jobName))
+| extend matchesJob = ((job != '' and job contains jobName) or (resource contains strcat('/jobs/', jobName)) or (resource contains jobName))
+| extend matchesExecution = (
+    execFilter == ''
+    or (execFilter != '' and executionName == execFilter)
+    or (execFilter != '' and executionName startswith strcat(execFilter, '-'))
+    or (execFilter != '' and resource contains strcat('/executions/', execFilter))
+    or (execFilter != '' and resource contains execFilter)
+)
+| where matchesJob and matchesExecution
 | where msg != ''
 | order by TimeGenerated desc
 | take {max(1, int(limit))}
@@ -352,7 +373,11 @@ class LogStreamManager:
                     start = now - timedelta(seconds=config.lookback_seconds)
                     timespan = f"{start.isoformat()}/{now.isoformat()}"
                     query = (
-                        _build_job_query(spec.resource_name, limit=config.batch_size)
+                        _build_job_query(
+                            spec.resource_name,
+                            execution_name=spec.execution_name,
+                            limit=config.batch_size,
+                        )
                         if spec.resource_type == "job"
                         else _build_container_app_query(spec.resource_name, limit=config.batch_size)
                     )

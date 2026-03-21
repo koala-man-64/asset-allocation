@@ -1,8 +1,8 @@
-import logging
 import json
-import sys
+import logging
 import os
-from datetime import datetime
+import sys
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 # Standard Python Log Levels
@@ -19,7 +19,7 @@ class JsonFormatter(logging.Formatter):
     """
     def format(self, record: logging.LogRecord) -> str:
         log_record: Dict[str, Any] = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "level": record.levelname,
             "message": record.getMessage(),
             "module": record.module,

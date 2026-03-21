@@ -17,7 +17,6 @@ from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.finance_contracts import (
-    SILVER_FINANCE_ALPHA26_REPORT_LAYOUTS,
     SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN,
     SILVER_FINANCE_REPORT_TYPE_TO_LAYOUT,
     SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN,
@@ -29,6 +28,7 @@ from tasks.common.watermarks import (
     build_blob_signature,
     load_last_success,
     load_watermarks,
+    normalize_watermark_blob_name,
     save_last_success,
     save_watermarks,
     should_process_blob_since_last_success,
@@ -38,10 +38,12 @@ from tasks.common.silver_contracts import (
     ContractViolation,
     align_to_existing_schema,
     assert_no_unexpected_mixed_empty,
+    coerce_to_naive_datetime,
     log_contract_violation,
     normalize_date_column,
-    require_non_empty_frame,
     normalize_columns_to_snake_case,
+    parse_wait_timeout_seconds,
+    require_non_empty_frame,
 )
 from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
@@ -97,49 +99,7 @@ _FINANCE_VALUATION_CALCULATED_COLUMNS = {
     "market_cap",
     "pe_ratio",
 }
-_RAW_MASSIVE_STATEMENT_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[str, ...]]] = {
-    "balance_sheet": {
-        "long_term_debt": (
-            "long_term_debt_and_capital_lease_obligations",
-            "long_term_debt",
-            "long_term_debt_noncurrent",
-        ),
-        "total_assets": ("total_assets",),
-        "current_assets": ("total_current_assets", "current_assets"),
-        "current_liabilities": ("total_current_liabilities", "current_liabilities"),
-        "shares_outstanding": (
-            "common_stock_shares_outstanding",
-            "common_shares_outstanding",
-            "ordinary_shares_number",
-            "share_issued",
-        ),
-    },
-    "income_statement": {
-        "total_revenue": ("revenues", "revenue", "total_revenue"),
-        "gross_profit": ("gross_profit",),
-        "net_income": (
-            "net_income_loss",
-            "consolidated_net_income_loss",
-            "net_income_loss_attributable_to_parent",
-        ),
-        "shares_outstanding": (
-            "diluted_shares_outstanding",
-            "basic_shares_outstanding",
-            "weighted_average_shares",
-        ),
-    },
-    "cash_flow": {
-        "operating_cash_flow": (
-            "net_cash_flow_from_operating_activities",
-            "net_cash_from_operating_activities",
-            "net_cash_provided_by_operating_activities",
-        ),
-    },
-}
-_RAW_MASSIVE_VALUATION_ALIASES: dict[str, tuple[str, ...]] = {
-    "market_cap": ("market_cap",),
-    "pe_ratio": ("price_to_earnings", "pe_ratio"),
-}
+_STATEMENT_TIMEFRAMES = frozenset({"quarterly", "annual"})
 
 
 def _get_positive_int_env(name: str, default: int) -> int:
@@ -157,28 +117,12 @@ def _get_catchup_max_passes() -> int:
     return _get_positive_int_env("SILVER_FINANCE_CATCHUP_MAX_PASSES", _DEFAULT_CATCHUP_MAX_PASSES)
 
 
-def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | None:
-    if raw is None:
-        return default
-    value = str(raw).strip()
-    if not value:
-        return default
-    if value.lower() in {"none", "inf", "infinite", "forever"}:
-        return None
-    try:
-        parsed = float(value)
-    except Exception:
-        return default
-    return max(0.0, parsed)
-
-
 def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
-    listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/buckets/")
+    listed_blobs = bronze_bucketing.list_active_bucket_blob_infos("finance", bronze_client)
     blobs = [
         blob
         for blob in listed_blobs
-        if str(blob.get("name", "")).startswith("finance-data/buckets/")
-        and str(blob.get("name", "")).endswith(".parquet")
+        if str(blob.get("name", "")).endswith(".parquet")
     ]
     blobs.sort(key=lambda item: str(item.get("name", "")))
     unsupported = max(0, len(listed_blobs) - len(blobs))
@@ -194,8 +138,6 @@ def _filter_alpha26_manifest_bucket_blobs(manifest: dict[str, Any]) -> list[dict
     filtered: list[dict] = []
     for blob in run_manifests.manifest_blobs(manifest):
         name = str(blob.get("name", "")).strip()
-        if not name.startswith("finance-data/buckets/"):
-            continue
         if not name.endswith(".parquet"):
             continue
         filtered.append(blob)
@@ -204,32 +146,31 @@ def _filter_alpha26_manifest_bucket_blobs(manifest: dict[str, Any]) -> list[dict
 
 
 def _select_initial_alpha26_source() -> _ManifestSelection:
-    if run_manifests.silver_manifest_consumption_enabled():
-        manifest = run_manifests.load_latest_bronze_finance_manifest()
-        if isinstance(manifest, dict):
-            run_id = str(manifest.get("runId", "")).strip()
-            manifest_path = str(manifest.get("manifestPath", "")).strip()
-            if run_id and run_manifests.silver_finance_ack_exists(run_id):
-                mdc.write_line(f"Silver finance manifest run already acknowledged; falling back to listing runId={run_id}.")
-            elif run_id and manifest_path:
-                filtered = _filter_alpha26_manifest_bucket_blobs(manifest)
-                manifest_blob_count = len(run_manifests.manifest_blobs(manifest))
-                mdc.write_line(
-                    "Silver finance selected manifest source: "
-                    f"runId={run_id} manifestPath={manifest_path} "
-                    f"manifestBlobs={manifest_blob_count} bucketBlobs={len(filtered)}"
-                )
-                return _ManifestSelection(
-                    source="bronze-manifest",
-                    blobs=filtered,
-                    deduped=0,
-                    manifest_run_id=run_id,
-                    manifest_path=manifest_path,
-                    manifest_blob_count=manifest_blob_count,
-                    manifest_filtered_bucket_blob_count=len(filtered),
-                )
-            else:
-                mdc.write_warning("Silver finance manifest pointer missing runId/path; falling back to listing.")
+    manifest = run_manifests.load_latest_bronze_finance_manifest()
+    if isinstance(manifest, dict):
+        run_id = str(manifest.get("runId", "")).strip()
+        manifest_path = str(manifest.get("manifestPath", "")).strip()
+        if run_id and run_manifests.silver_finance_ack_exists(run_id):
+            mdc.write_line(f"Silver finance manifest run already acknowledged; falling back to listing runId={run_id}.")
+        elif run_id and manifest_path:
+            filtered = _filter_alpha26_manifest_bucket_blobs(manifest)
+            manifest_blob_count = len(run_manifests.manifest_blobs(manifest))
+            mdc.write_line(
+                "Silver finance selected manifest source: "
+                f"runId={run_id} manifestPath={manifest_path} "
+                f"manifestBlobs={manifest_blob_count} bucketBlobs={len(filtered)}"
+            )
+            return _ManifestSelection(
+                source="bronze-manifest",
+                blobs=filtered,
+                deduped=0,
+                manifest_run_id=run_id,
+                manifest_path=manifest_path,
+                manifest_blob_count=manifest_blob_count,
+                manifest_filtered_bucket_blob_count=len(filtered),
+            )
+        else:
+            mdc.write_warning("Silver finance manifest pointer missing runId/path; falling back to listing.")
 
     listed, deduped = _list_alpha26_finance_bucket_candidates()
     return _ManifestSelection(source="alpha26-bucket-listing", blobs=listed, deduped=deduped)
@@ -245,7 +186,7 @@ def _build_alpha26_checkpoint_candidates(
     checkpoint_skipped = 0
     candidates: list[dict] = []
     for blob in blobs:
-        prior = watermarks.get(str(blob.get("name", "")))
+        prior = watermarks.get(normalize_watermark_blob_name(blob.get("name")))
         should_process = should_process_blob_since_last_success(
             blob,
             prior_signature=prior,
@@ -321,127 +262,6 @@ def _get_first_value(payload: dict[str, Any], candidates: tuple[str, ...]) -> An
     return None
 
 
-def _get_first_dict(payload: dict[str, Any], candidates: tuple[str, ...]) -> dict[str, Any]:
-    value = _get_first_value(payload, candidates)
-    return value if isinstance(value, dict) else {}
-
-
-def _parse_payload_date(value: Any) -> Optional[pd.Timestamp]:
-    if value is None:
-        return None
-    parsed = pd.to_datetime(value, errors="coerce", utc=True)
-    if pd.isna(parsed):
-        return None
-    return parsed.tz_convert(None)
-
-
-def _extract_raw_massive_statement_section(sub_domain: str, item: dict[str, Any]) -> dict[str, Any]:
-    financials = _get_first_dict(item, ("financials",))
-    if sub_domain == "balance_sheet":
-        section = _get_first_dict(item, ("balance_sheet", "balanceSheet")) or _get_first_dict(
-            financials,
-            ("balance_sheet", "balanceSheet"),
-        )
-        return section or item
-    if sub_domain == "income_statement":
-        section = _get_first_dict(item, ("income_statement", "incomeStatement")) or _get_first_dict(
-            financials,
-            ("income_statement", "incomeStatement"),
-        )
-        return section or item
-    if sub_domain == "cash_flow":
-        section = _get_first_dict(item, ("cash_flow_statement", "cash_flow", "cashFlowStatement")) or _get_first_dict(
-            financials,
-            ("cash_flow_statement", "cash_flow", "cashFlowStatement"),
-        )
-        return section or item
-    return item
-
-
-def _infer_raw_massive_statement_timeframe(item: dict[str, Any]) -> Optional[str]:
-    timeframe = str(item.get("timeframe") or "").strip().lower()
-    if timeframe in {"quarterly", "annual"}:
-        return timeframe
-    if item.get("fiscal_quarter") not in {None, "", 0}:
-        return "quarterly"
-    if item.get("fiscal_year") not in {None, ""}:
-        return "annual"
-    return None
-
-
-def _canonicalize_raw_massive_statement_payload(payload: dict[str, Any], *, sub_domain: str) -> dict[str, Any]:
-    results = payload.get("results")
-    if not isinstance(results, list):
-        return {}
-
-    aliases = _RAW_MASSIVE_STATEMENT_ALIASES_BY_SUBDOMAIN.get(sub_domain, {})
-    rows = []
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-        report_date = _parse_payload_date(
-            item.get("period_end") or item.get("period_of_report_date") or item.get("date") or item.get("report_period")
-        )
-        if report_date is None:
-            continue
-        section = _extract_raw_massive_statement_section(sub_domain, item)
-        timeframe = _infer_raw_massive_statement_timeframe(item)
-        row: dict[str, Any] = {
-            "date": report_date.date().isoformat(),
-            "timeframe": timeframe,
-        }
-        has_metric = False
-        for column, candidates in aliases.items():
-            value = _try_parse_float(_get_first_value(section, candidates))
-            row[column] = value
-            if value is not None:
-                has_metric = True
-        if has_metric:
-            rows.append(row)
-
-    return {
-        "schema_version": 2,
-        "provider": "massive",
-        "report_type": sub_domain,
-        "rows": rows,
-    }
-
-
-def _canonicalize_raw_massive_valuation_payload(payload: dict[str, Any], *, sub_domain: str) -> dict[str, Any]:
-    results = payload.get("results")
-    candidates = results if isinstance(results, list) else [payload]
-
-    latest_row: Optional[dict[str, Any]] = None
-    latest_date: Optional[pd.Timestamp] = None
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        as_of = _parse_payload_date(item.get("date") or item.get("as_of"))
-        if as_of is None:
-            continue
-        if latest_date is None or as_of > latest_date:
-            latest_date = as_of
-            latest_row = item
-
-    latest_row = latest_row or {}
-    return {
-        "schema_version": 2,
-        "provider": "massive",
-        "report_type": sub_domain,
-        "as_of": latest_date.date().isoformat() if latest_date is not None else None,
-        "market_cap": _try_parse_float(_get_first_value(latest_row, _RAW_MASSIVE_VALUATION_ALIASES["market_cap"])),
-        "pe_ratio": _try_parse_float(_get_first_value(latest_row, _RAW_MASSIVE_VALUATION_ALIASES["pe_ratio"])),
-    }
-
-
-def _canonicalize_finance_payload(payload: dict[str, Any], *, sub_domain: str) -> dict[str, Any]:
-    if payload.get("schema_version") == 2 and str(payload.get("provider") or "").strip().lower() == "massive":
-        return payload
-    if sub_domain == "valuation":
-        return _canonicalize_raw_massive_valuation_payload(payload, sub_domain=sub_domain)
-    return _canonicalize_raw_massive_statement_payload(payload, sub_domain=sub_domain)
-
-
 def _load_close_prices(ticker: str) -> pd.DataFrame:
     symbol = str(ticker or "").strip().upper()
     if not symbol:
@@ -458,27 +278,99 @@ def _load_close_prices(ticker: str) -> pd.DataFrame:
 
     out = df[["date", "close"]].copy()
     out = out.rename(columns={"date": "Date", "close": "Close"})
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out["Date"] = coerce_to_naive_datetime(out["Date"])
     out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
     out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
     return out
 
 
-def _build_valuation_timeseries(payload: dict[str, Any], *, ticker: str) -> pd.DataFrame:
+def _normalize_finance_report_type(report_type: Any) -> str:
+    return str(report_type or "").strip().lower()
+
+
+def _extract_finance_row_date(item: dict[str, Any], *, report_type: str) -> Optional[pd.Timestamp]:
+    if not isinstance(item, dict):
+        return None
+    normalized_report = _normalize_finance_report_type(report_type)
+    if normalized_report == "valuation":
+        raw_value = item.get("date") or item.get("as_of") or item.get("period_end") or item.get("report_period")
+    else:
+        raw_value = (
+            item.get("date")
+            or item.get("period_end")
+            or item.get("period_of_report_date")
+            or item.get("report_period")
+            or item.get("as_of")
+        )
+    parsed = pd.to_datetime(raw_value, errors="coerce", utc=True, format="mixed")
+    if pd.isna(parsed):
+        return None
+    return parsed.tz_convert(None)
+
+
+def _is_canonical_finance_payload(payload: dict[str, Any], *, report_type: str) -> bool:
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema_version") == 2
+        and str(payload.get("provider") or "").strip().lower() == "massive"
+        and _normalize_finance_report_type(payload.get("report_type")) == _normalize_finance_report_type(report_type)
+    )
+
+
+def _is_raw_finance_payload(payload: dict[str, Any]) -> bool:
+    return isinstance(payload, dict) and isinstance(payload.get("results"), list)
+
+
+def _extract_valuation_snapshot(payload: dict[str, Any], *, report_type: str) -> Optional[dict[str, Any]]:
+    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN["valuation"]
+    if _is_canonical_finance_payload(payload, report_type=report_type):
+        as_of = _extract_finance_row_date({"as_of": payload.get("as_of")}, report_type="valuation")
+        if as_of is None:
+            return None
+        market_cap = _try_parse_float(_get_first_value(payload, alias_map["market_cap"]))
+        pe_ratio = _try_parse_float(_get_first_value(payload, alias_map["pe_ratio"]))
+        if market_cap is None and pe_ratio is None:
+            return None
+        return {"as_of": as_of, "market_cap": market_cap, "pe_ratio": pe_ratio}
+
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        return None
+
+    candidates: list[tuple[pd.Timestamp, int, dict[str, Any]]] = []
+    for index, item in enumerate(results):
+        if not isinstance(item, dict):
+            continue
+        report_date = _extract_finance_row_date(item, report_type="valuation")
+        if report_date is None:
+            continue
+        candidates.append((report_date, index, item))
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda entry: (entry[0], entry[1]))
+    latest_date, _latest_index, latest_row = candidates[-1]
+    market_cap = _try_parse_float(_get_first_value(latest_row, alias_map["market_cap"]))
+    pe_ratio = _try_parse_float(_get_first_value(latest_row, alias_map["pe_ratio"]))
+    if market_cap is None and pe_ratio is None:
+        return None
+    return {"as_of": latest_date, "market_cap": market_cap, "pe_ratio": pe_ratio}
+
+
+def _build_valuation_timeseries(snapshot: dict[str, Any], *, ticker: str) -> pd.DataFrame:
     df_prices = _load_close_prices(ticker)
     if df_prices.empty:
         return pd.DataFrame()
 
-    as_of = pd.to_datetime(payload.get("as_of"), errors="coerce", utc=True)
-    if pd.isna(as_of):
+    as_of = snapshot.get("as_of")
+    if as_of is None or pd.isna(as_of):
         return pd.DataFrame()
-    as_of = as_of.tz_convert(None)
     df_prices = df_prices[df_prices["Date"] <= as_of].copy()
     if df_prices.empty:
         return pd.DataFrame()
 
-    market_cap_now = _try_parse_float(payload.get("market_cap"))
-    pe_ratio_now = _try_parse_float(payload.get("pe_ratio"))
+    market_cap_now = _try_parse_float(snapshot.get("market_cap"))
+    pe_ratio_now = _try_parse_float(snapshot.get("pe_ratio"))
     anchor_close = float(df_prices["Close"].iloc[-1])
     if anchor_close <= 0:
         return pd.DataFrame()
@@ -497,64 +389,61 @@ def _build_valuation_timeseries(payload: dict[str, Any], *, ticker: str) -> pd.D
         if column not in out.columns:
             out[column] = pd.Series(dtype="float64")
 
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out["Date"] = coerce_to_naive_datetime(out["Date"])
     out = out.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
     return out[["Date", "Symbol", *expected_columns]]
 
 
-def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.DataFrame:
-    payload = json.loads(raw_bytes.decode("utf-8"))
+def _read_statement_payload(payload: dict[str, Any], *, ticker: str, report_type: str) -> pd.DataFrame:
+    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN[report_type]
+    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN[report_type]
 
-    suffix_to_sub_domain = {
-        report_suffix: sub_domain
-        for sub_domain, (_folder_name, report_suffix) in SILVER_FINANCE_ALPHA26_REPORT_LAYOUTS.items()
-    }
-    sub_domain = suffix_to_sub_domain.get(suffix)
-    if sub_domain is None:
-        return pd.DataFrame()
+    if _is_canonical_finance_payload(payload, report_type=report_type):
+        reports = payload.get("rows")
+        if reports is None:
+            raise ValueError(f"Finance payload rows are required for {ticker}/{report_type}.")
+        if not isinstance(reports, list) or not reports:
+            return pd.DataFrame()
+    elif _is_raw_finance_payload(payload):
+        reports = payload.get("results")
+        if not isinstance(reports, list) or not reports:
+            return pd.DataFrame()
+    else:
+        raise ValueError(f"Unsupported finance payload schema for {ticker}/{report_type}.")
 
-    if not isinstance(payload, dict):
-        raise ValueError(f"Finance payload for {ticker}/{sub_domain} must be a JSON object.")
-    if "quarterlyReports" in payload or "annualReports" in payload or "fiscalDateEnding" in payload:
-        raise ValueError(f"Alpha Vantage finance payload is not supported for {ticker}/{sub_domain}.")
-    payload = _canonicalize_finance_payload(payload, sub_domain=sub_domain)
-    if payload.get("schema_version") != 2 or str(payload.get("provider") or "").strip().lower() != "massive":
-        raise ValueError(f"Unsupported finance payload schema for {ticker}/{sub_domain}.")
-    payload_report_type = str(payload.get("report_type") or "").strip().lower()
-    if payload_report_type != sub_domain:
-        raise ValueError(
-            f"Finance payload report_type mismatch for {ticker}: expected {sub_domain}, got {payload_report_type or 'missing'}."
-        )
-
-    if sub_domain == "valuation":
-        return _build_valuation_timeseries(payload, ticker=ticker)
-
-    reports = payload.get("rows")
-    if reports is None:
-        raise ValueError(f"Finance payload rows are required for {ticker}/{sub_domain}.")
-    if not isinstance(reports, list) or not reports:
-        return pd.DataFrame()
-
-    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN[sub_domain]
-    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN[sub_domain]
-    rows = []
-    for item in reports:
+    prepared_rows: list[tuple[pd.Timestamp, str, int, dict[str, Any]]] = []
+    for index, item in enumerate(reports):
         if not isinstance(item, dict):
             continue
-        date_raw = item.get("date")
-        if not date_raw:
+        report_date = _extract_finance_row_date(item, report_type=report_type)
+        if report_date is None:
             continue
-        row: dict[str, Any] = {"Date": str(date_raw).strip(), "Symbol": ticker}
+        timeframe = str(_get_first_value(item, alias_map["timeframe"]) or "").strip().lower()
+        if timeframe not in _STATEMENT_TIMEFRAMES:
+            continue
+        row: dict[str, Any] = {"Date": report_date, "Symbol": ticker, "timeframe": timeframe}
         for column in expected_columns[2:]:
-            value = _get_first_value(item, alias_map[column])
             if column == "timeframe":
-                normalized = str(value or "").strip().lower()
-                row[column] = normalized or None
-            else:
-                row[column] = _try_parse_float(value)
-        rows.append(row)
+                continue
+            row[column] = _try_parse_float(_get_first_value(item, alias_map[column]))
+        metric_columns = [column for column in expected_columns[2:] if column != "timeframe"]
+        if not any(row.get(column) is not None for column in metric_columns):
+            continue
+        prepared_rows.append((report_date, timeframe, index, row))
 
-    df = pd.DataFrame(rows)
+    if not prepared_rows:
+        return pd.DataFrame()
+
+    deduped: dict[tuple[pd.Timestamp, str], dict[str, Any]] = {}
+    for report_date, timeframe, index, row in sorted(prepared_rows, key=lambda entry: (entry[0], entry[1], entry[2])):
+        del index
+        deduped[(report_date, timeframe)] = row
+
+    ordered_rows = [
+        deduped[key]
+        for key in sorted(deduped.keys(), key=lambda item: (item[0], item[1]))
+    ]
+    df = pd.DataFrame(ordered_rows)
     if df.empty:
         return df
 
@@ -564,9 +453,42 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
                 df[column] = pd.Series(dtype="string")
             else:
                 df[column] = pd.Series(dtype="float64")
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-    df = df.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
+    df["Date"] = coerce_to_naive_datetime(df["Date"])
+    df = df.dropna(subset=["Date"]).sort_values(["Date", "timeframe"]).reset_index(drop=True)
     return df[["Date", "Symbol", *expected_columns[2:]]]
+
+
+def _read_finance_json(raw_bytes: bytes, *, ticker: str, report_type: str) -> pd.DataFrame:
+    payload = json.loads(raw_bytes.decode("utf-8"))
+    sub_domain = _normalize_finance_report_type(report_type)
+    if sub_domain not in SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN:
+        return pd.DataFrame()
+
+    if not isinstance(payload, dict):
+        raise ValueError(f"Finance payload for {ticker}/{sub_domain} must be a JSON object.")
+    payload_report_type = _normalize_finance_report_type(payload.get("report_type"))
+    looks_canonical = payload.get("schema_version") == 2 and str(payload.get("provider") or "").strip().lower() == "massive"
+    if looks_canonical and payload_report_type and payload_report_type != sub_domain:
+        raise ValueError(
+            f"Finance payload report_type mismatch for {ticker}: expected {sub_domain}, got {payload_report_type or 'missing'}."
+        )
+    if not _is_canonical_finance_payload(payload, report_type=sub_domain) and not _is_raw_finance_payload(payload):
+        raise ValueError(f"Unsupported finance payload schema for {ticker}/{sub_domain}.")
+
+    if sub_domain == "valuation":
+        snapshot = _extract_valuation_snapshot(payload, report_type=sub_domain)
+        if snapshot is None:
+            return pd.DataFrame()
+        return _build_valuation_timeseries(snapshot, ticker=ticker)
+
+    return _read_statement_payload(payload, ticker=ticker, report_type=sub_domain)
+
+
+def _finance_row_identity_columns(df: pd.DataFrame) -> list[str]:
+    columns = ["symbol", "date"]
+    if "timeframe" in df.columns:
+        columns.append("timeframe")
+    return columns
 
 
 def _utc_today() -> pd.Timestamp:
@@ -581,27 +503,38 @@ def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] 
         return df
 
     df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    df["Date"] = coerce_to_naive_datetime(df["Date"])
     df = df.dropna(subset=["Date"])
     if df.empty:
         return df
 
-    df = df.set_index("Date")
-    df = df.sort_index()
+    group_columns = [column for column in ("Symbol", "timeframe") if column in df.columns]
+    grouped_frames: list[pd.DataFrame] = []
+    grouped = [(None, df)] if not group_columns else list(df.groupby(group_columns, dropna=False, sort=True))
 
-    # Resample and ffill
-    # We must restrict to the known date range
-    if df.empty:
-        return df
+    for group_key, group_frame in grouped:
+        group = group_frame.copy()
+        group = group.sort_values(["Date"]).drop_duplicates(subset=["Date"], keep="last")
+        group = group.set_index("Date").sort_index()
+        if group.empty:
+            continue
 
-    end = df.index.max()
-    if extend_to is not None and extend_to > end:
-        end = extend_to
+        end = group.index.max()
+        if extend_to is not None and extend_to > end:
+            end = extend_to
 
-    full_range = pd.date_range(start=df.index.min(), end=end, freq="D", name="Date")
-    df_daily = df.reindex(full_range).ffill()
+        full_range = pd.date_range(start=group.index.min(), end=end, freq="D", name="Date")
+        group_daily = group.reindex(full_range).ffill().reset_index()
 
-    return df_daily.reset_index()
+        if group_columns:
+            key_values = group_key if isinstance(group_key, tuple) else (group_key,)
+            for column, value in zip(group_columns, key_values):
+                group_daily[column] = value
+        grouped_frames.append(group_daily)
+
+    if not grouped_frames:
+        return pd.DataFrame(columns=df.reset_index(drop=True).columns)
+    return pd.concat(grouped_frames, ignore_index=True)
 
 
 def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
@@ -671,7 +604,7 @@ def _split_finance_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str
     if "symbol" not in out.columns and "Symbol" in out.columns:
         out = out.rename(columns={"Symbol": "symbol"})
     if "date" in out.columns:
-        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out["date"] = coerce_to_naive_datetime(out["date"])
     if "symbol" not in out.columns:
         out["symbol"] = pd.NA
     out["symbol"] = out["symbol"].astype("string").str.upper()
@@ -686,10 +619,11 @@ def _restore_blob_watermark(
     blob_name: str,
     prior_signature: Optional[dict],
 ) -> None:
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if prior_signature is None:
-        watermarks.pop(blob_name, None)
+        watermarks.pop(watermark_key, None)
         return
-    watermarks[blob_name] = dict(prior_signature)
+    watermarks[watermark_key] = dict(prior_signature)
 
 
 def _load_existing_finance_symbol_maps() -> dict[str, dict[str, str]]:
@@ -759,10 +693,12 @@ def _write_alpha26_finance_silver_buckets(
             df_bucket = pd.concat(parts, ignore_index=True)
             if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
                 df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
-                df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")
+                df_bucket["date"] = coerce_to_naive_datetime(df_bucket["date"])
                 df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
-                df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
-                    subset=["symbol", "date"], keep="last"
+                identity_columns = _finance_row_identity_columns(df_bucket)
+                df_bucket = df_bucket.sort_values(identity_columns).drop_duplicates(
+                    subset=identity_columns,
+                    keep="last",
                 )
                 for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
                     if symbol:
@@ -1128,10 +1064,11 @@ def _process_finance_frame(
     df_clean = normalize_columns_to_snake_case(df_clean)
     df_clean = _repair_symbol_column_aliases(df_clean, ticker=ticker)
     if "date" in df_clean.columns:
-        df_clean["date"] = pd.to_datetime(df_clean["date"], errors="coerce")
+        df_clean["date"] = coerce_to_naive_datetime(df_clean["date"])
     if "symbol" in df_clean.columns:
         df_clean["symbol"] = df_clean["symbol"].astype("string").str.upper()
-        df_clean = df_clean.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last")
+        identity_columns = _finance_row_identity_columns(df_clean)
+        df_clean = df_clean.sort_values(identity_columns).drop_duplicates(subset=identity_columns, keep="last")
         df_clean = df_clean.reset_index(drop=True)
     applied_calculated_columns = set()
     if suffix == "quarterly_valuation_measures":
@@ -1155,13 +1092,14 @@ def _process_finance_frame(
         df_other_symbols = normalize_columns_to_snake_case(df_other_symbols)
         df_other_symbols = _repair_symbol_column_aliases(df_other_symbols, ticker=ticker)
         if "date" in df_other_symbols.columns:
-            df_other_symbols["date"] = pd.to_datetime(df_other_symbols["date"], errors="coerce")
+            df_other_symbols["date"] = coerce_to_naive_datetime(df_other_symbols["date"])
         if "symbol" in df_other_symbols.columns:
             df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
         df_bucket_to_store = pd.concat([df_other_symbols, df_clean], ignore_index=True)
         if "symbol" in df_bucket_to_store.columns and "date" in df_bucket_to_store.columns:
-            df_bucket_to_store = df_bucket_to_store.sort_values(["symbol", "date"]).drop_duplicates(
-                subset=["symbol", "date"],
+            identity_columns = _finance_row_identity_columns(df_bucket_to_store)
+            df_bucket_to_store = df_bucket_to_store.sort_values(identity_columns).drop_duplicates(
+                subset=identity_columns,
                 keep="last",
             )
         df_bucket_to_store = df_bucket_to_store.reset_index(drop=True)
@@ -1212,6 +1150,7 @@ def process_alpha26_bucket_blob(
     alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
 ) -> list[BlobProcessResult]:
     blob_name = str(blob.get("name", ""))
+    watermark_key = normalize_watermark_blob_name(blob_name)
     signature = build_blob_signature(blob)
 
     try:
@@ -1231,7 +1170,7 @@ def process_alpha26_bucket_blob(
     if df_bucket is None or df_bucket.empty:
         if signature:
             signature["updated_at"] = datetime.now(timezone.utc).isoformat()
-            watermarks[blob_name] = signature
+            watermarks[watermark_key] = signature
         return [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
 
     debug_symbols = set(getattr(cfg, "DEBUG_SYMBOLS", []) or [])
@@ -1275,7 +1214,7 @@ def process_alpha26_bucket_blob(
             continue
         try:
             raw_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-            df_raw = _read_finance_json(raw_json, ticker=ticker, suffix=suffix)
+            df_raw = _read_finance_json(raw_json, ticker=ticker, report_type=report_type)
             result = _process_finance_frame(
                 blob_name=blob_name,
                 ticker=ticker,
@@ -1303,7 +1242,7 @@ def process_alpha26_bucket_blob(
 
     if all(result.status != "failed" for result in results) and signature:
         signature["updated_at"] = datetime.now(timezone.utc).isoformat()
-        watermarks[blob_name] = signature
+        watermarks[watermark_key] = signature
     return results or [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
 
 
@@ -1329,7 +1268,8 @@ def _process_alpha26_candidate_blobs(
         call_kwargs["alpha26_bucket_frames"] = alpha26_bucket_frames
     for blob in candidate_blobs:
         blob_name = str(blob.get("name", ""))
-        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        watermark_key = normalize_watermark_blob_name(blob_name)
+        prior_signature = dict(watermarks[watermark_key]) if isinstance(watermarks.get(watermark_key), dict) else None
         blob_bucket_frames = (
             {}
             if flush_state is not None and not persist
@@ -1377,7 +1317,7 @@ def _process_alpha26_candidate_blobs(
         # Watermarks are updated per-bucket internally on all-success.
         for result in blob_results:
             if result.status == "ok" and result.watermark_signature:
-                watermarks[result.blob_name] = result.watermark_signature
+                watermarks[normalize_watermark_blob_name(result.blob_name)] = result.watermark_signature
     ingest_elapsed = time.perf_counter() - ingest_started
     return results, ingest_elapsed
 
@@ -1623,19 +1563,20 @@ if __name__ == "__main__":
 
     job_name = "silver-finance-job"
     shared_lock_name = (os.environ.get("FINANCE_PIPELINE_SHARED_LOCK_NAME") or _DEFAULT_FINANCE_SHARED_LOCK).strip()
-    shared_wait_timeout = _parse_wait_timeout_seconds(
+    shared_wait_timeout = parse_wait_timeout_seconds(
         os.environ.get("SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS"),
         default=_DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS,
     )
-    with mdc.JobLock(shared_lock_name, wait_timeout_seconds=shared_wait_timeout):
-        ensure_api_awake_from_env(required=True)
-        raise SystemExit(
-            run_logged_job(
-                job_name=job_name,
-                run=main,
-                on_success=(
-                    lambda: write_system_health_marker(layer="silver", domain="finance", job_name=job_name),
-                    trigger_next_job_from_env,
-                ),
+    with mdc.JobLock(shared_lock_name, conflict_policy="wait_then_fail", wait_timeout_seconds=shared_wait_timeout):
+        with mdc.JobLock(job_name, conflict_policy="fail"):
+            ensure_api_awake_from_env(required=True)
+            raise SystemExit(
+                run_logged_job(
+                    job_name=job_name,
+                    run=main,
+                    on_success=(
+                        lambda: write_system_health_marker(layer="silver", domain="finance", job_name=job_name),
+                        trigger_next_job_from_env,
+                    ),
+                )
             )
-        )

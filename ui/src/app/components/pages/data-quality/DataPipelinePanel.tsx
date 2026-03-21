@@ -59,11 +59,7 @@ function LagIndicator({ drift }: { drift?: DriftItem }) {
   // If lag is essentially zero (under 2 mins), just show a check or "0m"
   const isFresh = minutes < 2;
 
-  const label = isFresh
-    ? '< 2m'
-    : minutes >= 120
-      ? `${Math.round(minutes / 60)}h`
-      : `${minutes}m`;
+  const label = isFresh ? '< 2m' : minutes >= 120 ? `${Math.round(minutes / 60)}h` : `${minutes}m`;
 
   const severity =
     typeof drift.slaSeconds === 'number' && Number.isFinite(drift.slaSeconds)
@@ -89,9 +85,7 @@ function LagIndicator({ drift }: { drift?: DriftItem }) {
     <div className="dq-connector-wrapper">
       <div className="dq-connector-line" />
       {!isFresh && severity !== 'pass' && (
-        <div className={cn("dq-lag-badge", colorClass)}>
-          {label} lag
-        </div>
+        <div className={cn('dq-lag-badge', colorClass)}>{label} lag</div>
       )}
     </div>
   );
@@ -244,8 +238,10 @@ function SourceStatus({ sources }: SourceStatusProps) {
     return (
       <div className="flex items-center justify-between text-xs mb-1">
         <span className="text-muted-foreground">{label}</span>
-        <span className={cn("font-mono", isStale ? "text-amber-600" : "text-emerald-600")}>
-          {isStale ? "⚠ " : ""}{date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        <span className={cn('font-mono', isStale ? 'text-amber-600' : 'text-emerald-600')}>
+          {isStale ? '⚠ ' : ''}
+          {date.toLocaleDateString()}{' '}
+          {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
     );
@@ -258,9 +254,9 @@ function SourceStatus({ sources }: SourceStatusProps) {
         <div className="dq-stage-title">Data Sources</div>
       </div>
       <div className="space-y-2">
-        {renderSource("nasdaq", "Nasdaq", sources.nasdaq?.timestamp)}
-        {renderSource("alpha_vantage", "Alpha Vantage", sources.alpha_vantage?.timestamp)}
-        {renderSource("massive", "Massive", sources.massive?.timestamp)}
+        {renderSource('nasdaq', 'Nasdaq', sources.nasdaq?.timestamp)}
+        {renderSource('alpha_vantage', 'Alpha Vantage', sources.alpha_vantage?.timestamp)}
+        {renderSource('massive', 'Massive', sources.massive?.timestamp)}
       </div>
     </div>
   );
@@ -307,12 +303,18 @@ export function DataPipelinePanel({ drift, rows }: DataPipelinePanelProps) {
               <div className="dq-stage-title">Bronze (Raw)</div>
             </div>
             {domains.map((d) => {
-              const lagItem = drift.find(
-                (item) => item.from === 'bronze' && item.to === 'silver' && item.domain === d.label
-              ) || drift.find(
-                // Match by label or case-insensitive ID to ensure coverage
-                (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'bronze' && item.to === 'silver'
-              );
+              const lagItem =
+                drift.find(
+                  (item) =>
+                    item.from === 'bronze' && item.to === 'silver' && item.domain === d.label
+                ) ||
+                drift.find(
+                  // Match by label or case-insensitive ID to ensure coverage
+                  (item) =>
+                    item.domain.toLowerCase() === d.id.toLowerCase() &&
+                    item.from === 'bronze' &&
+                    item.to === 'silver'
+                );
 
               return (
                 <div key={d.id} className="relative">
@@ -331,7 +333,10 @@ export function DataPipelinePanel({ drift, rows }: DataPipelinePanelProps) {
             </div>
             {domains.map((d) => {
               const lagItem = drift.find(
-                (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'silver' && item.to === 'gold'
+                (item) =>
+                  item.domain.toLowerCase() === d.id.toLowerCase() &&
+                  item.from === 'silver' &&
+                  item.to === 'gold'
               );
               return (
                 <div key={d.id} className="relative">

@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
@@ -8,6 +8,8 @@ import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
 import { getDomainOrderEntries } from '@/app/components/pages/system-status/domainOrdering';
 import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
+import type { SystemStatusViewResponse } from '@/services/apiService';
+import type { DataLayer } from '@/types/strategy';
 
 const { MOCK_RUN_TIMESTAMPS, domainLayerCoverageSpy, jobLogStreamSpy } = vi.hoisted(() => ({
   MOCK_RUN_TIMESTAMPS: {
@@ -18,146 +20,11 @@ const { MOCK_RUN_TIMESTAMPS, domainLayerCoverageSpy, jobLogStreamSpy } = vi.hois
   jobLogStreamSpy: vi.fn()
 }));
 
-vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
-  const now = MOCK_RUN_TIMESTAMPS.latest;
-
-  return {
-    ...actual,
-    useSystemHealthQuery: () => ({
-      data: {
-        overall: 'healthy',
-        dataLayers: [
-          {
-            name: 'Bronze',
-            description: 'Raw ingestion layer',
-            status: 'healthy',
-            lastUpdated: now,
-            refreshFrequency: 'Daily',
-            domains: [
-              {
-                name: 'zeta',
-                description: 'Market data',
-                type: 'blob',
-                path: 'bronze/zeta',
-                lastUpdated: now,
-                status: 'healthy',
-                portalUrl: 'https://example.com/storage/bronze/zeta',
-                jobUrl:
-                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-zeta/overview',
-                jobName: 'aca-job-zeta',
-                frequency: 'Daily',
-                cron: '0 0 * * *'
-              },
-              {
-                name: 'Alpha',
-                description: 'Reference domain',
-                type: 'blob',
-                path: 'bronze/alpha',
-                lastUpdated: now,
-                status: 'healthy',
-                portalUrl: 'https://example.com/storage/bronze/alpha',
-                jobUrl:
-                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-alpha/overview',
-                jobName: 'aca-job-alpha',
-                frequency: 'Daily',
-                cron: '0 0 * * *'
-              },
-              {
-                name: 'market',
-                description: 'Market data',
-                type: 'blob',
-                path: 'bronze/market',
-                lastUpdated: now,
-                status: 'healthy',
-                portalUrl: 'https://example.com/storage/bronze/market',
-                jobUrl:
-                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
-                jobName: 'aca-job-market',
-                frequency: 'Daily',
-                cron: '0 0 * * *'
-              }
-            ],
-            portalUrl: 'https://example.com/storage/bronze'
-          },
-          {
-            name: 'Platinum',
-            description: 'Serving layer',
-            status: 'healthy',
-            lastUpdated: now,
-            refreshFrequency: 'Daily',
-            domains: [
-              {
-                name: 'platinum',
-                description: 'Reserved',
-                type: 'blob',
-                path: 'platinum',
-                lastUpdated: now,
-                status: 'healthy',
-                portalUrl: 'https://example.com/storage/platinum',
-                jobUrl:
-                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-platinum/overview',
-                jobName: 'aca-job-platinum',
-                frequency: 'Daily',
-                cron: '0 0 * * *'
-              }
-            ],
-            portalUrl: 'https://example.com/storage/platinum'
-          }
-        ],
-        recentJobs: [
-          {
-            jobName: 'aca-job-market',
-            jobType: 'data-ingest',
-            status: 'success',
-            startTime: now,
-            triggeredBy: 'azure'
-          },
-          {
-            jobName: 'aca-job-market',
-            jobType: 'data-ingest',
-            status: 'failed',
-            startTime: MOCK_RUN_TIMESTAMPS.older,
-            triggeredBy: 'azure'
-          },
-          {
-            jobName: 'aca-job-platinum',
-            jobType: 'data-ingest',
-            status: 'success',
-            startTime: now,
-            triggeredBy: 'azure'
-          }
-        ],
-        alerts: [],
-        resources: [
-          {
-            name: 'aca-job-market',
-            resourceType: 'Microsoft.App/jobs',
-            status: 'healthy',
-            lastChecked: now,
-            runningState: 'Running',
-            lastModifiedAt: now
-          },
-          {
-            name: 'aca-job-zeta',
-            resourceType: 'Microsoft.App/jobs',
-            status: 'warning',
-            lastChecked: now,
-            runningState: 'Suspended',
-            lastModifiedAt: now
-          }
-        ]
-      },
-      isLoading: false,
-      error: null
-    }),
-    useLineageQuery: () => ({
-      data: { impactsByDomain: {} },
-      isLoading: false,
-      error: null
-    })
-  };
-});
+vi.mock('@/services/DataService', () => ({
+  DataService: {
+    getSystemStatusView: vi.fn()
+  }
+}));
 
 vi.mock('@/app/components/pages/system-status/DomainLayerComparisonPanel', () => ({
   DomainLayerComparisonPanel: (props: unknown) => {
@@ -181,7 +48,167 @@ vi.mock('@/app/components/pages/system-status/JobLogStreamPanel', () => ({
   }
 }));
 
+function buildSystemStatusView(
+  overrides: Partial<SystemStatusViewResponse> = {}
+): SystemStatusViewResponse {
+  const generatedAt = new Date().toISOString();
+  return {
+    version: 1,
+    generatedAt,
+    sources: {
+      systemHealth: 'live-refresh',
+      metadataSnapshot: 'persisted-snapshot'
+    },
+    metadataSnapshot: {
+      version: 1,
+      updatedAt: generatedAt,
+      entries: {
+        'bronze/market': {
+          layer: 'bronze',
+          domain: 'market',
+          container: 'bronze',
+          type: 'delta',
+          computedAt: generatedAt,
+          cacheSource: 'snapshot',
+          symbolCount: 321,
+          columnCount: 9,
+          warnings: []
+        }
+      },
+      warnings: []
+    },
+    systemHealth: {
+      overall: 'healthy',
+      dataLayers: [
+        {
+          name: 'Bronze',
+          description: 'Raw ingestion layer',
+          status: 'healthy',
+          lastUpdated: MOCK_RUN_TIMESTAMPS.latest,
+          refreshFrequency: 'Daily',
+          domains: [
+            {
+              name: 'zeta',
+              description: 'Market data',
+              type: 'blob',
+              path: 'bronze/zeta',
+              lastUpdated: MOCK_RUN_TIMESTAMPS.latest,
+              status: 'healthy',
+              portalUrl: 'https://example.com/storage/bronze/zeta',
+              jobUrl:
+                'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-zeta/overview',
+              jobName: 'aca-job-zeta',
+              frequency: 'Daily',
+              cron: '0 0 * * *'
+            },
+            {
+              name: 'Alpha',
+              description: 'Reference domain',
+              type: 'blob',
+              path: 'bronze/alpha',
+              lastUpdated: MOCK_RUN_TIMESTAMPS.latest,
+              status: 'healthy',
+              portalUrl: 'https://example.com/storage/bronze/alpha',
+              jobUrl:
+                'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-alpha/overview',
+              jobName: 'aca-job-alpha',
+              frequency: 'Daily',
+              cron: '0 0 * * *'
+            },
+            {
+              name: 'market',
+              description: 'Market data',
+              type: 'blob',
+              path: 'bronze/market',
+              lastUpdated: MOCK_RUN_TIMESTAMPS.latest,
+              status: 'healthy',
+              portalUrl: 'https://example.com/storage/bronze/market',
+              jobUrl:
+                'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
+              jobName: 'aca-job-market',
+              frequency: 'Daily',
+              cron: '0 0 * * *'
+            }
+          ],
+          portalUrl: 'https://example.com/storage/bronze'
+        },
+        {
+          name: 'Platinum',
+          description: 'Serving layer',
+          status: 'healthy',
+          lastUpdated: MOCK_RUN_TIMESTAMPS.latest,
+          refreshFrequency: 'Daily',
+          domains: [
+            {
+              name: 'platinum',
+              description: 'Reserved',
+              type: 'blob',
+              path: 'platinum',
+              lastUpdated: MOCK_RUN_TIMESTAMPS.latest,
+              status: 'healthy',
+              portalUrl: 'https://example.com/storage/platinum',
+              jobUrl:
+                'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-platinum/overview',
+              jobName: 'aca-job-platinum',
+              frequency: 'Daily',
+              cron: '0 0 * * *'
+            }
+          ],
+          portalUrl: 'https://example.com/storage/platinum'
+        }
+      ],
+      recentJobs: [
+        {
+          jobName: 'aca-job-market',
+          jobType: 'data-ingest',
+          status: 'success',
+          startTime: MOCK_RUN_TIMESTAMPS.latest,
+          triggeredBy: 'azure'
+        },
+        {
+          jobName: 'aca-job-market',
+          jobType: 'data-ingest',
+          status: 'failed',
+          startTime: MOCK_RUN_TIMESTAMPS.older,
+          triggeredBy: 'azure'
+        },
+        {
+          jobName: 'aca-job-platinum',
+          jobType: 'data-ingest',
+          status: 'success',
+          startTime: MOCK_RUN_TIMESTAMPS.latest,
+          triggeredBy: 'azure'
+        }
+      ],
+      alerts: [],
+      resources: [
+        {
+          name: 'aca-job-market',
+          resourceType: 'Microsoft.App/jobs',
+          status: 'healthy',
+          lastChecked: MOCK_RUN_TIMESTAMPS.latest,
+          runningState: 'Running',
+          lastModifiedAt: MOCK_RUN_TIMESTAMPS.latest
+        },
+        {
+          name: 'aca-job-zeta',
+          resourceType: 'Microsoft.App/jobs',
+          status: 'warning',
+          lastChecked: MOCK_RUN_TIMESTAMPS.latest,
+          runningState: 'Suspended',
+          lastModifiedAt: MOCK_RUN_TIMESTAMPS.latest
+        }
+      ]
+    },
+    ...overrides
+  };
+}
+
 describe('SystemStatusPage', () => {
+  beforeEach(() => {
+    vi.mocked(DataService.getSystemStatusView).mockResolvedValue(buildSystemStatusView());
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -200,7 +227,7 @@ describe('SystemStatusPage', () => {
       }
     });
 
-  const expectNoPlatinumDomain = (layers: Array<{ domains?: Array<{ name?: string }> }>) => {
+  const expectNoPlatinumDomain = (layers: DataLayer[]) => {
     for (const layer of layers) {
       for (const domain of layer.domains || []) {
         expect(
@@ -215,19 +242,11 @@ describe('SystemStatusPage', () => {
   it('renders the page layout and lazy loaded components', async () => {
     renderWithProviders(<SystemStatusPage />);
 
-    // Check for Main Page Elements that are NOT lazy loaded
-    expect(screen.getByText('LINK ESTABLISHED')).toBeInTheDocument();
+    await screen.findByTestId('mock-domain-layer-coverage-panel');
 
-    // Depending on test runner timing, lazy modules can remain in Suspense fallback.
-    const lazyComponentsLoaded =
-      Boolean(screen.queryByTestId('mock-domain-layer-coverage-panel')) &&
-      Boolean(screen.queryByTestId('mock-container-apps-panel')) &&
-      Boolean(screen.queryByTestId('mock-job-log-stream-panel'));
-    const suspenseFallbackVisible = document.querySelectorAll('[data-slot="skeleton"]').length >= 3;
-    expect(lazyComponentsLoaded || suspenseFallbackVisible).toBe(true);
-
-    // Check loading state of footer
-    expect(screen.getByText('LINK ESTABLISHED')).toBeInTheDocument();
+    expect(screen.getByText(/VIEW UPDATED/i)).toBeInTheDocument();
+    expect(await screen.findByTestId('mock-container-apps-panel')).toBeInTheDocument();
+    expect(await screen.findByTestId('mock-job-log-stream-panel')).toBeInTheDocument();
   });
 
   it('keeps platinum as a layer but removes it as a data domain', async () => {
@@ -241,34 +260,34 @@ describe('SystemStatusPage', () => {
     });
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+      dataLayers: DataLayer[];
+      managedContainerJobs: Array<{ name: string; lastModifiedAt?: string | null }>;
+      metadataSource?: string | null;
     };
 
     expect(coverageProps.dataLayers.some((layer) => layer.name.toLowerCase() === 'platinum')).toBe(
       true
     );
     expectNoPlatinumDomain(coverageProps.dataLayers);
-
-    const coveragePanelProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
-      managedContainerJobs: Array<{ name: string; lastModifiedAt?: string | null }>;
-    };
-    expect(coveragePanelProps.managedContainerJobs.map((job) => job.name)).toEqual([
+    expect(coverageProps.managedContainerJobs.map((job) => job.name)).toEqual([
       'aca-job-market',
       'aca-job-zeta'
     ]);
-    expect(coveragePanelProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))).toBe(true);
+    expect(coverageProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))).toBe(
+      true
+    );
+    expect(coverageProps.metadataSource).toBe('persisted-snapshot');
   });
 
   it('uses canonical domain ordering in domain layer coverage panel', async () => {
-    domainLayerCoverageSpy.mockClear();
-
     renderWithProviders(<SystemStatusPage />);
+
     await waitFor(() => {
       expect(domainLayerCoverageSpy).toHaveBeenCalled();
     });
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+      dataLayers: DataLayer[];
     };
 
     const coverageOrder = getDomainOrderEntries(coverageProps.dataLayers).map((entry) => entry.key);
@@ -277,9 +296,8 @@ describe('SystemStatusPage', () => {
   });
 
   it('passes the latest job run status and start time to the job console stream panel', async () => {
-    jobLogStreamSpy.mockClear();
-
     renderWithProviders(<SystemStatusPage />);
+
     await waitFor(() => {
       expect(jobLogStreamSpy).toHaveBeenCalled();
     });
@@ -306,8 +324,6 @@ describe('SystemStatusPage', () => {
   });
 
   it('merges optimistic running overrides into the system status props', async () => {
-    domainLayerCoverageSpy.mockClear();
-
     const now = new Date().toISOString();
     const queryClient = createQueryClient();
     queryClient.setQueryData(queryKeys.systemHealthJobOverrides(), {
@@ -362,48 +378,63 @@ describe('SystemStatusPage', () => {
     );
   });
 
-  it('polls medallion-domain job status every 10 seconds without touching domain metadata queries', async () => {
+  it('refreshes the unified status view immediately and then every 10 seconds', async () => {
     vi.useFakeTimers();
-    domainLayerCoverageSpy.mockClear();
-
     const now = new Date().toISOString();
-    const getSystemHealthSpy = vi.spyOn(DataService, 'getSystemHealth').mockResolvedValue({
-      overall: 'warning',
-      dataLayers: [],
-      recentJobs: [
-        {
-          jobName: 'aca-job-zeta',
-          jobType: 'data-ingest',
-          status: 'running',
-          startTime: now,
-          triggeredBy: 'azure'
-        }
-      ],
-      alerts: [],
-      resources: [
-        {
-          name: 'aca-job-zeta',
-          resourceType: 'Microsoft.App/jobs',
-          status: 'warning',
-          lastChecked: now,
-          runningState: 'Running',
-          lastModifiedAt: now
-        }
-      ]
-    });
+
+    vi.mocked(DataService.getSystemStatusView)
+      .mockResolvedValueOnce(buildSystemStatusView())
+      .mockResolvedValueOnce(
+        buildSystemStatusView({
+          systemHealth: {
+            overall: 'degraded',
+            dataLayers: [],
+            recentJobs: [
+              {
+                jobName: 'aca-job-zeta',
+                jobType: 'data-ingest',
+                status: 'running',
+                startTime: now,
+                triggeredBy: 'azure'
+              }
+            ],
+            alerts: [],
+            resources: [
+              {
+                name: 'aca-job-zeta',
+                resourceType: 'Microsoft.App/jobs',
+                status: 'warning',
+                lastChecked: now,
+                runningState: 'Running',
+                lastModifiedAt: now
+              }
+            ]
+          }
+        })
+      );
 
     renderWithProviders(<SystemStatusPage />);
-    await vi.advanceTimersByTimeAsync(1);
+
+    await vi.dynamicImportSettled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(domainLayerCoverageSpy).toHaveBeenCalled();
-
-    expect(getSystemHealthSpy).not.toHaveBeenCalled();
+    expect(DataService.getSystemStatusView).toHaveBeenCalledWith({ refresh: true });
+    const initialCallCount = vi.mocked(DataService.getSystemStatusView).mock.calls.length;
+    expect(initialCallCount).toBeGreaterThan(0);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
+      await Promise.resolve();
     });
 
-    expect(getSystemHealthSpy).toHaveBeenCalledWith({ refresh: true });
+    expect(vi.mocked(DataService.getSystemStatusView).mock.calls.length).toBeGreaterThan(
+      initialCallCount
+    );
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
       overall: string;
@@ -412,7 +443,7 @@ describe('SystemStatusPage', () => {
       managedContainerJobs: Array<{ name: string; runningState?: string | null }>;
     };
 
-    expect(coverageProps.overall).toBe('warning');
+    expect(coverageProps.overall).toBe('degraded');
     expect(coverageProps.jobStates['aca-job-zeta']).toBe('Running');
     expect(coverageProps.recentJobs).toEqual(
       expect.arrayContaining([

@@ -62,6 +62,22 @@ def signature_matches(prior: Dict[str, Any], current: Dict[str, Optional[str]]) 
     if current_lm and prior_lm:
         return current_lm == prior_lm
 
+    current_name = current.get("name")
+    prior_name = prior.get("name")
+    if current_name and prior_name:
+        if current_name != prior_name:
+            return False
+        current_size = current.get("size")
+        prior_size = prior.get("size")
+        if current_size and prior_size:
+            return current_size == prior_size
+        return True
+
+    current_size = current.get("size")
+    prior_size = prior.get("size")
+    if current_size and prior_size:
+        return current_size == prior_size
+
     return False
 
 

@@ -47,18 +47,12 @@ function formatTimestamp(value?: string): string {
   }).format(parsed);
 }
 
-function MetricCard({
-  label,
-  value,
-  detail
-}: {
-  label: string;
-  value: string;
-  detail: string;
-}) {
+function MetricCard({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm">
-      <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
+      <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-2 font-mono text-xl font-semibold text-foreground">{value}</div>
       <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
     </div>
@@ -70,7 +64,11 @@ export function UniverseConfigPage() {
   const [selectedUniverseName, setSelectedUniverseName] = useState<string | null>(null);
   const [draft, setDraft] = useState<UniverseConfigDetail>(buildEmptyUniverseConfig());
 
-  const { data: universes = [], isLoading, error } = useQuery({
+  const {
+    data: universes = [],
+    isLoading,
+    error
+  } = useQuery({
     queryKey: ['universe-configs'],
     queryFn: () => universeApi.listUniverseConfigs()
   });
@@ -153,7 +151,9 @@ export function UniverseConfigPage() {
           <div className="text-sm font-medium uppercase tracking-[0.08em] text-muted-foreground">
             Universe control plane
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Universe Configurations</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">
+            Universe Configurations
+          </h1>
           <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
             Define reusable symbol eligibility logic from Postgres gold data, validate the current
             matching set, and publish versioned definitions used by run configurations and ranking
@@ -165,7 +165,10 @@ export function UniverseConfigPage() {
             <Plus className="h-4 w-4" />
             New Universe Configuration
           </Button>
-          <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending || !draft.name.trim()}>
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending || !draft.name.trim()}
+          >
             {saveMutation.isPending ? 'Saving...' : 'Save Universe Configuration'}
           </Button>
         </div>
@@ -180,7 +183,11 @@ export function UniverseConfigPage() {
         <MetricCard
           label="Current version"
           value={`v${draft.version || 1}`}
-          detail={selectedUniverseName ? 'Published revision loaded in the editor.' : 'Draft version for a new universe.'}
+          detail={
+            selectedUniverseName
+              ? 'Published revision loaded in the editor.'
+              : 'Draft version for a new universe.'
+          }
         />
         <MetricCard
           label="Conditions"
@@ -216,7 +223,8 @@ export function UniverseConfigPage() {
               </div>
             ) : universes.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 p-5 text-sm text-muted-foreground">
-                No universe configurations saved yet. Create one to reuse across strategies and rankings.
+                No universe configurations saved yet. Create one to reuse across strategies and
+                rankings.
               </div>
             ) : (
               <div className="space-y-3">
@@ -249,7 +257,9 @@ export function UniverseConfigPage() {
                       </div>
                       <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
                         <span>Updated {formatTimestamp(universe.updated_at)}</span>
-                        {isSelected ? <span className="font-medium text-foreground">Selected</span> : null}
+                        {isSelected ? (
+                          <span className="font-medium text-foreground">Selected</span>
+                        ) : null}
                       </div>
                     </button>
                   );
@@ -265,7 +275,8 @@ export function UniverseConfigPage() {
               <div className="space-y-1">
                 <CardTitle className="text-lg font-semibold">Universe Editor</CardTitle>
                 <CardDescription>
-                  Maintain the active definition, inspect its structure, and publish a versioned update.
+                  Maintain the active definition, inspect its structure, and publish a versioned
+                  update.
                 </CardDescription>
               </div>
               <Badge variant="outline" className="w-fit gap-1.5 font-mono">
@@ -292,7 +303,9 @@ export function UniverseConfigPage() {
                           id="universe-name"
                           readOnly={Boolean(selectedUniverseName)}
                           value={draft.name}
-                          onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                          onChange={(event) =>
+                            setDraft((current) => ({ ...current, name: event.target.value }))
+                          }
                           placeholder="e.g. large-cap-quality"
                         />
                       </div>
@@ -301,7 +314,9 @@ export function UniverseConfigPage() {
                         <Input
                           id="universe-description"
                           value={draft.description || ''}
-                          onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+                          onChange={(event) =>
+                            setDraft((current) => ({ ...current, description: event.target.value }))
+                          }
                           placeholder="Describe the eligible symbol set."
                         />
                       </div>
@@ -313,7 +328,8 @@ export function UniverseConfigPage() {
                       </div>
                       <div className="mt-2 text-sm font-medium text-foreground">{draftSummary}</div>
                       <div className="mt-1 text-sm text-muted-foreground">
-                        Saved universes are reused by run configurations and ranking schemas after publish.
+                        Saved universes are reused by run configurations and ranking schemas after
+                        publish.
                       </div>
                     </div>
                   </div>
@@ -348,7 +364,9 @@ export function UniverseConfigPage() {
 
                 <UniverseRuleBuilder
                   value={draft.config}
-                  onChange={(nextValue) => setDraft((current) => ({ ...current, config: nextValue }))}
+                  onChange={(nextValue) =>
+                    setDraft((current) => ({ ...current, config: nextValue }))
+                  }
                 />
 
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">

@@ -5,6 +5,7 @@ param(
   [string]$StorageAccountName = "",
   [string]$AcrPullIdentityName = "",
   [string]$AzureClientId = "",
+  [string]$OperatorUserObjectId = "",
   [string]$EnvFile = ""
 )
 
@@ -16,7 +17,8 @@ function Write-Usage {
 Usage: validate_azure_permissions.ps1 [-SubscriptionId <sub>] [-ResourceGroup <rg>] [-AcrName <name>] [-StorageAccountName <name>] [-AcrPullIdentityName <name>] [-AzureClientId <clientId>] [-EnvFile <path>]
 
 Validates the Azure RBAC permissions required for the GitHub Actions deploy workflow and
-Container Apps managed identity operations.
+Container Apps managed identity operations, plus the Microsoft Graph read access needed by
+the Entra OIDC provisioner.
 "@
 }
 
@@ -111,6 +113,26 @@ function Write-Results {
   if ($errors.Count -gt 0) { exit 1 }
 }
 
+function Invoke-AzCliRaw {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$Arguments,
+    [switch]$AllowFailure
+  )
+
+  $output = & az @Arguments 2>&1
+  $exitCode = $LASTEXITCODE
+  $text = ($output | Out-String).Trim()
+
+  if ($exitCode -ne 0 -and (-not $AllowFailure)) {
+    throw "Azure CLI command failed (exit=$exitCode): az $($Arguments -join ' ')`n$text"
+  }
+
+  return [pscustomobject]@{
+    ExitCode = $exitCode
+    Output   = $text
+  }
+}
+
 function Get-RoleAssignments {
   param([string]$PrincipalId)
 
@@ -150,6 +172,62 @@ function Has-RoleAtScope {
   }
 
   return $false
+}
+
+function Add-GraphProbeResult {
+  param(
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$Url,
+    [Parameter(Mandatory = $true)][string]$Remediation,
+    [ValidateSet("Error", "Warning")][string]$Severity = "Error"
+  )
+
+  Write-Host "Checking $Name..." -ForegroundColor DarkGray
+
+  $probe = Invoke-AzCliRaw -Arguments @(
+    "rest",
+    "--method", "get",
+    "--url", $Url,
+    "--only-show-errors"
+  ) -AllowFailure
+
+  if ($probe.ExitCode -eq 0) {
+    Add-Result -Name $Name -Ok $true -Details "Graph read probe succeeded." -Remediation ""
+    return
+  }
+
+  $details = if ([string]::IsNullOrWhiteSpace($probe.Output)) {
+    "Graph read probe failed."
+  } else {
+    "Graph read probe failed: $($probe.Output)"
+  }
+  Add-Result -Name $Name -Ok $false -Details $details -Remediation $Remediation -Severity $Severity
+}
+
+function Resolve-SignedInUser {
+  $probe = Invoke-AzCliRaw -Arguments @(
+    "ad", "signed-in-user", "show",
+    "--query", "{id:id,userPrincipalName:userPrincipalName}",
+    "-o", "json",
+    "--only-show-errors"
+  ) -AllowFailure
+
+  if ($probe.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($probe.Output)) {
+    return $null
+  }
+
+  try {
+    $resolved = $probe.Output | ConvertFrom-Json
+  }
+  catch {
+    return $null
+  }
+
+  if ($null -eq $resolved -or [string]::IsNullOrWhiteSpace([string]$resolved.id)) {
+    return $null
+  }
+
+  return $resolved
 }
 
 $results = @()
@@ -215,6 +293,21 @@ if ([string]::IsNullOrWhiteSpace($AzureClientId)) {
   $AzureClientId = $env:AZURE_CLIENT_ID
 }
 
+if ([string]::IsNullOrWhiteSpace($OperatorUserObjectId)) {
+  $OperatorUserObjectId = Get-EnvValueFirst -Keys @("ENTRA_OPERATOR_USER_OBJECT_ID") -Lines $envLines
+}
+if ([string]::IsNullOrWhiteSpace($OperatorUserObjectId)) {
+  $OperatorUserObjectId = $env:ENTRA_OPERATOR_USER_OBJECT_ID
+}
+
+$signedInOperatorUser = $null
+if ([string]::IsNullOrWhiteSpace($OperatorUserObjectId)) {
+  $signedInOperatorUser = Resolve-SignedInUser
+  if ($null -ne $signedInOperatorUser) {
+    $OperatorUserObjectId = [string]$signedInOperatorUser.id
+  }
+}
+
 Write-Host "Loaded env values from $envLabel" -ForegroundColor Cyan
 Write-Host "SubscriptionId: $SubscriptionId"
 Write-Host "ResourceGroup: $ResourceGroup"
@@ -222,6 +315,7 @@ Write-Host "ACR: $AcrName"
 Write-Host "Storage: $StorageAccountName"
 Write-Host "ACR Pull Identity: $AcrPullIdentityName"
 Write-Host "Azure Client ID: $AzureClientId"
+Write-Host "Operator User Object ID: $(if ($OperatorUserObjectId) { $OperatorUserObjectId } else { '<not set>' })"
 Write-Host ""
 
 $rgId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup"
@@ -314,6 +408,41 @@ if (-not [string]::IsNullOrWhiteSpace($azureSpObjectId)) {
     $hasStorageData = Has-RoleAtScope -Assignments $assignments -RoleNames @("Storage Blob Data Contributor", "Storage Blob Data Owner") -Scope $storageId
     Add-Result -Name "Deploy SP has storage data access" -Ok $hasStorageData -Details "clientId=$AzureClientId" -Remediation "Grant Storage Blob Data Contributor on $StorageAccountName to the deployment service principal (for 'az storage container create --auth-mode login')."
   }
+}
+
+if ([string]::IsNullOrWhiteSpace($OperatorUserObjectId)) {
+  Add-Result -Name "Operator user object ID set" -Ok $false -Details "ENTRA_OPERATOR_USER_OBJECT_ID not found in $envLabel or env, and Azure CLI could not resolve a signed-in user." -Remediation "Run 'az ad signed-in-user show --query id -o tsv' and set ENTRA_OPERATOR_USER_OBJECT_ID before running the Entra OIDC provisioner." -Severity "Warning"
+}
+else {
+  $details = $OperatorUserObjectId
+  if ($null -ne $signedInOperatorUser) {
+    $suffix = [string]$signedInOperatorUser.userPrincipalName
+    if (-not [string]::IsNullOrWhiteSpace($suffix)) {
+      $details = "$OperatorUserObjectId (auto-resolved from signed-in user $suffix)"
+    }
+    else {
+      $details = "$OperatorUserObjectId (auto-resolved from signed-in user)"
+    }
+  }
+  Add-Result -Name "Operator user object ID set" -Ok $true -Details $details -Remediation ""
+}
+
+Add-GraphProbeResult `
+  -Name "Graph applications read" `
+  -Url "https://graph.microsoft.com/v1.0/applications?`$top=1" `
+  -Remediation "Ensure the signed-in Azure CLI principal can read Microsoft Entra applications before running scripts/provision_entra_oidc.ps1."
+
+Add-GraphProbeResult `
+  -Name "Graph service principals read" `
+  -Url "https://graph.microsoft.com/v1.0/servicePrincipals?`$top=1" `
+  -Remediation "Ensure the signed-in Azure CLI principal can read Microsoft Entra service principals before running scripts/provision_entra_oidc.ps1."
+
+if (-not [string]::IsNullOrWhiteSpace($OperatorUserObjectId)) {
+  Add-GraphProbeResult `
+    -Name "Graph operator user read" `
+    -Url "https://graph.microsoft.com/v1.0/users/${OperatorUserObjectId}?`$select=id,displayName,userPrincipalName" `
+    -Remediation "Confirm ENTRA_OPERATOR_USER_OBJECT_ID is a valid user object ID and the signed-in principal can read directory users." `
+    -Severity "Warning"
 }
 
 Write-Results

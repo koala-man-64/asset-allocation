@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
@@ -24,18 +24,18 @@ vi.mock('sonner', () => ({
 describe('JobKillSwitchPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
-  it('stops currently running jobs then suspends all jobs when enabled', async () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('stops currently running jobs', async () => {
     vi.mocked(backtestApi.stopJob).mockResolvedValue({
       jobName: 'job-running',
       action: 'stop',
       runningState: 'Stopped'
-    });
-    vi.mocked(backtestApi.suspendJob).mockResolvedValue({
-      jobName: 'job-running',
-      action: 'suspend',
-      runningState: 'Suspended'
     });
 
     const user = userEvent.setup();
@@ -48,28 +48,45 @@ describe('JobKillSwitchPanel', () => {
       />
     );
 
-    await user.click(screen.getByRole('switch', { name: 'Toggle job kill switch' }));
+    await user.click(screen.getByRole('button', { name: 'Stop running jobs' }));
 
     await waitFor(() => {
       expect(backtestApi.stopJob).toHaveBeenCalledTimes(1);
       expect(backtestApi.stopJob).toHaveBeenCalledWith('job-running');
     });
 
-    await waitFor(() => {
-      expect(backtestApi.suspendJob).toHaveBeenCalledTimes(2);
-      expect(backtestApi.suspendJob).toHaveBeenNthCalledWith(1, 'job-running');
-      expect(backtestApi.suspendJob).toHaveBeenNthCalledWith(2, 'job-idle');
-    });
-
-    const stopOrder = vi.mocked(backtestApi.stopJob).mock.invocationCallOrder[0];
-    const suspendOrder = vi.mocked(backtestApi.suspendJob).mock.invocationCallOrder[0];
-    expect(stopOrder).toBeLessThan(suspendOrder);
-    expect(toast.success).toHaveBeenCalledWith(
-      'Kill switch engaged. Stopped 1 running job(s) and suspended 2 job(s).'
-    );
+    expect(toast.success).toHaveBeenCalledWith('Stopped 1 running job(s).');
   });
 
-  it('resumes all jobs when disabled', async () => {
+  it('suspends all jobs', async () => {
+    vi.mocked(backtestApi.suspendJob).mockResolvedValue({
+      jobName: 'job-a',
+      action: 'suspend',
+      runningState: 'Suspended'
+    });
+
+    const user = userEvent.setup();
+    renderWithProviders(
+      <JobKillSwitchPanel
+        jobs={[
+          { name: 'job-a', runningState: 'Running' },
+          { name: 'job-b', runningState: 'Succeeded' }
+        ]}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Suspend all jobs' }));
+
+    await waitFor(() => {
+      expect(backtestApi.suspendJob).toHaveBeenCalledTimes(2);
+      expect(backtestApi.suspendJob).toHaveBeenNthCalledWith(1, 'job-a');
+      expect(backtestApi.suspendJob).toHaveBeenNthCalledWith(2, 'job-b');
+    });
+
+    expect(toast.success).toHaveBeenCalledWith('Suspended 2 job(s).');
+  });
+
+  it('resumes all jobs', async () => {
     vi.mocked(backtestApi.resumeJob).mockResolvedValue({
       jobName: 'job-a',
       action: 'resume',
@@ -86,7 +103,7 @@ describe('JobKillSwitchPanel', () => {
       />
     );
 
-    await user.click(screen.getByRole('switch', { name: 'Toggle job kill switch' }));
+    await user.click(screen.getByRole('button', { name: 'Resume all jobs' }));
 
     await waitFor(() => {
       expect(backtestApi.resumeJob).toHaveBeenCalledTimes(2);
@@ -94,11 +111,13 @@ describe('JobKillSwitchPanel', () => {
       expect(backtestApi.resumeJob).toHaveBeenNthCalledWith(2, 'job-b');
     });
 
-    expect(toast.success).toHaveBeenCalledWith('Kill switch disengaged. Resumed 2 job(s).');
+    expect(toast.success).toHaveBeenCalledWith('Resumed 2 job(s).');
   });
 
-  it('disables the switch when no jobs are available', () => {
+  it('disables action buttons when no jobs are available', () => {
     renderWithProviders(<JobKillSwitchPanel jobs={[]} />);
-    expect(screen.getByRole('switch', { name: 'Toggle job kill switch' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Stop running jobs' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Suspend all jobs' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Resume all jobs' })).toBeDisabled();
   });
 });

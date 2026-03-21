@@ -8,7 +8,6 @@ from tests.api._client import get_test_client
 
 @pytest.mark.asyncio
 async def test_swagger_routes_available_under_api_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.delenv("API_ROOT_PREFIX", raising=False)
 
     app = create_app()
@@ -35,7 +34,6 @@ async def test_swagger_routes_available_under_api_prefix(monkeypatch: pytest.Mon
 
 @pytest.mark.asyncio
 async def test_swagger_routes_available_with_root_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("API_ROOT_PREFIX", "asset-allocation")
 
     app = create_app()

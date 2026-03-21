@@ -1,6 +1,6 @@
 import logging
+from datetime import datetime, timezone
 from typing import List
-from datetime import datetime
 
 from alpaca.models import (
     BrokerageState, 
@@ -12,6 +12,10 @@ from alpaca.models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
 class StateManager:
     def __init__(self, initial_state: BrokerageState):
         self._state = initial_state
@@ -22,14 +26,14 @@ class StateManager:
 
     def update_account(self, account: AlpacaAccount):
         self._state.account = account
-        self._state.last_update = datetime.utcnow()
+        self._state.last_update = _utc_now()
         self._state.version += 1
 
     def update_positions(self, positions: List[AlpacaPosition]):
         # Replace entire map or merge? Usually replace on full sync.
         new_map = {p.symbol: p for p in positions}
         self._state.positions = new_map
-        self._state.last_update = datetime.utcnow()
+        self._state.last_update = _utc_now()
         self._state.version += 1
         
         # Also need to reconcile position_states? 
@@ -38,7 +42,7 @@ class StateManager:
     def update_open_orders(self, orders: List[AlpacaOrder]):
         new_map = {o.id: o for o in orders}
         self._state.open_orders = new_map
-        self._state.last_update = datetime.utcnow()
+        self._state.last_update = _utc_now()
         self._state.version += 1
 
     def apply_trade_event(self, event: TradeUpdateEvent):
@@ -90,5 +94,5 @@ class StateManager:
                         side="long" if event.position_qty > 0 else "short"
                     )
         
-        self._state.last_update = datetime.utcnow()
+        self._state.last_update = _utc_now()
         self._state.version += 1

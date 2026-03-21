@@ -1,23 +1,9 @@
-/* global RequestInit */
-import type { FinanceData, MarketData } from '@/types/data';
-import type { SystemHealth } from '@/types/strategy';
-import { config } from '@/config';
-import { appendAuthHeaders, setAccessTokenProvider } from '@/services/authTransport';
-export { setAccessTokenProvider };
+export { ApiError } from '@/services/apiService';
+import { request as apiRequest } from '@/services/apiService';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
 export type DataDomain = 'market' | 'earnings' | 'price-target';
-
-export class ApiError extends Error {
-  readonly status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-  }
-}
 
 export interface RunRecordResponse {
   run_id: string;
@@ -228,55 +214,12 @@ export interface GetTradesParams {
   offset?: number;
 }
 
-function getBaseUrl(): string {
-  return config.apiBaseUrl;
-}
-
-function buildQuery(params: Record<string, string | number | boolean | undefined | null>): string {
-  const qs = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null) return;
-    const text = String(value).trim();
-    if (!text) return;
-    qs.set(key, text);
-  });
-  const rendered = qs.toString();
-  return rendered ? `?${rendered}` : '';
-}
-
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
-  const baseUrl = getBaseUrl();
-  const url = baseUrl ? `${baseUrl}${path}` : path;
-  const method = (init.method ?? 'GET').toUpperCase();
-
-  const headers = new Headers(init.headers);
-  if (!headers.has('Accept')) {
-    headers.set('Accept', 'application/json');
-  }
-  const authHeaders = await appendAuthHeaders(headers);
-
-  const resp = await fetch(url, { ...init, headers: authHeaders });
-  if (!resp.ok) {
-    const detail = await resp.text().catch(() => '');
-    console.error('[backtestApi] response error', {
-      method,
-      url: resp.url,
-      status: resp.status,
-      detail
-    });
-    throw new ApiError(resp.status, detail || resp.statusText);
-  }
-  return resp;
-}
-
-async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const resp = await request(path, init);
-  return resp.json() as Promise<T>;
-}
-
 export const backtestApi = {
-  async submitRun(payload: SubmitBacktestPayload, signal?: AbortSignal): Promise<RunRecordResponse> {
-    return requestJson<RunRecordResponse>('/backtests', {
+  async submitRun(
+    payload: SubmitBacktestPayload,
+    signal?: AbortSignal
+  ): Promise<RunRecordResponse> {
+    return apiRequest<RunRecordResponse>('/backtests', {
       method: 'POST',
       body: JSON.stringify(payload),
       signal
@@ -284,13 +227,15 @@ export const backtestApi = {
   },
 
   async listRuns(params: ListRunsParams = {}, signal?: AbortSignal): Promise<RunListResponse> {
-    const query = buildQuery({
-      status: params.status,
-      q: params.q,
-      limit: params.limit ?? 200,
-      offset: params.offset ?? 0
+    return apiRequest<RunListResponse>('/backtests', {
+      params: {
+        status: params.status,
+        q: params.q,
+        limit: params.limit ?? 200,
+        offset: params.offset ?? 0
+      },
+      signal
     });
-    return requestJson<RunListResponse>(`/backtests${query}`, { signal });
   },
 
   async getSummary(
@@ -298,8 +243,8 @@ export const backtestApi = {
     params: { source?: DataSource } = {},
     signal?: AbortSignal
   ): Promise<BacktestSummary> {
-    const query = buildQuery({ source: params.source ?? 'auto' });
-    return requestJson<BacktestSummary>(`/backtests/${encodeURIComponent(runId)}/summary${query}`, {
+    return apiRequest<BacktestSummary>(`/backtests/${encodeURIComponent(runId)}/summary`, {
+      params: { source: params.source ?? 'auto' },
       signal
     });
   },
@@ -309,13 +254,15 @@ export const backtestApi = {
     params: GetTimeseriesParams = {},
     signal?: AbortSignal
   ): Promise<TimeseriesResponse> {
-    const query = buildQuery({
-      source: params.source ?? 'auto',
-      max_points: params.maxPoints ?? 5000
-    });
-    return requestJson<TimeseriesResponse>(
-      `/backtests/${encodeURIComponent(runId)}/metrics/timeseries${query}`,
-      { signal }
+    return apiRequest<TimeseriesResponse>(
+      `/backtests/${encodeURIComponent(runId)}/metrics/timeseries`,
+      {
+        params: {
+          source: params.source ?? 'auto',
+          max_points: params.maxPoints ?? 5000
+        },
+        signal
+      }
     );
   },
 
@@ -324,14 +271,16 @@ export const backtestApi = {
     params: GetRollingParams = {},
     signal?: AbortSignal
   ): Promise<RollingMetricsResponse> {
-    const query = buildQuery({
-      source: params.source ?? 'auto',
-      window_days: params.windowDays ?? 63,
-      max_points: params.maxPoints ?? 5000
-    });
-    return requestJson<RollingMetricsResponse>(
-      `/backtests/${encodeURIComponent(runId)}/metrics/rolling${query}`,
-      { signal }
+    return apiRequest<RollingMetricsResponse>(
+      `/backtests/${encodeURIComponent(runId)}/metrics/rolling`,
+      {
+        params: {
+          source: params.source ?? 'auto',
+          window_days: params.windowDays ?? 63,
+          max_points: params.maxPoints ?? 5000
+        },
+        signal
+      }
     );
   },
 
@@ -340,81 +289,19 @@ export const backtestApi = {
     params: GetTradesParams = {},
     signal?: AbortSignal
   ): Promise<TradeListResponse> {
-    const query = buildQuery({
-      source: params.source ?? 'auto',
-      limit: params.limit ?? 2000,
-      offset: params.offset ?? 0
+    return apiRequest<TradeListResponse>(`/backtests/${encodeURIComponent(runId)}/trades`, {
+      params: {
+        source: params.source ?? 'auto',
+        limit: params.limit ?? 2000,
+        offset: params.offset ?? 0
+      },
+      signal
     });
-    return requestJson<TradeListResponse>(
-      `/backtests/${encodeURIComponent(runId)}/trades${query}`,
-      { signal }
-    );
-  },
-
-  async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
-    return requestJson<SystemHealth>('/system/health', { signal });
-  },
-
-  async getLineage(signal?: AbortSignal): Promise<unknown> {
-    return requestJson<unknown>('/system/lineage', { signal });
-  },
-
-  async getMarketData(
-    ticker: string,
-    layer: 'silver' | 'gold' = 'silver',
-    signal?: AbortSignal
-  ): Promise<MarketData[]> {
-    const query = buildQuery({ ticker });
-    return requestJson<MarketData[]>(`/data/${layer}/market${query}`, { signal });
-  },
-
-  async getStockScreener(
-    params: {
-      q?: string;
-      limit?: number;
-      offset?: number;
-      asOf?: string;
-      sort?: string;
-      direction?: 'asc' | 'desc';
-    } = {},
-    signal?: AbortSignal
-  ): Promise<StockScreenerResponse> {
-    const query = buildQuery({
-      q: params.q,
-      limit: params.limit ?? 250,
-      offset: params.offset ?? 0,
-      as_of: params.asOf,
-      sort: params.sort ?? 'volume',
-      direction: params.direction ?? 'desc'
-    });
-    return requestJson<StockScreenerResponse>(`/data/screener${query}`, { signal });
-  },
-
-  async getDomainData(
-    ticker: string,
-    domain: Exclude<DataDomain, 'market'>,
-    layer: 'silver' | 'gold' = 'silver',
-    signal?: AbortSignal
-  ): Promise<GenericDataRow[]> {
-    const query = buildQuery({ ticker });
-    const encoded = encodeURIComponent(domain);
-    return requestJson<GenericDataRow[]>(`/data/${layer}/${encoded}${query}`, { signal });
-  },
-
-  async getFinanceData(
-    ticker: string,
-    subDomain: string,
-    layer: 'silver' | 'gold' = 'silver',
-    signal?: AbortSignal
-  ): Promise<FinanceData[]> {
-    const encodedSub = encodeURIComponent(subDomain);
-    const query = buildQuery({ ticker });
-    return requestJson<FinanceData[]>(`/data/${layer}/finance/${encodedSub}${query}`, { signal });
   },
 
   async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {
     const encoded = encodeURIComponent(jobName);
-    return requestJson<JobTriggerResponse>(`/system/jobs/${encoded}/run`, {
+    return apiRequest<JobTriggerResponse>(`/system/jobs/${encoded}/run`, {
       method: 'POST',
       signal
     });
@@ -422,7 +309,7 @@ export const backtestApi = {
 
   async suspendJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
     const encoded = encodeURIComponent(jobName);
-    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/suspend`, {
+    return apiRequest<JobControlResponse>(`/system/jobs/${encoded}/suspend`, {
       method: 'POST',
       signal
     });
@@ -430,7 +317,7 @@ export const backtestApi = {
 
   async stopJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
     const encoded = encodeURIComponent(jobName);
-    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/stop`, {
+    return apiRequest<JobControlResponse>(`/system/jobs/${encoded}/stop`, {
       method: 'POST',
       signal
     });
@@ -438,7 +325,7 @@ export const backtestApi = {
 
   async resumeJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
     const encoded = encodeURIComponent(jobName);
-    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/resume`, {
+    return apiRequest<JobControlResponse>(`/system/jobs/${encoded}/resume`, {
       method: 'POST',
       signal
     });
@@ -450,7 +337,9 @@ export const backtestApi = {
     signal?: AbortSignal
   ): Promise<JobLogsResponse> {
     const encoded = encodeURIComponent(jobName);
-    const query = buildQuery({ runs: params.runs ?? 1 });
-    return requestJson<JobLogsResponse>(`/system/jobs/${encoded}/logs${query}`, { signal });
+    return apiRequest<JobLogsResponse>(`/system/jobs/${encoded}/logs`, {
+      params: { runs: params.runs ?? 1 },
+      signal
+    });
   }
 };

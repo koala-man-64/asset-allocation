@@ -8,11 +8,10 @@ from core.runtime_config import RuntimeConfigItem
 from tests.api._client import get_test_client
 
 
-def _item(*, key: str, value: str, enabled: bool = True, scope: str = "global") -> RuntimeConfigItem:
+def _item(*, key: str, value: str, scope: str = "global") -> RuntimeConfigItem:
     return RuntimeConfigItem(
         scope=scope,
         key=key,
-        enabled=enabled,
         value=value,
         description="desc",
         updated_at=datetime.now(timezone.utc),
@@ -22,7 +21,6 @@ def _item(*, key: str, value: str, enabled: bool = True, scope: str = "global") 
 
 @pytest.mark.asyncio
 async def test_runtime_config_catalog(monkeypatch):
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     app = create_app()
     async with get_test_client(app) as client:
         resp = await client.get("/api/system/runtime-config/catalog")
@@ -31,12 +29,14 @@ async def test_runtime_config_catalog(monkeypatch):
     assert "items" in payload
     keys = [item.get("key") for item in payload["items"]]
     assert "DEBUG_SYMBOLS" in keys
-    assert "SILVER_LATEST_ONLY" in keys
+    assert "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS" in keys
+    assert "SILVER_LATEST_ONLY" not in keys
+    assert "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED" not in keys
+    assert "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID" not in keys
 
 
 @pytest.mark.asyncio
 async def test_get_runtime_config_requires_postgres(monkeypatch):
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
     app = create_app()
     async with get_test_client(app) as client:
@@ -46,10 +46,9 @@ async def test_get_runtime_config_requires_postgres(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_runtime_config_returns_items(monkeypatch):
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
 
-    rows = [_item(key="SILVER_LATEST_ONLY", value="false")]
+    rows = [_item(key="DEBUG_SYMBOLS", value="AAPL,MSFT")]
     with patch("api.endpoints.system.list_runtime_config", return_value=rows):
         app = create_app()
         async with get_test_client(app) as client:
@@ -58,45 +57,41 @@ async def test_get_runtime_config_returns_items(monkeypatch):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["scope"] == "global"
-    assert payload["items"][0]["key"] == "SILVER_LATEST_ONLY"
-    assert payload["items"][0]["value"] == "false"
+    assert payload["items"][0]["key"] == "DEBUG_SYMBOLS"
+    assert payload["items"][0]["value"] == "AAPL,MSFT"
 
 
 @pytest.mark.asyncio
 async def test_set_runtime_config_rejects_forbidden_key(monkeypatch):
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
     app = create_app()
     async with get_test_client(app) as client:
         resp = await client.post(
             "/api/system/runtime-config",
-            json={"key": "POSTGRES_DSN", "enabled": True, "value": "nope"},
+            json={"key": "POSTGRES_DSN", "value": "nope"},
         )
     assert resp.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_set_runtime_config_rejects_invalid_value(monkeypatch):
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
     app = create_app()
     async with get_test_client(app) as client:
         resp = await client.post(
             "/api/system/runtime-config",
-            json={"key": "SYSTEM_HEALTH_TTL_SECONDS", "enabled": True, "value": ""},
+            json={"key": "SYSTEM_HEALTH_TTL_SECONDS", "value": ""},
         )
     assert resp.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_set_runtime_config_normalizes_value_before_upsert(monkeypatch):
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
 
     def _fake_upsert(**kwargs):
-        # Ensure value has been normalized to an integer string.
         assert kwargs["value"] == "3"
-        return _item(key=kwargs["key"], value=kwargs["value"], enabled=kwargs["enabled"], scope=kwargs["scope"])
+        return _item(key=kwargs["key"], value=kwargs["value"], scope=kwargs["scope"])
 
     with patch("api.endpoints.system.upsert_runtime_config", side_effect=_fake_upsert):
         app = create_app()
@@ -106,7 +101,6 @@ async def test_set_runtime_config_normalizes_value_before_upsert(monkeypatch):
                 json={
                     "key": "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS",
                     "scope": "global",
-                    "enabled": True,
                     "value": " 3 ",
                 },
             )
@@ -119,13 +113,12 @@ async def test_set_runtime_config_normalizes_value_before_upsert(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_set_runtime_config_normalizes_debug_symbols_before_upsert(monkeypatch):
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
 
     def _fake_upsert(**kwargs):
         assert kwargs["key"] == "DEBUG_SYMBOLS"
         assert kwargs["value"] == "AAPL,MSFT,NVDA"
-        return _item(key=kwargs["key"], value=kwargs["value"], enabled=kwargs["enabled"], scope=kwargs["scope"])
+        return _item(key=kwargs["key"], value=kwargs["value"], scope=kwargs["scope"])
 
     with patch("api.endpoints.system.upsert_runtime_config", side_effect=_fake_upsert):
         app = create_app()
@@ -135,7 +128,6 @@ async def test_set_runtime_config_normalizes_debug_symbols_before_upsert(monkeyp
                 json={
                     "key": "DEBUG_SYMBOLS",
                     "scope": "global",
-                    "enabled": True,
                     "value": '["aapl", "msft", "nvda"]',
                 },
             )

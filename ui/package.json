@@ -85,7 +85,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "4.2.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -93,14 +93,14 @@
     "@types/node": "25.3.2",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@typescript-eslint/eslint-plugin": "^8.56.1",
-    "@typescript-eslint/parser": "^8.56.1",
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
     "@vitejs/plugin-react": "5.1.4",
     "@vitest/coverage-v8": "4.0.18",
-    "eslint": "^10.0.2",
+    "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.0.1",
-    "eslint-plugin-react": "^7.37.4",
-    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^17.3.0",
     "jsdom": "^28.1.0",
     "prettier": "^3.4.2",
@@ -112,10 +112,12 @@
   "pnpm": {
     "overrides": {
       "vite": "7.3.1",
+      "flatted": "3.4.2",
       "minimatch@^3.0.0": "3.1.4",
       "minimatch@^9.0.0": "9.0.7",
       "rollup@^4.0.0": "4.59.0",
-      "tar@^7.0.0": "7.5.8"
+      "tar@^7.0.0": "7.5.8",
+      "undici": "7.24.0"
     },
     "onlyBuiltDependencies": [
       "@tailwindcss/oxide",

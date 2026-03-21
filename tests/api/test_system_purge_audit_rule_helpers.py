@@ -18,7 +18,6 @@ def _build_rule_from_kwargs(**kwargs) -> PurgeRule:
         operator=str(kwargs["operator"]),
         threshold=float(kwargs["threshold"]),
         run_interval_minutes=int(kwargs["run_interval_minutes"]),
-        enabled=bool(kwargs["enabled"]),
         next_run_at=None,
         last_run_at=None,
         last_status=None,
@@ -32,7 +31,7 @@ def _build_rule_from_kwargs(**kwargs) -> PurgeRule:
     )
 
 
-def test_persist_purge_symbols_audit_rule_creates_disabled_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_persist_purge_symbols_audit_rule_creates_rule(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_create_purge_rule(**kwargs):
@@ -62,7 +61,7 @@ def test_persist_purge_symbols_audit_rule_creates_disabled_rule(monkeypatch: pyt
 
     assert persisted.id == 77
     assert captured["dsn"] == "postgresql://test"
-    assert captured["enabled"] is False
+    assert "enabled" not in captured
     assert captured["run_interval_minutes"] == system._PURGE_RULE_AUDIT_INTERVAL_MINUTES
     assert captured["layer"] == "silver"
     assert captured["domain"] == "market"

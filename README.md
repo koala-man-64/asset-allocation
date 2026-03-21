@@ -7,14 +7,13 @@ AssetAllocation is an Azure-oriented market data and operations platform. The re
 - Data pipelines in `tasks/` materialize Bronze, Silver, and Gold datasets for the market, finance, earnings, and price-target domains.
 - The FastAPI app in `api/service/app.py` serves `/api/data`, `/api/system`, `/api/strategies`, provider gateway endpoints, Swagger/OpenAPI, `/config.js`, and the realtime websocket.
 - The React UI in `ui/` is the operator control plane for system health, data exploration, data quality, runtime config, debug symbols, symbol purge, Postgres exploration, and strategy configuration.
-- Strategy definitions are persisted in Postgres; the current `Live Trading` page is a monitoring placeholder and explicitly says live trading is not enabled in this deployment.
 - Azure deployment uses one Container App with API and UI sidecars plus scheduled Container App Jobs under `deploy/job_*.yaml`.
 
 ## Quickstart
 
 ### Prerequisites
 
-- Python 3.10 or newer
+- Python 3.14
 - Node.js and `pnpm` (the UI workspace pins `pnpm@10.28.1`)
 - Azure Storage credentials and provider API keys if you want to run ETL jobs against real services
 - `POSTGRES_DSN` if you want runtime config, debug-symbol, Postgres explorer, or strategy features
@@ -29,6 +28,8 @@ python3 -m pip install -e .
 python3 -m pip install -r requirements-dev.txt
 cp .env.template .env
 ```
+
+The backend runtime, CI, and container images are standardized on Python 3.14.
 
 ### Run the API Locally
 
@@ -81,17 +82,33 @@ python3 scripts/dependency_governance.py check --report artifacts/dependency_gov
 - `core.runtime_config` Postgres rows let operators change allowlisted runtime overrides, including debug-symbol filters, without rebuilding the containers.
 - The API applies runtime config at startup; ETL jobs apply runtime config and debug symbols during job startup.
 - System health surfaces live under `/api/system/health`, `/healthz`, `/readyz`, and `/api/ws/updates`.
-- `/config.js` publishes the UI auth mode and API base URL that the frontend reads at runtime.
+- `/config.js` publishes concrete auth capabilities and API base URLs that the frontend reads at runtime.
+
+## Batch Job Contract
+
+- Stateful medallion jobs should acquire a single-instance `JobLock`, wake API dependencies before execution, run inside `run_logged_job`, publish bucket and domain artifacts after writes, complete reconciliation before final watermark persistence, and only then cross the downstream trigger boundary.
+- Metadata snapshot freshness depends on the shared domain artifact publisher. Jobs that mutate operator-facing metadata should not write raw domain JSON directly.
 
 ## Current API Scope
 
-The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies`, `providers/alpha-vantage`, and `providers/massive`. Historical backtest naming still appears in compatibility surfaces such as `backtestApiBaseUrl` in `/config.js`, so treat `/api/docs` and `/api/openapi.json` as the authoritative route map.
+The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies`, `providers/alpha-vantage`, and `providers/massive`. Treat `/api/docs` and `/api/openapi.json` as the authoritative route map.
 
 ## Deployment
 
+- `scripts/provision_azure_interactive.ps1` is the recommended interactive entrypoint for Azure setup. It now walks preflight validation, shared resource provisioning, Entra OIDC application provisioning, optional Postgres provisioning, optional GitHub env sync, optional cost guardrails, and post-provision validation in one session.
 - `.github/workflows/deploy.yml` builds and deploys the repo to Azure.
-- `deploy/app_api.yaml` is the active unified API and UI Container App manifest.
+- `scripts/provision_azure.ps1` and `scripts/provision_azure_postgres.ps1` remain the underlying targeted provisioners used by the interactive wrapper.
+- `scripts/provision_entra_oidc.ps1` is the focused Entra/Microsoft Graph provisioner that creates or reconciles the API and SPA app registrations, service principals, delegated permissions, and app-role assignments, then writes the resulting OIDC values back into `.env.web` or `.env`.
+- `deploy/app_api_public.yaml` is the public-ingress unified API and UI Container App manifest used by the default deploy workflow.
+- `deploy/app_api.yaml` is the internal-ingress variant for private-only deployments.
 - Scheduled Azure Container App Jobs under `deploy/job_*.yaml` run Bronze, Silver, and Gold workloads for the supported data domains.
+
+### Authentication
+
+- Production deploys are OIDC-only: configure `API_OIDC_*`, `UI_OIDC_*`, and `ASSET_ALLOCATION_API_SCOPE`.
+- UI-managed OIDC requires `UI_OIDC_AUTHORITY`, `UI_OIDC_CLIENT_ID`, and an absolute `UI_OIDC_REDIRECT_URI` alongside API OIDC.
+- Production auth should prefer role-based enforcement via `API_OIDC_REQUIRED_ROLES`; leave `API_OIDC_REQUIRED_SCOPES` empty unless every caller is delegated-user only.
+- Bronze jobs authenticate to the API with the shared user-assigned managed identity via `ASSET_ALLOCATION_API_SCOPE`.
 
 ## Evidence
 
@@ -104,8 +121,8 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 - `core/strategy_repository.py`
 - `tasks/market_data/gold_market_data.py`
 - `ui/src/app/App.tsx`
-- `ui/src/app/components/pages/LiveTradingPage.tsx`
 - `.github/workflows/deploy.yml`
 - `deploy/app_api.yaml`
+- `deploy/app_api_public.yaml`
 - `tests/api/test_swagger_docs.py`
 - `tests/api/test_config_js_contract.py`

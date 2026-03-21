@@ -1,7 +1,8 @@
 param(
   [string]$ResourceGroup = "AssetAllocationRG",
   [string]$ApiAppName = "",
-  [string]$UiAppName = ""
+  [string]$UiAppName = "",
+  [string]$AcrName = ""
 )
 
 $jobs = @(
@@ -16,7 +17,9 @@ $jobs = @(
   "gold-market-job",
   "gold-finance-job",
   "gold-price-target-job",
-  "gold-earnings-job"
+  "gold-earnings-job",
+  "gold-regime-job",
+  "backtests-job"
 )
 
 $resolvedApiAppName = $ApiAppName
@@ -30,6 +33,17 @@ if (-not $resolvedApiAppName) {
 $resolvedUiAppName = $UiAppName
 if (-not $resolvedUiAppName) {
   $resolvedUiAppName = $env:UI_APP_NAME
+}
+
+$resolvedAcrName = $AcrName
+if (-not $resolvedAcrName) {
+  $resolvedAcrName = $env:ACR_NAME
+}
+if (-not $resolvedAcrName) {
+  $resolvedAcrName = $env:AZURE_ACR_NAME
+}
+if (-not $resolvedAcrName) {
+  $resolvedAcrName = "assetallocationacr"
 }
 
 $containerApps = @($resolvedApiAppName)
@@ -59,6 +73,25 @@ foreach ($app in $containerApps) {
     Write-Host "Successfully deleted $app" -ForegroundColor Green
   } else {
     Write-Host "Failed to delete $app (it may not exist)" -ForegroundColor Yellow
+  }
+}
+
+Write-Host "Deleting container registry repositories in ACR: $resolvedAcrName"
+
+$repositories = az acr repository list --name $resolvedAcrName --output tsv --only-show-errors 2>$null
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Failed to enumerate repositories in ACR '$resolvedAcrName' (it may not exist or you may not have access)" -ForegroundColor Yellow
+} elseif (-not $repositories) {
+  Write-Host "No repositories found in ACR '$resolvedAcrName'" -ForegroundColor Yellow
+} else {
+  foreach ($repository in ($repositories -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+    Write-Host "Deleting repository $repository..."
+    az acr repository delete --name $resolvedAcrName --repository $repository --yes --only-show-errors
+    if ($LASTEXITCODE -eq 0) {
+      Write-Host "Successfully deleted repository $repository" -ForegroundColor Green
+    } else {
+      Write-Host "Failed to delete repository $repository" -ForegroundColor Yellow
+    }
   }
 }
 

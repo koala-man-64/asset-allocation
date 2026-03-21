@@ -69,7 +69,7 @@ function Get-EnvLines {
   if ([string]::IsNullOrWhiteSpace($EnvPath) -or (-not (Test-Path $EnvPath))) {
     return @()
   }
-  return Get-Content $EnvPath
+  return ,@(Get-Content -Path $EnvPath)
 }
 
 function Get-EnvValue {
@@ -370,6 +370,16 @@ function Assert-PgIdentifier {
   }
 }
 
+function ConvertTo-SqlLiteral {
+  param([AllowNull()][string]$Value)
+
+  if ($null -eq $Value) {
+    return "NULL"
+  }
+
+  return "'" + $Value.Replace("'", "''") + "'"
+}
+
 function Invoke-Psql {
   param(
     [Parameter(Mandatory = $true)][string[]]$Args
@@ -400,11 +410,11 @@ BEGIN
     CREATE INDEX IF NOT EXISTS idx_core_strategies_type ON core.strategies(type);
     CREATE INDEX IF NOT EXISTS idx_core_strategies_updated_at ON core.strategies(updated_at DESC);
   ELSIF to_regclass('platinum.strategies') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS platinum.idx_strategies_type ON platinum.strategies(type);
-    CREATE INDEX IF NOT EXISTS platinum.idx_strategies_updated_at ON platinum.strategies(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_platinum_strategies_type ON platinum.strategies(type);
+    CREATE INDEX IF NOT EXISTS idx_platinum_strategies_updated_at ON platinum.strategies(updated_at DESC);
   ELSIF to_regclass('public.strategies') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS public.idx_strategies_type ON public.strategies(type);
-    CREATE INDEX IF NOT EXISTS public.idx_strategies_updated_at ON public.strategies(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_public_strategies_type ON public.strategies(type);
+    CREATE INDEX IF NOT EXISTS idx_public_strategies_updated_at ON public.strategies(updated_at DESC);
   END IF;
 
   IF to_regclass('core.runs') IS NOT NULL THEN
@@ -482,6 +492,20 @@ function Resolve-PostgresTier {
 }
 
 Assert-CommandExists -Name "az"
+
+if (($ApplyMigrations -or $CreateAppUsers) -and (-not $UseDockerPsql)) {
+  $hasLocalPsql = [bool](Get-Command "psql" -ErrorAction SilentlyContinue)
+  if (-not $hasLocalPsql) {
+    $hasDocker = [bool](Get-Command "docker" -ErrorAction SilentlyContinue)
+    if ($hasDocker) {
+      Write-Host "Local psql is not installed; falling back to Dockerized psql." -ForegroundColor Yellow
+      $UseDockerPsql = $true
+    }
+    else {
+      throw "Missing required command 'psql'. Install psql or Docker and retry."
+    }
+  }
+}
 
 Assert-PgIdentifier -Value $DatabaseName -Label "DatabaseName"
 Assert-PgIdentifier -Value $BacktestServiceUser -Label "BacktestServiceUser"
@@ -699,19 +723,23 @@ if ($CreateAppUsers) {
 
   Write-Host "Creating least-privileged application roles..."
 
-  $sql = @"
-DO \$\$
+  $quotedBacktestServiceUser = ConvertTo-SqlLiteral -Value $BacktestServiceUser
+  $quotedBacktestServicePassword = ConvertTo-SqlLiteral -Value $BacktestServicePassword
+
+  $sqlTemplate = @'
+DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$BacktestServiceUser') THEN
-    CREATE ROLE $BacktestServiceUser LOGIN PASSWORD '$BacktestServicePassword';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {0}) THEN
+    CREATE ROLE {1} LOGIN PASSWORD {2};
   END IF;
 END
-\$\$;
+$$;
 
-ALTER ROLE $BacktestServiceUser WITH PASSWORD '$BacktestServicePassword';
+ALTER ROLE {1} WITH PASSWORD {2};
 
-GRANT CONNECT ON DATABASE $DatabaseName TO $BacktestServiceUser;
-"@
+GRANT CONNECT ON DATABASE {3} TO {1};
+'@
+  $sql = $sqlTemplate -f $quotedBacktestServiceUser, $BacktestServiceUser, $quotedBacktestServicePassword, $DatabaseName
 
   Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", $sql)
 }

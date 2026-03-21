@@ -51,7 +51,6 @@ def test_system_health_degraded_on_monitor_metrics_warning(monkeypatch: pytest.M
     # Prevent jobs from polluting the test (since FakeAzureArmClient doesn't mock them)
     monkeypatch.delenv("SYSTEM_HEALTH_ARM_JOBS", raising=False)
 
-    monkeypatch.setenv("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS", "CpuUsage")
     monkeypatch.setenv(
         "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON", '{"CpuUsage":{"warn_above":80,"error_above":95}}'
@@ -96,7 +95,6 @@ def test_system_health_critical_on_log_analytics_error(monkeypatch: pytest.Monke
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", "myapp")
 
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
     monkeypatch.setenv(
         "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON",

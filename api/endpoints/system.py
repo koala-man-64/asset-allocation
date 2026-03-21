@@ -28,6 +28,7 @@ from api.service.dependencies import (
 )
 from api.service.realtime import manager as realtime_manager
 from monitoring.arm_client import ArmConfig, AzureArmClient
+from monitoring.domain_metadata import collect_domain_metadata
 from monitoring.lineage import get_lineage_snapshot
 from monitoring.log_analytics import AzureLogAnalyticsClient, extract_first_table_rows
 from monitoring.system_health import collect_system_health_snapshot
@@ -36,7 +37,11 @@ from core import config as cfg
 from core import core as mdc
 from core import delta_core
 from core.blob_storage import BlobStorageClient
-from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
+from core.debug_symbols import (
+    delete_debug_symbols_state,
+    read_debug_symbols_state,
+    replace_debug_symbols_state,
+)
 from core.core import get_symbol_sync_state
 from core.delta_core import load_delta
 from core.delta_core import get_delta_schema_columns
@@ -73,6 +78,16 @@ from core.purge_rules import (
 logger = logging.getLogger("asset-allocation.api.system")
 
 router = APIRouter()
+
+
+def _reject_removed_query_params(request: Request, *names: str) -> None:
+    removed = [name for name in names if name in request.query_params]
+    if removed:
+        joined = ", ".join(sorted(removed))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported query parameter(s): {joined}. Use the canonical request contract instead.",
+        )
 
 
 def _sanitize_system_health_json_value(value: Any) -> tuple[Any, int]:
@@ -168,6 +183,114 @@ def _emit_realtime(topic: str, event_type: str, payload: Optional[Dict[str, Any]
         logger.exception("Realtime emit failed: topic=%s type=%s", topic, event_type)
 
 
+def _normalize_domain_metadata_targets(targets: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
+    normalized: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for target in targets:
+        layer = _normalize_layer(str(target.get("layer") or ""))
+        domain = _normalize_domain(str(target.get("domain") or ""))
+        if not layer or not domain:
+            continue
+        key = f"{layer}/{domain}"
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({"layer": layer, "domain": domain})
+    return normalized
+
+
+def _extract_domain_metadata_targets_from_entries(entries: Dict[str, Any]) -> List[Dict[str, str]]:
+    targets: List[Dict[str, str]] = []
+    for key, value in (entries or {}).items():
+        if isinstance(value, dict):
+            layer = value.get("layer")
+            domain = value.get("domain")
+        else:
+            layer = None
+            domain = None
+        if layer and domain:
+            targets.append({"layer": layer, "domain": domain})
+            continue
+        if isinstance(key, str) and "/" in key:
+            layer_key, domain_key = key.split("/", 1)
+            targets.append({"layer": layer_key, "domain": domain_key})
+    return _normalize_domain_metadata_targets(targets)
+
+
+def _emit_domain_metadata_snapshot_changed(
+    reason: Literal["refresh", "ui-cache-write", "purge"],
+    targets: Sequence[Dict[str, Any]],
+) -> None:
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "DOMAIN_METADATA_SNAPSHOT_CHANGED",
+        {
+            "reason": reason,
+            "targets": _normalize_domain_metadata_targets(targets),
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _resolve_system_health_payload(
+    request: Request,
+    *,
+    refresh: bool,
+) -> tuple[Dict[str, Any], bool, bool]:
+    settings = get_settings(request)
+
+    include_ids = False
+    if settings.auth_required:
+        raw_env = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS")
+        raw = raw_env.strip().lower() if raw_env else ""
+        include_ids = raw in {"1", "true", "t", "yes", "y", "on"}
+
+    cache: TtlCache[Dict[str, Any]] = get_system_health_cache(request)
+
+    def _refresh() -> Dict[str, Any]:
+        return collect_system_health_snapshot(include_resource_ids=include_ids)
+
+    try:
+        result = cache.get(_refresh, force_refresh=bool(refresh))
+    except Exception as exc:
+        logger.exception("System health cache refresh failed.")
+        raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
+
+    payload: Dict[str, Any] = dict(result.value or {})
+    request_id = request.headers.get("x-request-id", "")
+    logger.info(
+        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s recent_jobs=%s",
+        result.cache_hit,
+        bool(result.refresh_error),
+        len(payload.get("dataLayers") or []),
+        len(payload.get("alerts") or []),
+        len(payload.get("resources") or []),
+        len(payload.get("recentJobs") or []),
+    )
+    recent_runs_preview: list[str] = []
+    for run in (payload.get("recentJobs") or [])[:10]:
+        if not isinstance(run, dict):
+            continue
+        job_name = str(run.get("jobName") or "").strip() or "?"
+        status = str(run.get("status") or "").strip() or "unknown"
+        start_time = str(run.get("startTime") or "").strip() or "n/a"
+        recent_runs_preview.append(f"{job_name}:{status}@{start_time}")
+    if recent_runs_preview:
+        logger.info("System health recentJobs preview: %s", " | ".join(recent_runs_preview))
+    elif payload.get("recentJobs") == []:
+        logger.warning("System health recentJobs is empty.")
+
+    payload, sanitization_replacements = _sanitize_system_health_json_value(payload)
+    if sanitization_replacements:
+        logger.warning(
+            "System health payload sanitized before JSON response: replacements=%s request_id=%s",
+            sanitization_replacements,
+            request_id,
+        )
+
+    return payload, bool(result.cache_hit), bool(result.refresh_error)
+
+
 def _extract_arm_error_message(response: httpx.Response) -> str:
     """
     Best-effort extraction of a human-friendly error message from ARM responses.
@@ -234,7 +357,7 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
 
 def _get_actor(request: Request) -> Optional[str]:
     settings = get_settings(request)
-    if settings.auth_mode == "none":
+    if settings.anonymous_local_auth_enabled:
         return None
     auth = get_auth_manager(request)
     ctx = auth.authenticate_headers(dict(request.headers))
@@ -412,64 +535,33 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         request_id,
     )
     validate_auth(request)
-    settings = get_settings(request)
-
-    include_ids = False
-    if settings.auth_mode != "none":
-        raw_env = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS")
-        raw = raw_env.strip().lower() if raw_env else ""
-        include_ids = raw in {"1", "true", "t", "yes", "y", "on"}
-
-    cache: TtlCache[Dict[str, Any]] = get_system_health_cache(request)
-
-    def _refresh() -> Dict[str, Any]:
-        return collect_system_health_snapshot(include_resource_ids=include_ids)
-
-    try:
-        result = cache.get(_refresh, force_refresh=bool(refresh))
-    except Exception as exc:
-        logger.exception("System health cache refresh failed.")
-        raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
-
-    payload: Dict[str, Any] = dict(result.value or {})
-    logger.info(
-        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s recent_jobs=%s",
-        result.cache_hit,
-        bool(result.refresh_error),
-        len(payload.get("dataLayers") or []),
-        len(payload.get("alerts") or []),
-        len(payload.get("resources") or []),
-        len(payload.get("recentJobs") or []),
-    )
-    recent_runs_preview: list[str] = []
-    for run in (payload.get("recentJobs") or [])[:10]:
-        if not isinstance(run, dict):
-            continue
-        job_name = str(run.get("jobName") or "").strip() or "?"
-        status = str(run.get("status") or "").strip() or "unknown"
-        start_time = str(run.get("startTime") or "").strip() or "n/a"
-        recent_runs_preview.append(f"{job_name}:{status}@{start_time}")
-    if recent_runs_preview:
-        logger.info("System health recentJobs preview: %s", " | ".join(recent_runs_preview))
-    elif payload.get("recentJobs") == []:
-        logger.warning("System health recentJobs is empty.")
-
-    payload, sanitization_replacements = _sanitize_system_health_json_value(payload)
-    if sanitization_replacements:
-        logger.warning(
-            "System health payload sanitized before JSON response: replacements=%s request_id=%s",
-            sanitization_replacements,
-            request_id,
-        )
+    payload, cache_hit, refresh_error = _resolve_system_health_payload(request, refresh=bool(refresh))
 
     headers: Dict[str, str] = {
         "Cache-Control": "no-store",
-        "X-System-Health-Cache": "hit" if result.cache_hit else "miss",
+        "X-System-Health-Cache": "hit" if cache_hit else "miss",
     }
-    if result.refresh_error:
+    if refresh_error:
         headers["X-System-Health-Cache-Degraded"] = "1"
     return JSONResponse(payload, headers=headers)
 
+
+def build_system_status_view(request: Request, refresh: bool = False) -> Dict[str, Any]:
+    system_health_payload, system_health_cache_hit, _refresh_error = _resolve_system_health_payload(
+        request,
+        refresh=bool(refresh),
+    )
+    metadata_snapshot_payload = _build_domain_metadata_snapshot_payload(refresh=bool(refresh))
+    return {
+        "version": 1,
+        "generatedAt": _utc_timestamp(),
+        "systemHealth": system_health_payload,
+        "metadataSnapshot": metadata_snapshot_payload,
+        "sources": {
+            "systemHealth": "cache" if system_health_cache_hit else "live-refresh",
+            "metadataSnapshot": "persisted-snapshot",
+        },
+    }
 
 
 class SymbolSyncStateResponse(BaseModel):
@@ -553,6 +645,35 @@ class DomainMetadataSnapshotResponse(BaseModel):
     updatedAt: Optional[str] = None
     entries: Dict[str, DomainMetadataResponse] = Field(default_factory=dict)
     warnings: List[str] = Field(default_factory=list)
+
+
+class SystemStatusViewSources(BaseModel):
+    systemHealth: Literal["cache", "live-refresh"]
+    metadataSnapshot: Literal["persisted-snapshot"] = "persisted-snapshot"
+
+
+class SystemStatusViewResponse(BaseModel):
+    version: int = 1
+    generatedAt: str
+    systemHealth: Dict[str, Any] = Field(default_factory=dict)
+    metadataSnapshot: DomainMetadataSnapshotResponse = Field(default_factory=DomainMetadataSnapshotResponse)
+    sources: SystemStatusViewSources
+
+
+@router.get("/status-view", response_model=SystemStatusViewResponse)
+def system_status_view(request: Request, refresh: bool = Query(False)) -> JSONResponse:
+    validate_auth(request)
+    payload = build_system_status_view(request, refresh=bool(refresh))
+    return JSONResponse(
+        payload,
+        headers={
+            "Cache-Control": "no-store",
+            "X-System-Health-Cache": "hit"
+            if payload.get("sources", {}).get("systemHealth") == "cache"
+            else "miss",
+            "X-Domain-Metadata-Source": "persisted-snapshot",
+        },
+    )
 
 
 _DOMAIN_METADATA_CACHE_FILE_DEFAULT = "metadata/domain-metadata.json"
@@ -734,6 +855,64 @@ def _write_cached_domain_metadata_snapshot(layer: str, domain: str, metadata: Di
     return now
 
 
+def _refresh_domain_metadata_snapshot(layer: str, domain: str) -> Dict[str, Any]:
+    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
+    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
+
+    try:
+        metadata = collect_domain_metadata(
+            layer=normalized_layer,
+            domain=normalized_domain,
+            force_refresh=True,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Domain metadata live refresh failed: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Failed to refresh domain metadata live for "
+                f"{normalized_layer}/{normalized_domain}: {exc}"
+            ),
+        ) from exc
+
+    try:
+        persisted = domain_metadata_snapshots.write_domain_metadata_snapshot_documents(
+            layer=normalized_layer,
+            domain=normalized_domain,
+            metadata=metadata,
+            snapshot_path=_domain_metadata_cache_path(),
+            ui_snapshot_path=_domain_metadata_ui_cache_path(),
+        )
+    except Exception as exc:
+        logger.exception(
+            "Domain metadata snapshot persist failed after live refresh: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Failed to persist refreshed domain metadata for "
+                f"{normalized_layer}/{normalized_domain}: {exc}"
+            ),
+        ) from exc
+
+    _invalidate_domain_metadata_document_cache()
+    _emit_domain_metadata_snapshot_changed(
+        "refresh",
+        [{"layer": normalized_layer, "domain": normalized_domain}],
+    )
+    response_payload = dict(persisted)
+    response_payload["cacheSource"] = "live-refresh"
+    return response_payload
+
+
 def _extract_cached_domain_metadata_snapshots(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     entries = payload.get("entries")
     if not isinstance(entries, dict):
@@ -804,6 +983,54 @@ def _parse_domain_metadata_filter(
     return normalized
 
 
+def _build_domain_metadata_snapshot_payload(
+    *,
+    layers: Optional[str] = None,
+    domains: Optional[str] = None,
+    refresh: bool = False,
+) -> Dict[str, Any]:
+    layer_filter = _parse_domain_metadata_filter(
+        layers,
+        param_name="layers",
+        normalizer=lambda value: _normalize_layer(value),
+        allowed_values=set(_LAYER_CONTAINER_ENV.keys()),
+    )
+    domain_filter = _parse_domain_metadata_filter(
+        domains,
+        param_name="domains",
+        normalizer=lambda value: _normalize_domain(value),
+    )
+
+    try:
+        snapshot_doc = _load_domain_metadata_document(force_refresh=bool(refresh))
+    except Exception as exc:
+        logger.warning("Domain metadata snapshot load failed: %s", exc)
+        snapshot_doc = _default_domain_metadata_document()
+        _invalidate_domain_metadata_document_cache()
+
+    all_entries = _extract_cached_domain_metadata_snapshots(snapshot_doc)
+    filtered_entries: Dict[str, Dict[str, Any]] = {}
+    warnings: List[str] = []
+
+    for key, metadata in all_entries.items():
+        layer = _normalize_layer(str(metadata.get("layer") or ""))
+        domain = _normalize_domain(str(metadata.get("domain") or ""))
+        if not layer or not domain:
+            continue
+        if layer_filter is not None and layer not in layer_filter:
+            continue
+        if domain_filter is not None and domain not in domain_filter:
+            continue
+        filtered_entries[key] = metadata
+
+    return {
+        "version": int(snapshot_doc.get("version") or 1),
+        "updatedAt": snapshot_doc.get("updatedAt"),
+        "entries": filtered_entries,
+        "warnings": warnings,
+    }
+
+
 @router.get("/domain-metadata", response_model=DomainMetadataResponse)
 def domain_metadata(
     request: Request,
@@ -811,15 +1038,11 @@ def domain_metadata(
     domain: str = Query(..., description="Domain key (market|finance|earnings|price-target|platinum)"),
     refresh: bool = Query(
         default=False,
-        description="When true, bypass the in-process snapshot cache and reread persisted metadata.",
-    ),
-    cache_only: bool = Query(
-        default=False,
-        alias="cacheOnly",
-        description="Retained for backward compatibility. Domain metadata is always served from persisted snapshots.",
+        description="When true, collect live metadata, persist refreshed snapshot documents, and return the refreshed payload.",
     ),
 ) -> JSONResponse:
     validate_auth(request)
+    _reject_removed_query_params(request, "cacheOnly")
     normalized_layer = _normalize_layer(layer)
     normalized_domain = _normalize_domain(domain)
     if not normalized_layer:
@@ -827,11 +1050,22 @@ def domain_metadata(
     if not normalized_domain:
         raise HTTPException(status_code=400, detail="domain is required.")
 
+    if refresh:
+        payload = _refresh_domain_metadata_snapshot(normalized_layer, normalized_domain)
+        headers: Dict[str, str] = {
+            "Cache-Control": "no-store",
+            "X-Domain-Metadata-Source": "live-refresh",
+        }
+        cached_at = payload.get("cachedAt")
+        if isinstance(cached_at, str) and cached_at.strip():
+            headers["X-Domain-Metadata-Cached-At"] = cached_at
+        return JSONResponse(payload, headers=headers)
+
     try:
         payload = _read_cached_domain_metadata_snapshot(
             normalized_layer,
             normalized_domain,
-            force_refresh=bool(refresh),
+            force_refresh=False,
         )
     except Exception as exc:
         logger.warning(
@@ -877,61 +1111,22 @@ def domain_metadata_snapshot(
         default=None,
         description="Optional comma-separated domain filter (e.g. market,finance,earnings,price-target).",
     ),
-    cache_only: bool = Query(
-        default=True,
-        alias="cacheOnly",
-        description="Retained for backward compatibility. Batch metadata is always served from persisted snapshots.",
-    ),
     refresh: bool = Query(
         default=False,
         description="When true, bypass the in-process snapshot document cache before reading persisted metadata.",
     ),
 ) -> JSONResponse:
     validate_auth(request)
-    layer_filter = _parse_domain_metadata_filter(
-        layers,
-        param_name="layers",
-        normalizer=lambda value: _normalize_layer(value),
-        allowed_values=set(_LAYER_CONTAINER_ENV.keys()),
+    _reject_removed_query_params(request, "cacheOnly")
+    response_payload = _build_domain_metadata_snapshot_payload(
+        layers=layers,
+        domains=domains,
+        refresh=bool(refresh),
     )
-    domain_filter = _parse_domain_metadata_filter(
-        domains,
-        param_name="domains",
-        normalizer=lambda value: _normalize_domain(value),
-    )
-
-    try:
-        snapshot_doc = _load_domain_metadata_document(force_refresh=bool(refresh))
-    except Exception as exc:
-        logger.warning("Domain metadata snapshot load failed: %s", exc)
-        snapshot_doc = _default_domain_metadata_document()
-        _invalidate_domain_metadata_document_cache()
-
-    all_entries = _extract_cached_domain_metadata_snapshots(snapshot_doc)
-    filtered_entries: Dict[str, Dict[str, Any]] = {}
-    warnings: List[str] = []
-
-    for key, metadata in all_entries.items():
-        layer = _normalize_layer(str(metadata.get("layer") or ""))
-        domain = _normalize_domain(str(metadata.get("domain") or ""))
-        if not layer or not domain:
-            continue
-        if layer_filter is not None and layer not in layer_filter:
-            continue
-        if domain_filter is not None and domain not in domain_filter:
-            continue
-        filtered_entries[key] = metadata
-
-    response_payload: Dict[str, Any] = {
-        "version": int(snapshot_doc.get("version") or 1),
-        "updatedAt": snapshot_doc.get("updatedAt"),
-        "entries": filtered_entries,
-        "warnings": warnings,
-    }
     headers: Dict[str, str] = {
         "Cache-Control": "no-store",
         "X-Domain-Metadata-Source": "snapshot-batch",
-        "X-Domain-Metadata-Entry-Count": str(len(filtered_entries)),
+        "X-Domain-Metadata-Entry-Count": str(len(response_payload.get("entries") or {})),
     }
     updated_at = response_payload.get("updatedAt")
     if isinstance(updated_at, str) and updated_at.strip():
@@ -939,7 +1134,7 @@ def domain_metadata_snapshot(
         headers["Last-Modified"] = updated_at
     etag_basis = {
         "updatedAt": response_payload.get("updatedAt"),
-        "keys": sorted(filtered_entries.keys()),
+        "keys": sorted((response_payload.get("entries") or {}).keys()),
     }
     etag = f'W/"{hashlib.sha256(json.dumps(etag_basis, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:24]}"'
     headers["ETag"] = etag
@@ -1005,6 +1200,11 @@ def put_domain_metadata_snapshot_cache(
     except Exception as exc:
         logger.warning("Failed to persist UI domain metadata cache: %s", exc)
         raise HTTPException(status_code=503, detail=f"Failed to persist UI domain metadata cache: {exc}") from exc
+
+    _emit_domain_metadata_snapshot_changed(
+        "ui-cache-write",
+        _extract_domain_metadata_targets_from_entries(payload_out.get("entries") or {}),
+    )
 
     return JSONResponse(
         payload_out,
@@ -1615,7 +1815,6 @@ class PurgeRuleCreateRequest(BaseModel):
     operator: str = Field(..., min_length=1, max_length=24)
     threshold: float
     run_interval_minutes: int = Field(..., ge=1)
-    enabled: bool = True
 
 
 class PurgeRuleUpdateRequest(BaseModel):
@@ -1626,7 +1825,6 @@ class PurgeRuleUpdateRequest(BaseModel):
     operator: Optional[str] = Field(default=None, min_length=1, max_length=24)
     threshold: Optional[float] = None
     run_interval_minutes: Optional[int] = Field(default=None, ge=1)
-    enabled: Optional[bool] = None
 
 
 class PurgeRulePreviewRequest(BaseModel):
@@ -1655,7 +1853,6 @@ def _serialize_purge_rule(rule: PurgeRule) -> Dict[str, Any]:
         "operator": rule.operator,
         "threshold": rule.threshold,
         "runIntervalMinutes": rule.run_interval_minutes,
-        "enabled": rule.enabled,
         "nextRunAt": _iso(rule.next_run_at),
         "lastRunAt": _iso(rule.last_run_at),
         "lastStatus": rule.last_status,
@@ -2206,7 +2403,6 @@ def _persist_purge_symbols_audit_rule(
             operator=normalized_operator,
             threshold=threshold,
             run_interval_minutes=_PURGE_RULE_AUDIT_INTERVAL_MINUTES,
-            enabled=False,
             actor=actor,
         )
     except ValueError as exc:
@@ -3172,11 +3368,11 @@ def _append_symbol_to_bronze_blacklists(client: BlobStorageClient, symbol: str) 
 def _remove_symbol_from_alpha26_bucket(
     *,
     client: BlobStorageClient,
-    domain_prefix: str,
+    domain: str,
     symbol: str,
 ) -> int:
     bucket = bronze_bucketing.bucket_letter(symbol)
-    bucket_path = bronze_bucketing.bucket_blob_path(domain_prefix, bucket)
+    bucket_path = bronze_bucketing.active_bucket_blob_path_for_domain(domain, bucket)
     raw = mdc.read_raw_bytes(bucket_path, client=client)
     if not raw:
         return 0
@@ -3226,17 +3422,19 @@ def _remove_symbol_from_delta_bucket(
 
 def _remove_symbol_from_bronze_storage(client: BlobStorageClient, symbol: str) -> List[Dict[str, Any]]:
     normalized_symbol = _normalize_purge_symbol(symbol)
-    earnings_prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
     bronze_bucketing.bronze_layout_mode()
     alpha26_tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
-    alpha26_domains = {
-        "market": "market-data",
-        "finance": "finance-data",
-        "earnings": str(earnings_prefix).strip("/"),
-        "price-target": "price-target-data",
-    }
-    for domain, prefix in alpha26_domains.items():
-        bucket_path = bronze_bucketing.bucket_blob_path(prefix, bronze_bucketing.bucket_letter(normalized_symbol))
+    alpha26_domains = (
+        "market",
+        "finance",
+        "earnings",
+        "price-target",
+    )
+    for domain in alpha26_domains:
+        bucket_path = bronze_bucketing.active_bucket_blob_path_for_domain(
+            domain,
+            bronze_bucketing.bucket_letter(normalized_symbol),
+        )
         alpha26_tasks.append(
             (
                 {
@@ -3246,9 +3444,9 @@ def _remove_symbol_from_bronze_storage(client: BlobStorageClient, symbol: str) -
                     "path": bucket_path,
                     "operation": "row_delete",
                 },
-                lambda p=prefix: _remove_symbol_from_alpha26_bucket(
+                lambda d=domain: _remove_symbol_from_alpha26_bucket(
                     client=client,
-                    domain_prefix=p,
+                    domain=d,
                     symbol=normalized_symbol,
                 ),
             )
@@ -3599,6 +3797,7 @@ def _mark_purged_domain_metadata_snapshots(targets: List[Dict[str, str]]) -> Non
         )
 
     _invalidate_domain_metadata_document_cache()
+    _emit_domain_metadata_snapshot_changed("purge", targets)
 
 
 def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
@@ -4039,7 +4238,6 @@ def list_purge_rule_operators(request: Request) -> JSONResponse:
 @router.get("/purge-rules")
 def list_purge_rules_endpoint(
     request: Request,
-    enabled_only: bool = Query(default=False),
     layer: Optional[str] = Query(default=None),
     domain: Optional[str] = Query(default=None),
 ) -> JSONResponse:
@@ -4048,7 +4246,7 @@ def list_purge_rules_endpoint(
     try:
         normalized_layer = _normalize_layer(layer)
         normalized_domain = _normalize_domain(domain)
-        rules = list_purge_rules(dsn=dsn, enabled_only=enabled_only, layer=normalized_layer, domain=normalized_domain)
+        rules = list_purge_rules(dsn=dsn, layer=normalized_layer, domain=normalized_domain)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid purge-rule query: {exc}") from exc
     except Exception as exc:
@@ -4081,7 +4279,6 @@ def create_purge_rule_endpoint(payload: PurgeRuleCreateRequest, request: Request
             operator=operator,
             threshold=payload.threshold,
             run_interval_minutes=payload.run_interval_minutes,
-            enabled=payload.enabled,
             actor=actor,
         )
     except ValueError as exc:
@@ -4114,7 +4311,6 @@ def update_purge_rule_endpoint(
             payload.operator,
             payload.threshold,
             payload.run_interval_minutes,
-            payload.enabled,
         )
     ):
         raise HTTPException(status_code=400, detail="No fields supplied for purge rule update.")
@@ -4130,7 +4326,6 @@ def update_purge_rule_endpoint(
             operator=normalize_purge_rule_operator(payload.operator) if payload.operator is not None else None,
             threshold=payload.threshold,
             run_interval_minutes=payload.run_interval_minutes,
-            enabled=payload.enabled,
             actor=actor,
         )
     except KeyError as exc:
@@ -4207,9 +4402,6 @@ def run_purge_rule_now(rule_id: int, request: Request) -> JSONResponse:
     rule = get_purge_rule(dsn=dsn, rule_id=rule_id)
     if not rule:
         raise HTTPException(status_code=404, detail=f"Purge rule id={rule_id} not found.")
-
-    if not rule.enabled:
-        raise HTTPException(status_code=409, detail="Purge rule is disabled.")
 
     if not claim_purge_rule_for_run(
         dsn=dsn,
@@ -4579,7 +4771,7 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "example": "24",
     },
     "DEBUG_SYMBOLS": {
-        "description": "Comma-separated or JSON-array symbol allowlist applied when debug filtering is enabled.",
+        "description": "Comma-separated or JSON-array symbol allowlist applied when debug filtering is configured.",
         "example": "AAPL,MSFT,NVDA",
     },
     "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN": {
@@ -4638,37 +4830,9 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "How many days finance statement data is considered fresh before re-fetch (integer).",
         "example": "28",
     },
-    "MASSIVE_PREFER_OFFICIAL_SDK": {
-        "description": "When true, Massive integration prefers the official Massive SDK if installed.",
-        "example": "true",
-    },
-    "SILVER_LATEST_ONLY": {
-        "description": "When true, silver jobs prefer latest-only processing if supported.",
-        "example": "true",
-    },
-    "SILVER_MARKET_LATEST_ONLY": {
-        "description": "Domain override for market silver latest-only behavior.",
-        "example": "true",
-    },
-    "SILVER_FINANCE_LATEST_ONLY": {
-        "description": "Domain override for finance silver latest-only behavior.",
-        "example": "true",
-    },
     "SILVER_FINANCE_CATCHUP_MAX_PASSES": {
         "description": "Max catch-up relist passes for silver finance ingestion to absorb late Bronze writes (integer).",
         "example": "3",
-    },
-    "SILVER_FINANCE_USE_BRONZE_MANIFEST": {
-        "description": "When true, silver finance prefers the latest unacknowledged Bronze finance run manifest.",
-        "example": "true",
-    },
-    "SILVER_EARNINGS_LATEST_ONLY": {
-        "description": "Domain override for earnings silver latest-only behavior.",
-        "example": "true",
-    },
-    "SILVER_PRICE_TARGET_LATEST_ONLY": {
-        "description": "Domain override for price-target silver latest-only behavior.",
-        "example": "true",
     },
     "FEATURE_ENGINEERING_MAX_WORKERS": {
         "description": "Max workers for feature engineering concurrency (integer).",
@@ -4678,10 +4842,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "Optional downstream job name to trigger on success.",
         "example": "silver-market-job",
     },
-    "TRIGGER_NEXT_JOB_REQUIRED": {
-        "description": "When true, a downstream trigger failure fails the job; when false, it is best-effort.",
-        "example": "true",
-    },
     "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS": {
         "description": "Downstream trigger retry attempts (integer).",
         "example": "3",
@@ -4689,10 +4849,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS": {
         "description": "Downstream trigger retry base delay (float seconds).",
         "example": "1.0",
-    },
-    "FINANCE_RUN_MANIFESTS_ENABLED": {
-        "description": "When true, Bronze finance writes run manifests and Silver finance can persist per-run acknowledgements.",
-        "example": "true",
     },
     "FINANCE_PIPELINE_SHARED_LOCK_NAME": {
         "description": "Shared distributed lock key used to serialize Bronze/Silver finance jobs.",
@@ -4720,10 +4876,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
             "Keys support layer.domain, layer:domain, domain, layer.*, and *."
         ),
         "example": '{"silver.market":{"maxAgeSeconds":43200},"gold.*":{"maxAgeSeconds":172800}}',
-    },
-    "SYSTEM_HEALTH_MARKERS_ENABLED": {
-        "description": "When true, use system-health marker blobs for freshness probes.",
-        "example": "true",
     },
     "SYSTEM_HEALTH_MARKERS_CONTAINER": {
         "description": "Container name holding marker blobs (defaults to AZURE_CONTAINER_COMMON).",
@@ -4757,10 +4909,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "How many recent job executions to pull per job during system-health probes (integer).",
         "example": "10",
     },
-    "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED": {
-        "description": "When true, system health will query Azure Monitor Metrics for configured resources.",
-        "example": "true",
-    },
     "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION": {
         "description": "Azure Monitor Metrics API version.",
         "example": "2018-01-01",
@@ -4789,10 +4937,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "JSON object mapping metric name to thresholds (warn_above/error_above/etc).",
         "example": '{"CpuUsage":{"warn_above":80,"error_above":95}}',
     },
-    "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED": {
-        "description": "When true, system health will query Azure Log Analytics for configured resources.",
-        "example": "true",
-    },
     "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID": {
         "description": "Log Analytics workspace ID for system health queries.",
         "example": "00000000-0000-0000-0000-000000000000",
@@ -4816,10 +4960,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON": {
         "description": "JSON object of Bronze job symbol-count jump thresholds keyed by job name or *.",
         "example": '{"*":{"warnFactor":3.0,"errorFactor":10.0,"minPreviousSymbols":100,"minCurrentSymbols":1000}}',
-    },
-    "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED": {
-        "description": "When true, system health includes Azure Resource Health checks.",
-        "example": "true",
     },
     "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION": {
         "description": "Azure Resource Health API version.",
@@ -4847,7 +4987,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
 class RuntimeConfigUpsertRequest(BaseModel):
     key: str = Field(..., description="Configuration key (env-var style).")
     scope: str = Field(default="global", description="Scope for this key (e.g., global or job:<name>).")
-    enabled: bool = Field(default=True, description="When true, apply this value as an override.")
     value: str = Field(default="", description="Raw string value to apply (can be empty).")
     description: Optional[str] = Field(default=None, description="Optional human-readable description.")
 
@@ -4893,7 +5032,6 @@ def get_runtime_config(request: Request, scope: str = Query("global")) -> JSONRe
                 {
                     "scope": item.scope,
                     "key": item.key,
-                    "enabled": item.enabled,
                     "value": item.value,
                     "description": item.description,
                     "updatedAt": _iso(item.updated_at),
@@ -4922,12 +5060,10 @@ def set_runtime_config(payload: RuntimeConfigUpsertRequest, request: Request) ->
         raise HTTPException(status_code=400, detail="Key is not allowed for DB override.")
 
     scope = str(payload.scope or "").strip() or "global"
-    normalized_value = str(payload.value or "")
-    if payload.enabled:
-        try:
-            normalized_value = normalize_env_override(key, payload.value)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        normalized_value = normalize_env_override(key, payload.value)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     actor = _get_actor(request)
     try:
@@ -4935,7 +5071,6 @@ def set_runtime_config(payload: RuntimeConfigUpsertRequest, request: Request) ->
             dsn=dsn,
             scope=scope,
             key=key,
-            enabled=bool(payload.enabled),
             value=normalized_value,
             description=payload.description or RUNTIME_CONFIG_CATALOG.get(key, {}).get("description"),
             actor=actor,
@@ -4949,7 +5084,6 @@ def set_runtime_config(payload: RuntimeConfigUpsertRequest, request: Request) ->
     response_payload = {
         "scope": row.scope,
         "key": row.key,
-        "enabled": row.enabled,
         "value": row.value,
         "description": row.description,
         "updatedAt": _iso(row.updated_at),
@@ -4961,7 +5095,7 @@ def set_runtime_config(payload: RuntimeConfigUpsertRequest, request: Request) ->
         {
             "scope": row.scope,
             "key": row.key,
-            "enabled": bool(row.enabled),
+            "present": True,
         },
     )
     return JSONResponse(response_payload, headers={"Cache-Control": "no-store"})
@@ -5005,12 +5139,9 @@ def remove_runtime_config(key: str, request: Request, scope: str = Query("global
 
 
 class DebugSymbolsUpdateRequest(BaseModel):
-    enabled: bool = Field(
-        ..., description="When true, apply runtime-config-backed debug symbols to ETL jobs."
-    )
-    symbols: Optional[str] = Field(
-        default=None,
-        description="Comma-separated list or JSON array. When omitted, keeps the stored symbols.",
+    symbols: str = Field(
+        ...,
+        description="Comma-separated list or JSON array. Row presence means the allowlist is active.",
     )
 
 
@@ -5031,9 +5162,11 @@ def get_debug_symbols(request: Request) -> JSONResponse:
         logger.exception("Failed to load debug symbols.")
         raise HTTPException(status_code=502, detail=f"Failed to load debug symbols: {exc}") from exc
 
+    if state is None:
+        raise HTTPException(status_code=404, detail="Debug symbols are not configured.")
+
     return JSONResponse(
         {
-            "enabled": state.enabled,
             "symbols": state.symbols_raw,
             "updatedAt": _iso(state.updated_at),
             "updatedBy": state.updated_by,
@@ -5042,7 +5175,7 @@ def get_debug_symbols(request: Request) -> JSONResponse:
     )
 
 
-@router.post("/debug-symbols")
+@router.put("/debug-symbols")
 def set_debug_symbols(payload: DebugSymbolsUpdateRequest, request: Request) -> JSONResponse:
     validate_auth(request)
 
@@ -5051,24 +5184,14 @@ def set_debug_symbols(payload: DebugSymbolsUpdateRequest, request: Request) -> J
     if not dsn:
         raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
 
-    try:
-        current = read_debug_symbols_state(dsn)
-    except PostgresError as exc:
-        raise HTTPException(status_code=503, detail=f"Failed to load debug symbols: {exc}") from exc
-    except Exception as exc:
-        logger.exception("Failed to load debug symbols.")
-        raise HTTPException(status_code=502, detail=f"Failed to load debug symbols: {exc}") from exc
-
-    raw = payload.symbols if payload.symbols is not None else current.symbols_raw
-    raw_text = str(raw or "").strip()
-    if payload.enabled and not raw_text:
-        raise HTTPException(status_code=400, detail="Debug symbols are required when enabled.")
+    raw_text = str(payload.symbols or "").strip()
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="Debug symbols are required.")
 
     actor = _get_actor(request)
     try:
-        state = update_debug_symbols_state(
+        state = replace_debug_symbols_state(
             dsn=dsn,
-            enabled=payload.enabled,
             symbols=raw_text,
             actor=actor,
         )
@@ -5079,7 +5202,6 @@ def set_debug_symbols(payload: DebugSymbolsUpdateRequest, request: Request) -> J
         raise HTTPException(status_code=502, detail=f"Failed to update debug symbols: {exc}") from exc
 
     response_payload = {
-        "enabled": state.enabled,
         "symbols": state.symbols_raw,
         "updatedAt": _iso(state.updated_at),
         "updatedBy": state.updated_by,
@@ -5088,10 +5210,39 @@ def set_debug_symbols(payload: DebugSymbolsUpdateRequest, request: Request) -> J
         REALTIME_TOPIC_DEBUG_SYMBOLS,
         "DEBUG_SYMBOLS_CHANGED",
         {
-            "enabled": bool(state.enabled),
+            "present": True,
+            "symbolCount": len(state.symbols),
         },
     )
     return JSONResponse(response_payload, headers={"Cache-Control": "no-store"})
+
+
+@router.delete("/debug-symbols")
+def remove_debug_symbols(request: Request) -> JSONResponse:
+    validate_auth(request)
+
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
+
+    try:
+        deleted = delete_debug_symbols_state(dsn=dsn)
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to delete debug symbols: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to delete debug symbols.")
+        raise HTTPException(status_code=502, detail=f"Failed to delete debug symbols: {exc}") from exc
+
+    _emit_realtime(
+        REALTIME_TOPIC_DEBUG_SYMBOLS,
+        "DEBUG_SYMBOLS_CHANGED",
+        {
+            "present": False,
+            "deleted": bool(deleted),
+        },
+    )
+    return JSONResponse({"deleted": bool(deleted)}, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/container-apps")
@@ -5232,7 +5383,7 @@ def get_container_app_logs(
 
     Requires:
     - SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID / SYSTEM_HEALTH_ARM_RESOURCE_GROUP / SYSTEM_HEALTH_ARM_CONTAINERAPPS
-    - SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true + SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID
+    - SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID
     """
     validate_auth(request)
 
@@ -5246,10 +5397,9 @@ def get_container_app_logs(
     if resolved not in app_allowlist:
         raise HTTPException(status_code=404, detail="Container app not found.")
 
-    log_analytics_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"))
     workspace_id_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
     workspace_id = workspace_id_raw.strip() if workspace_id_raw else ""
-    if not log_analytics_enabled or not workspace_id:
+    if not workspace_id:
         raise HTTPException(status_code=503, detail="Log Analytics is not configured for container app log retrieval.")
 
     log_timeout_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS")
@@ -5934,7 +6084,7 @@ def get_job_logs(
 
     Requires:
     - SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID / SYSTEM_HEALTH_ARM_RESOURCE_GROUP / SYSTEM_HEALTH_ARM_JOBS (allowlist)
-    - SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true + SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID
+    - SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID
     """
     validate_auth(request)
 
@@ -5956,10 +6106,9 @@ def get_job_logs(
     if resolved not in job_allowlist:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    log_analytics_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"))
     workspace_id_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
     workspace_id = workspace_id_raw.strip() if workspace_id_raw else ""
-    if not log_analytics_enabled or not workspace_id:
+    if not workspace_id:
         raise HTTPException(status_code=503, detail="Log Analytics is not configured for job log retrieval.")
 
     log_timeout_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS")

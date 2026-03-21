@@ -96,7 +96,7 @@ def test_remove_symbol_from_bronze_storage_covers_all_medallion_domain_folders(m
     monkeypatch.setattr(
         system,
         "_remove_symbol_from_alpha26_bucket",
-        lambda client, domain_prefix, symbol: removed_calls.append({"domain_prefix": domain_prefix, "symbol": symbol}) or 1,
+        lambda *, client, domain, symbol: removed_calls.append({"domain": domain, "symbol": symbol}) or 1,
     )
     monkeypatch.setattr(system.cfg, "EARNINGS_DATA_PREFIX", "earnings-data", raising=False)
 
@@ -104,11 +104,11 @@ def test_remove_symbol_from_bronze_storage_covers_all_medallion_domain_folders(m
     outcomes = system._remove_symbol_from_bronze_storage(client, "AAPL")
 
     assert {str(item["domain"]) for item in outcomes} == {"market", "finance", "earnings", "price-target"}
-    assert {call["domain_prefix"] for call in removed_calls} == {
-        "market-data",
-        "finance-data",
-        "earnings-data",
-        "price-target-data",
+    assert {call["domain"] for call in removed_calls} == {
+        "market",
+        "finance",
+        "earnings",
+        "price-target",
     }
     assert all(call["symbol"] == "AAPL" for call in removed_calls)
 
@@ -294,7 +294,7 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
     monkeypatch.setattr(
         system,
         "_remove_symbol_from_alpha26_bucket",
-        lambda client, domain_prefix, symbol: bronze_bucket_calls.append({"domain_prefix": domain_prefix, "symbol": symbol}) or 1,
+        lambda *, client, domain, symbol: bronze_bucket_calls.append({"domain": domain, "symbol": symbol}) or 1,
     )
     monkeypatch.setattr(
         system,

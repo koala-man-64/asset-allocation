@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, PencilLine, Plus, Trash2 } from 'lucide-react';
+import { Database, Eye, PencilLine, Plus, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,7 +36,14 @@ import {
 } from '@/app/components/ui/dialog';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/app/components/ui/table';
 import { toast } from 'sonner';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import type { StrategyDetail, StrategySummary } from '@/types/strategy';
@@ -94,12 +102,18 @@ export function StrategyConfigPage() {
     barSize: '5m'
   });
 
-  const { data: strategies = [], isLoading, isFetching, error } = useQuery({
+  const {
+    data: strategies = [],
+    isLoading,
+    isFetching,
+    error
+  } = useQuery({
     queryKey: ['strategies'],
     queryFn: () => strategyApi.listStrategies()
   });
 
-  const selectedStrategy = strategies.find((strategy) => strategy.name === selectedStrategyName) || null;
+  const selectedStrategy =
+    strategies.find((strategy) => strategy.name === selectedStrategyName) || null;
   const selectedStrategyLabel = selectedStrategy?.name || selectedStrategyName;
 
   useEffect(() => {
@@ -221,13 +235,21 @@ export function StrategyConfigPage() {
           <p className="page-kicker">Run Configuration</p>
           <h1 className="page-title">Run Configurations</h1>
           <p className="page-subtitle">
-            Manage the strategy-backed run settings that control cadence, selection, ranking attachment, and exits.
-            Changes persist when you save or delete the record.
+            Manage the strategy-backed run settings that control cadence, selection, ranking
+            attachment, and exits. Changes persist when you save or delete the record.
           </p>
         </div>
-        <Button onClick={handleCreate} className="gap-2">
-          <Plus className="mr-2 h-4 w-4" /> New Run Configuration
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" asChild className="gap-2">
+            <Link to="/strategy-exploration">
+              <Database className="h-4 w-4" />
+              Strategy Exploration
+            </Link>
+          </Button>
+          <Button onClick={handleCreate} className="gap-2">
+            <Plus className="mr-2 h-4 w-4" /> New Run Configuration
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.95fr)]">
@@ -252,7 +274,8 @@ export function StrategyConfigPage() {
               </div>
             ) : strategies.length === 0 ? (
               <div className="rounded-2xl border-2 border-dashed border-mcm-walnut/35 bg-mcm-cream/70 p-6 text-sm text-muted-foreground">
-                No run configurations found yet. Create one, then click <span className="font-semibold text-foreground">Save to Postgres</span>.
+                No run configurations found yet. Create one, then click{' '}
+                <span className="font-semibold text-foreground">Save to Postgres</span>.
               </div>
             ) : (
               <Table>
@@ -276,7 +299,9 @@ export function StrategyConfigPage() {
                       >
                         <TableCell className="whitespace-normal">
                           <div className="space-y-1">
-                            <div className="font-display text-base text-foreground">{strategy.name}</div>
+                            <div className="font-display text-base text-foreground">
+                              {strategy.name}
+                            </div>
                             <div className="text-xs text-muted-foreground">
                               {strategy.description || 'No description provided.'}
                             </div>
@@ -345,7 +370,8 @@ export function StrategyConfigPage() {
             <div className="space-y-1">
               <CardTitle className="font-display text-xl">Run Configuration Detail</CardTitle>
               <CardDescription>
-                Review the saved run configuration before opening the editor or deleting the record from Postgres.
+                Review the saved run configuration before opening the editor or deleting the record
+                from Postgres.
               </CardDescription>
             </div>
             {selectedStrategyLabel ? (
@@ -369,7 +395,9 @@ export function StrategyConfigPage() {
               <>
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-3">
-                    <h2 className="font-display text-2xl text-foreground">{detailQuery.data.name}</h2>
+                    <h2 className="font-display text-2xl text-foreground">
+                      {detailQuery.data.name}
+                    </h2>
                     <Badge variant={detailQuery.data.type === 'configured' ? 'default' : 'outline'}>
                       {detailQuery.data.type}
                     </Badge>
@@ -384,7 +412,9 @@ export function StrategyConfigPage() {
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/65 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Universe Config</div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Universe Config
+                    </div>
                     <div className="mt-2 font-display text-lg text-foreground">
                       {detailQuery.data.config.universeConfigName || 'Not assigned'}
                     </div>
@@ -395,47 +425,73 @@ export function StrategyConfigPage() {
                     </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/65 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Rebalance</div>
-                    <div className="mt-2 font-display text-lg text-foreground">{detailQuery.data.config.rebalance}</div>
-                  </div>
-                  <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Selection</div>
-                    <div className="mt-2 text-sm text-foreground">
-                      Top {detailQuery.data.config.topN} with {detailQuery.data.config.lookbackWindow}-bar lookback
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Rebalance
+                    </div>
+                    <div className="mt-2 font-display text-lg text-foreground">
+                      {detailQuery.data.config.rebalance}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Execution</div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Selection
+                    </div>
                     <div className="mt-2 text-sm text-foreground">
-                      {detailQuery.data.config.longOnly ? 'Long only' : 'Long/short'} • hold {detailQuery.data.config.holdingPeriod} bars
+                      Top {detailQuery.data.config.topN} with{' '}
+                      {detailQuery.data.config.lookbackWindow}-bar lookback
                     </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Cost Model</div>
-                    <div className="mt-2 text-sm text-foreground">{detailQuery.data.config.costModel}</div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Execution
+                    </div>
+                    <div className="mt-2 text-sm text-foreground">
+                      {detailQuery.data.config.longOnly ? 'Long only' : 'Long/short'} • hold{' '}
+                      {detailQuery.data.config.holdingPeriod} bars
+                    </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Ranking Schema</div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Cost Model
+                    </div>
+                    <div className="mt-2 text-sm text-foreground">
+                      {detailQuery.data.config.costModel}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Ranking Schema
+                    </div>
                     <div className="mt-2 text-sm text-foreground">
                       {detailQuery.data.config.rankingSchemaName || 'None attached'}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Conflict Policy</div>
-                    <div className="mt-2 text-sm text-foreground">{detailQuery.data.config.intrabarConflictPolicy}</div>
-                  </div>
-                  <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Regime Policy</div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Conflict Policy
+                    </div>
                     <div className="mt-2 text-sm text-foreground">
-                      {detailQuery.data.config.regimePolicy?.enabled
-                        ? `Enabled • ${detailQuery.data.config.regimePolicy.modelName}`
-                        : 'Disabled'}
+                      {detailQuery.data.config.intrabarConflictPolicy}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Platinum Output</div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Regime Policy
+                    </div>
                     <div className="mt-2 text-sm text-foreground">
-                      {detailQuery.data.output_table_name ? `platinum.${detailQuery.data.output_table_name}` : 'Not assigned'}
+                      {detailQuery.data.config.regimePolicy
+                        ? detailQuery.data.config.regimePolicy.modelName
+                        : 'Not configured'}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      Platinum Output
+                    </div>
+                    <div className="mt-2 text-sm text-foreground">
+                      {detailQuery.data.output_table_name
+                        ? `platinum.${detailQuery.data.output_table_name}`
+                        : 'Not assigned'}
                     </div>
                   </div>
                 </div>
@@ -458,14 +514,14 @@ export function StrategyConfigPage() {
                         >
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
-                              <div className="font-display text-base text-foreground">{rule.id}</div>
+                              <div className="font-display text-base text-foreground">
+                                {rule.id}
+                              </div>
                               <div className="text-xs text-muted-foreground">
                                 {formatRuleType(rule.type)} • priority {rule.priority ?? 'auto'}
                               </div>
                             </div>
-                            <Badge variant={rule.enabled ? 'default' : 'outline'}>
-                              {rule.enabled ? 'Enabled' : 'Disabled'}
-                            </Badge>
+                            <Badge variant="outline">Active</Badge>
                           </div>
                           <div className="mt-3 text-sm text-foreground">
                             {summarizeRule(detailQuery.data, rule.id)}
@@ -480,7 +536,9 @@ export function StrategyConfigPage() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="font-display text-lg text-foreground">Recent Backtest Runs</h3>
-                    <Badge variant="secondary">{recentRunsQuery.data?.runs.length ?? 0} queued or finished</Badge>
+                    <Badge variant="secondary">
+                      {recentRunsQuery.data?.runs.length ?? 0} queued or finished
+                    </Badge>
                   </div>
                   {recentRunsQuery.isLoading ? (
                     <div className="rounded-2xl border-2 border-dashed border-mcm-walnut/35 bg-mcm-cream/70 p-4 text-sm text-muted-foreground">
@@ -499,7 +557,8 @@ export function StrategyConfigPage() {
                                 {run.run_name || run.run_id}
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                {run.start_date || 'Unknown start'} to {run.end_date || 'Unknown end'}
+                                {run.start_date || 'Unknown start'} to{' '}
+                                {run.end_date || 'Unknown end'}
                               </div>
                             </div>
                             <Badge
@@ -531,7 +590,11 @@ export function StrategyConfigPage() {
                     </Button>
                   ) : null}
                   {selectedStrategy ? (
-                    <Button type="button" variant="secondary" onClick={() => handleEdit(selectedStrategy)}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => handleEdit(selectedStrategy)}
+                    >
                       <PencilLine className="h-4 w-4" />
                       Edit Run Configuration
                     </Button>
@@ -563,9 +626,12 @@ export function StrategyConfigPage() {
       <Dialog open={isRunDialogOpen} onOpenChange={setIsRunDialogOpen}>
         <DialogContent className="border-2 border-mcm-walnut bg-mcm-paper sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle className="font-display text-2xl text-foreground">Run Backtest</DialogTitle>
+            <DialogTitle className="font-display text-2xl text-foreground">
+              Run Backtest
+            </DialogTitle>
             <DialogDescription>
-              Submit an intraday backtest for <span className="font-semibold text-foreground">{selectedStrategyLabel}</span>.
+              Submit an intraday backtest for{' '}
+              <span className="font-semibold text-foreground">{selectedStrategyLabel}</span>.
             </DialogDescription>
           </DialogHeader>
 
@@ -575,7 +641,9 @@ export function StrategyConfigPage() {
               <Input
                 id="run-name"
                 value={runDraft.runName}
-                onChange={(event) => setRunDraft((current) => ({ ...current, runName: event.target.value }))}
+                onChange={(event) =>
+                  setRunDraft((current) => ({ ...current, runName: event.target.value }))
+                }
                 placeholder="Optional label for this run"
               />
             </div>
@@ -586,7 +654,9 @@ export function StrategyConfigPage() {
                   id="run-start"
                   type="datetime-local"
                   value={runDraft.startTs}
-                  onChange={(event) => setRunDraft((current) => ({ ...current, startTs: event.target.value }))}
+                  onChange={(event) =>
+                    setRunDraft((current) => ({ ...current, startTs: event.target.value }))
+                  }
                 />
               </div>
               <div className="grid gap-2">
@@ -595,7 +665,9 @@ export function StrategyConfigPage() {
                   id="run-end"
                   type="datetime-local"
                   value={runDraft.endTs}
-                  onChange={(event) => setRunDraft((current) => ({ ...current, endTs: event.target.value }))}
+                  onChange={(event) =>
+                    setRunDraft((current) => ({ ...current, endTs: event.target.value }))
+                  }
                 />
               </div>
             </div>
@@ -604,14 +676,21 @@ export function StrategyConfigPage() {
               <Input
                 id="bar-size"
                 value={runDraft.barSize}
-                onChange={(event) => setRunDraft((current) => ({ ...current, barSize: event.target.value }))}
+                onChange={(event) =>
+                  setRunDraft((current) => ({ ...current, barSize: event.target.value }))
+                }
                 placeholder="5m"
               />
             </div>
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setIsRunDialogOpen(false)} disabled={submitRunMutation.isPending}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsRunDialogOpen(false)}
+              disabled={submitRunMutation.isPending}
+            >
               Cancel
             </Button>
             <Button
@@ -639,7 +718,9 @@ export function StrategyConfigPage() {
               Delete run configuration
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Delete <span className="font-semibold text-foreground">{strategyPendingDelete?.name}</span> from Postgres. This removes the saved run configuration record from the catalog.
+              Delete{' '}
+              <span className="font-semibold text-foreground">{strategyPendingDelete?.name}</span>{' '}
+              from Postgres. This removes the saved run configuration record from the catalog.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

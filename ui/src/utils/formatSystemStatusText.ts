@@ -2,7 +2,7 @@ const API_ERROR_PREFIX = 'API Error:';
 const ESCAPED_NEWLINE_PATTERN = /\\[rn]/g;
 const NEWLINE_PATTERN = /\r\n|\r|\n/g;
 const MULTISPACE_PATTERN = /\s+/g;
-const BULLET_PREFIX_PATTERN = /^\s*[-*]\s+/;// eslint-disable-next-line no-control-regex
+const BULLET_PREFIX_PATTERN = /^\s*[-*]\s+/; // eslint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const ESCAPED_UNICODE_ANSI_PATTERN = /\\u001b\[[0-?]*[ -/]*[@-~]/gi;
 const ESCAPED_HEX_ANSI_PATTERN = /\\x1b\[[0-?]*[ -/]*[@-~]/gi;
@@ -69,7 +69,8 @@ export function formatSystemStatusText(value: unknown): string {
   const withoutApiPrefix = removeApiPrefix(raw);
   const parseCandidate = withoutApiPrefix.replace(BULLET_PREFIX_PATTERN, '');
   const parsed = parseJson(parseCandidate);
-  const extracted = parsed === null ? withoutApiPrefix : extractErrorDetail(parsed) ?? withoutApiPrefix;
+  const extracted =
+    parsed === null ? withoutApiPrefix : (extractErrorDetail(parsed) ?? withoutApiPrefix);
 
   const cleaned = stripAnsi(extracted)
     .replace(ESCAPED_NEWLINE_PATTERN, ' ')

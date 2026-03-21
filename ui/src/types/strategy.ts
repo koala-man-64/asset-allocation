@@ -141,7 +141,6 @@ export type RankingCatalogValueKind = 'number' | 'boolean';
 
 export interface ExitRule {
   id: string;
-  enabled: boolean;
   type: ExitRuleType;
   scope: ExitRuleScope;
   priceField?: ExitRulePriceField;
@@ -210,7 +209,6 @@ export interface TargetGrossExposureByRegime {
 }
 
 export interface RegimePolicy {
-  enabled: boolean;
   modelName: string;
   targetGrossExposureByRegime: TargetGrossExposureByRegime;
   blockOnTransition: boolean;

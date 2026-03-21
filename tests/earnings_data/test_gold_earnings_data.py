@@ -1,9 +1,36 @@
 import pytest
 import pandas as pd
+from core import core as core_module
 from core import delta_core
 from core.pipeline import DataPaths
 from tasks.earnings_data import gold_earnings_data as gold
 from tasks.common.gold_output_contracts import GOLD_EARNINGS_OUTPUT_COLUMNS
+
+def test_build_job_config_reads_required_containers(monkeypatch):
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver")
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold")
+
+    cfg = gold._build_job_config()
+
+    assert cfg.silver_container == "silver"
+    assert cfg.gold_container == "gold"
+
+
+def test_build_job_config_requires_silver_container(monkeypatch):
+    monkeypatch.delenv("AZURE_CONTAINER_SILVER", raising=False)
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold")
+
+    with pytest.raises(ValueError, match="AZURE_CONTAINER_SILVER"):
+        gold._build_job_config()
+
+
+def test_build_job_config_requires_gold_container(monkeypatch):
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver")
+    monkeypatch.delenv("AZURE_CONTAINER_GOLD", raising=False)
+
+    with pytest.raises(ValueError, match="AZURE_CONTAINER_GOLD"):
+        gold._build_job_config()
+
 
 def test_compute_features():
     """
@@ -335,3 +362,85 @@ def test_run_alpha26_earnings_gold_blocks_publication_when_bucket_fails(monkeypa
     assert alpha26_symbols == 0
     assert index_path is None
     assert index_calls["count"] == 0
+
+
+def test_main_runs_earnings_reconciliation_and_persists_watermarks(monkeypatch):
+    reconciliation_calls: list[dict[str, str]] = []
+    saved_watermarks: list[tuple[tuple, dict]] = []
+
+    monkeypatch.setattr(core_module, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(gold.layer_bucketing, "gold_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(gold, "get_backfill_range", lambda: (None, None))
+    monkeypatch.setattr(gold, "load_watermarks", lambda _name: {"bucket::A": {"silver_last_commit": 1}})
+    monkeypatch.setattr(
+        gold,
+        "_build_job_config",
+        lambda: gold.FeatureJobConfig(
+            silver_container="silver",
+            gold_container="gold",
+        ),
+    )
+    monkeypatch.setattr(
+        gold,
+        "_run_alpha26_earnings_gold",
+        lambda **_kwargs: (1, 0, 0, 0, True, 1, "system/gold-index/earnings/latest.parquet"),
+    )
+
+    def _run_reconciliation(*, silver_container: str, gold_container: str):
+        reconciliation_calls.append(
+            {
+                "silver_container": silver_container,
+                "gold_container": gold_container,
+            }
+        )
+        return 2, 3
+
+    monkeypatch.setattr(gold, "_run_earnings_reconciliation", _run_reconciliation)
+    monkeypatch.setattr(
+        gold,
+        "save_watermarks",
+        lambda *args, **kwargs: saved_watermarks.append((args, kwargs)),
+    )
+    monkeypatch.setattr(core_module, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(core_module, "write_error", lambda *_args, **_kwargs: None)
+
+    assert gold.main() == 0
+    assert reconciliation_calls == [{"silver_container": "silver", "gold_container": "gold"}]
+    assert len(saved_watermarks) == 1
+
+
+def test_main_fails_closed_when_earnings_reconciliation_fails(monkeypatch):
+    save_watermarks_calls = {"count": 0}
+
+    monkeypatch.setattr(core_module, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(gold.layer_bucketing, "gold_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(gold, "get_backfill_range", lambda: (None, None))
+    monkeypatch.setattr(gold, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(
+        gold,
+        "_build_job_config",
+        lambda: gold.FeatureJobConfig(
+            silver_container="silver",
+            gold_container="gold",
+        ),
+    )
+    monkeypatch.setattr(
+        gold,
+        "_run_alpha26_earnings_gold",
+        lambda **_kwargs: (1, 0, 0, 0, True, 1, "system/gold-index/earnings/latest.parquet"),
+    )
+    monkeypatch.setattr(
+        gold,
+        "_run_earnings_reconciliation",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("reconciliation boom")),
+    )
+    monkeypatch.setattr(
+        gold,
+        "save_watermarks",
+        lambda *_args, **_kwargs: save_watermarks_calls.__setitem__("count", save_watermarks_calls["count"] + 1),
+    )
+    monkeypatch.setattr(core_module, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(core_module, "write_error", lambda *_args, **_kwargs: None)
+
+    assert gold.main() == 1
+    assert save_watermarks_calls["count"] == 0

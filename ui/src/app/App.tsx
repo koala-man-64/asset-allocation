@@ -7,27 +7,64 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { useUIStore } from '@/stores/useUIStore';
 
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
+import { OidcAccessGate, OidcCallbackPage } from '@/app/components/auth/OidcAccessGate';
 
 // Lazy load pages for performance optimization (Code Splitting)
 // Using .then(m => ({ default: m.ComponentName })) pattern for named exports
-const DataExplorerPage = lazy(() => import('@/app/components/pages/DataExplorerPage').then(m => ({ default: m.DataExplorerPage })));
-const LiveTradingPage = lazy(() => import('@/app/components/pages/LiveTradingPage').then(m => ({ default: m.LiveTradingPage })));
-const RegimeMonitorPage = lazy(() => import('@/app/components/pages/RegimeMonitorPage').then(m => ({ default: m.RegimeMonitorPage })));
-const SystemStatusPage = lazy(() => import('@/app/components/pages/SystemStatusPage').then(m => ({ default: m.SystemStatusPage })));
-const DataQualityPage = lazy(() => import('@/app/components/pages/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
-const StockExplorerPage = lazy(() => import('@/app/components/pages/StockExplorerPage').then(m => ({ default: m.StockExplorerPage })));
-const StockDetailPage = lazy(() => import('@/app/components/pages/StockDetailPage').then(m => ({ default: m.StockDetailPage })));
-const PostgresExplorerPage = lazy(() =>
-  import('@/app/components/pages/PostgresExplorerPage').then((m) => ({ default: m.PostgresExplorerPage }))
+const DataExplorerPage = lazy(() =>
+  import('@/app/components/pages/DataExplorerPage').then((m) => ({ default: m.DataExplorerPage }))
 );
-const DebugSymbolsPage = lazy(() => import('@/app/components/pages/DebugSymbolsPage').then(m => ({ default: m.DebugSymbolsPage })));
-const DataProfilingPage = lazy(() => import('@/app/components/pages/DataProfilingPage').then(m => ({ default: m.DataProfilingPage })));
-const RuntimeConfigPage = lazy(() => import('@/app/components/pages/RuntimeConfigPage').then(m => ({ default: m.RuntimeConfigPage })));
-const StrategyConfigPage = lazy(() => import('@/app/components/pages/StrategyConfigPage').then(m => ({ default: m.StrategyConfigPage })));
-const UniverseConfigPage = lazy(() => import('@/app/components/pages/UniverseConfigPage').then(m => ({ default: m.UniverseConfigPage })));
-const RankingConfigPage = lazy(() => import('@/app/components/pages/RankingConfigPage').then(m => ({ default: m.RankingConfigPage })));
+const RegimeMonitorPage = lazy(() =>
+  import('@/app/components/pages/RegimeMonitorPage').then((m) => ({ default: m.RegimeMonitorPage }))
+);
+const SystemStatusPage = lazy(() =>
+  import('@/app/components/pages/SystemStatusPage').then((m) => ({ default: m.SystemStatusPage }))
+);
+const DataQualityPage = lazy(() =>
+  import('@/app/components/pages/DataQualityPage').then((m) => ({ default: m.DataQualityPage }))
+);
+const StockExplorerPage = lazy(() =>
+  import('@/app/components/pages/StockExplorerPage').then((m) => ({ default: m.StockExplorerPage }))
+);
+const StockDetailPage = lazy(() =>
+  import('@/app/components/pages/StockDetailPage').then((m) => ({ default: m.StockDetailPage }))
+);
+const PostgresExplorerPage = lazy(() =>
+  import('@/app/components/pages/PostgresExplorerPage').then((m) => ({
+    default: m.PostgresExplorerPage
+  }))
+);
+const DebugSymbolsPage = lazy(() =>
+  import('@/app/components/pages/DebugSymbolsPage').then((m) => ({ default: m.DebugSymbolsPage }))
+);
+const DataProfilingPage = lazy(() =>
+  import('@/app/components/pages/DataProfilingPage').then((m) => ({ default: m.DataProfilingPage }))
+);
+const RuntimeConfigPage = lazy(() =>
+  import('@/app/components/pages/RuntimeConfigPage').then((m) => ({ default: m.RuntimeConfigPage }))
+);
+const StrategyConfigPage = lazy(() =>
+  import('@/app/components/pages/StrategyConfigPage').then((m) => ({
+    default: m.StrategyConfigPage
+  }))
+);
+const UniverseConfigPage = lazy(() =>
+  import('@/app/components/pages/UniverseConfigPage').then((m) => ({
+    default: m.UniverseConfigPage
+  }))
+);
+const RankingConfigPage = lazy(() =>
+  import('@/app/components/pages/RankingConfigPage').then((m) => ({ default: m.RankingConfigPage }))
+);
+const StrategyDataCatalogPage = lazy(() =>
+  import('@/app/components/pages/StrategyDataCatalogPage').then((m) => ({
+    default: m.StrategyDataCatalogPage
+  }))
+);
 const SymbolPurgeByCriteriaPage = lazy(() =>
-  import('@/app/components/pages/SymbolPurgeByCriteriaPage').then((m) => ({ default: m.SymbolPurgeByCriteriaPage }))
+  import('@/app/components/pages/SymbolPurgeByCriteriaPage').then((m) => ({
+    default: m.SymbolPurgeByCriteriaPage
+  }))
 );
 
 import { Toaster } from '@/app/components/ui/sonner';
@@ -89,15 +126,16 @@ function AppContent() {
 
         <main className="flex-1 overflow-y-auto">
           <div className="container mx-auto p-8 max-w-[1800px]">
-            <Suspense fallback={
-              <div className="flex h-full w-full items-center justify-center min-h-[400px]">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-              </div>
-            }>
+            <Suspense
+              fallback={
+                <div className="flex h-full w-full items-center justify-center min-h-[400px]">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                </div>
+              }
+            >
               <Routes>
                 <Route path="/" element={<Navigate to="/system-status" replace />} />
                 <Route path="/data-explorer" element={<DataExplorerPage />} />
-                <Route path="/live-trading" element={<LiveTradingPage />} />
                 <Route path="/regimes" element={<RegimeMonitorPage />} />
                 <Route path="/data-quality" element={<DataQualityPage />} />
                 <Route path="/data-profiling" element={<DataProfilingPage />} />
@@ -105,14 +143,11 @@ function AppContent() {
                 <Route path="/debug-symbols" element={<DebugSymbolsPage />} />
                 <Route path="/runtime-config" element={<RuntimeConfigPage />} />
                 <Route path="/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
-                <Route path="/data-admin/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
                 <Route path="/stock-explorer" element={<StockExplorerPage />} />
                 <Route path="/strategies" element={<StrategyConfigPage />} />
-                <Route path="/run-configurations" element={<StrategyConfigPage />} />
                 <Route path="/universes" element={<UniverseConfigPage />} />
-                <Route path="/universe-configurations" element={<UniverseConfigPage />} />
                 <Route path="/rankings" element={<RankingConfigPage />} />
-                <Route path="/ranking-configurations" element={<RankingConfigPage />} />
+                <Route path="/strategy-exploration" element={<StrategyDataCatalogPage />} />
                 <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
                 <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
@@ -141,7 +176,17 @@ export default function App() {
   return (
     <AuthProvider>
       <QueryProvider>
-        <AppContent />
+        <Routes>
+          <Route path="/auth/callback" element={<OidcCallbackPage />} />
+          <Route
+            path="*"
+            element={
+              <OidcAccessGate>
+                <AppContent />
+              </OidcAccessGate>
+            }
+          />
+        </Routes>
       </QueryProvider>
     </AuthProvider>
   );

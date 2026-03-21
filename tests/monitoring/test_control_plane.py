@@ -152,3 +152,42 @@ def test_collect_jobs_and_executions_treats_running_with_end_time_as_completed()
     assert runs[0]["status"] == "success"
     assert runs[0]["statusCode"] == "Running"
 
+
+def test_collect_jobs_and_executions_prioritizes_active_runs_without_start_time() -> None:
+    arm = FakeArmClient(
+        responses={
+            "https://example.test/Microsoft.App/jobs/silver-earnings-job": {
+                "properties": {"provisioningState": "Succeeded"}
+            },
+            "https://example.test/Microsoft.App/jobs/silver-earnings-job/executions": {
+                "value": [
+                    {
+                        "properties": {
+                            "status": "Succeeded",
+                            "startTime": "2024-01-05T00:00:00Z",
+                            "endTime": "2024-01-05T00:01:00Z",
+                        }
+                    },
+                    {
+                        "properties": {
+                            "status": "In Progress",
+                        }
+                    },
+                ]
+            },
+        }
+    )
+
+    _, runs = collect_jobs_and_executions(
+        arm,
+        job_names=["silver-earnings-job"],
+        last_checked_iso="2024-01-10T00:00:00+00:00",
+        include_ids=False,
+        max_executions_per_job=1,
+    )
+
+    assert len(runs) == 1
+    assert runs[0]["status"] == "running"
+    assert runs[0]["statusCode"] == "In Progress"
+    assert runs[0]["startTime"] == "2024-01-10T00:00:00+00:00"
+

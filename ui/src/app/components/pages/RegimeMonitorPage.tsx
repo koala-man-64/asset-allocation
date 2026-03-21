@@ -14,7 +14,14 @@ import {
 } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/app/components/ui/table';
 import { Textarea } from '@/app/components/ui/textarea';
 import { regimeApi } from '@/services/regimeApi';
 import type { RegimeSnapshot } from '@/types/regime';
@@ -72,10 +79,13 @@ function formatMetric(value?: number | null, digits: number = 2): string {
   return Number(value).toFixed(digits);
 }
 
-function regimeTone(snapshot?: RegimeSnapshot | null): 'default' | 'secondary' | 'destructive' | 'outline' {
+function regimeTone(
+  snapshot?: RegimeSnapshot | null
+): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (!snapshot) return 'outline';
   if (snapshot.halt_flag || snapshot.regime_code === 'high_vol') return 'destructive';
-  if (snapshot.regime_status === 'transition' || snapshot.regime_code === 'unclassified') return 'secondary';
+  if (snapshot.regime_status === 'transition' || snapshot.regime_code === 'unclassified')
+    return 'secondary';
   return 'default';
 }
 
@@ -178,7 +188,8 @@ export function RegimeMonitorPage() {
             Regime Monitor
           </h1>
           <p className="page-subtitle">
-            Track the active gold regime model, inspect confirmed and transition states, and activate new model revisions without leaving the control plane.
+            Track the active gold regime model, inspect confirmed and transition states, and
+            activate new model revisions without leaving the control plane.
           </p>
         </div>
 
@@ -197,12 +208,8 @@ export function RegimeMonitorPage() {
             ))}
           </select>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">
-              Active v{activeVersion ?? 'n/a'}
-            </Badge>
-            <Badge variant="outline">
-              Latest v{latestRevisionVersion ?? 'n/a'}
-            </Badge>
+            <Badge variant="secondary">Active v{activeVersion ?? 'n/a'}</Badge>
+            <Badge variant="outline">Latest v{latestRevisionVersion ?? 'n/a'}</Badge>
           </div>
         </div>
       </div>
@@ -226,13 +233,30 @@ export function RegimeMonitorPage() {
                       {currentSnapshot.regime_code.replaceAll('_', ' ')}
                     </Badge>
                     <div className="space-y-1 text-sm">
-                      <div>Status: <span className="font-medium capitalize">{currentSnapshot.regime_status}</span></div>
-                      <div>As Of: <span className="font-medium">{formatDate(currentSnapshot.as_of_date)}</span></div>
-                      <div>Effective: <span className="font-medium">{formatDate(currentSnapshot.effective_from_date)}</span></div>
+                      <div>
+                        Status:{' '}
+                        <span className="font-medium capitalize">
+                          {currentSnapshot.regime_status}
+                        </span>
+                      </div>
+                      <div>
+                        As Of:{' '}
+                        <span className="font-medium">
+                          {formatDate(currentSnapshot.as_of_date)}
+                        </span>
+                      </div>
+                      <div>
+                        Effective:{' '}
+                        <span className="font-medium">
+                          {formatDate(currentSnapshot.effective_from_date)}
+                        </span>
+                      </div>
                     </div>
                   </>
                 ) : (
-                  <div className="text-sm text-muted-foreground">No regime snapshot is available yet for this model.</div>
+                  <div className="text-sm text-muted-foreground">
+                    No regime snapshot is available yet for this model.
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -245,11 +269,34 @@ export function RegimeMonitorPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 pt-6 text-sm">
-                <div>SPY 20d: <span className="font-medium">{formatMetric(currentSnapshot?.spy_return_20d, 4)}</span></div>
-                <div>Realized Vol: <span className="font-medium">{formatMetric(currentSnapshot?.rvol_10d_ann, 2)}</span></div>
-                <div>VIX Spot: <span className="font-medium">{formatMetric(currentSnapshot?.vix_spot_close, 2)}</span></div>
-                <div>VIX 3M: <span className="font-medium">{formatMetric(currentSnapshot?.vix3m_close, 2)}</span></div>
-                <div>Curve Slope: <span className="font-medium">{formatMetric(currentSnapshot?.vix_slope, 2)}</span></div>
+                <div>
+                  SPY 20d:{' '}
+                  <span className="font-medium">
+                    {formatMetric(currentSnapshot?.spy_return_20d, 4)}
+                  </span>
+                </div>
+                <div>
+                  Realized Vol:{' '}
+                  <span className="font-medium">
+                    {formatMetric(currentSnapshot?.rvol_10d_ann, 2)}
+                  </span>
+                </div>
+                <div>
+                  VIX Spot:{' '}
+                  <span className="font-medium">
+                    {formatMetric(currentSnapshot?.vix_spot_close, 2)}
+                  </span>
+                </div>
+                <div>
+                  VIX 3M:{' '}
+                  <span className="font-medium">
+                    {formatMetric(currentSnapshot?.vix3m_close, 2)}
+                  </span>
+                </div>
+                <div>
+                  Curve Slope:{' '}
+                  <span className="font-medium">{formatMetric(currentSnapshot?.vix_slope, 2)}</span>
+                </div>
               </CardContent>
             </Card>
 
@@ -264,9 +311,20 @@ export function RegimeMonitorPage() {
                 <Badge variant={currentSnapshot?.halt_flag ? 'destructive' : 'outline'}>
                   {currentSnapshot?.halt_flag ? 'Halt Active' : 'No Halt'}
                 </Badge>
-                <div>Reason: <span className="font-medium">{currentSnapshot?.halt_reason || 'n/a'}</span></div>
-                <div>VIX Streak: <span className="font-medium">{currentSnapshot?.vix_gt_32_streak ?? 'n/a'}</span></div>
-                <div>Computed: <span className="font-medium">{formatTimestamp(currentSnapshot?.computed_at)}</span></div>
+                <div>
+                  Reason:{' '}
+                  <span className="font-medium">{currentSnapshot?.halt_reason || 'n/a'}</span>
+                </div>
+                <div>
+                  VIX Streak:{' '}
+                  <span className="font-medium">{currentSnapshot?.vix_gt_32_streak ?? 'n/a'}</span>
+                </div>
+                <div>
+                  Computed:{' '}
+                  <span className="font-medium">
+                    {formatTimestamp(currentSnapshot?.computed_at)}
+                  </span>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -305,7 +363,9 @@ export function RegimeMonitorPage() {
                       <TableRow key={`${row.model_name}-${row.model_version}-${row.as_of_date}`}>
                         <TableCell>{formatDate(row.as_of_date)}</TableCell>
                         <TableCell>{formatDate(row.effective_from_date)}</TableCell>
-                        <TableCell className="capitalize">{row.regime_code.replaceAll('_', ' ')}</TableCell>
+                        <TableCell className="capitalize">
+                          {row.regime_code.replaceAll('_', ' ')}
+                        </TableCell>
                         <TableCell className="capitalize">{row.regime_status}</TableCell>
                         <TableCell>{row.matched_rule_id || 'n/a'}</TableCell>
                         <TableCell className="text-right">{row.halt_flag ? 'Yes' : 'No'}</TableCell>
@@ -323,7 +383,8 @@ export function RegimeMonitorPage() {
             <CardHeader className="border-b border-border/40">
               <CardTitle className="text-lg">Create Model Revision</CardTitle>
               <CardDescription>
-                Publish a new named regime model revision. Activation is separate so the monitor can stage changes first.
+                Publish a new named regime model revision. Activation is separate so the monitor can
+                stage changes first.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 pt-6">
@@ -332,7 +393,9 @@ export function RegimeMonitorPage() {
                 <Input
                   id="regime-create-name"
                   value={createDraft.name}
-                  onChange={(event) => setCreateDraft((current) => ({ ...current, name: event.target.value }))}
+                  onChange={(event) =>
+                    setCreateDraft((current) => ({ ...current, name: event.target.value }))
+                  }
                   placeholder="e.g. default-regime"
                 />
               </div>
@@ -341,7 +404,9 @@ export function RegimeMonitorPage() {
                 <Input
                   id="regime-create-description"
                   value={createDraft.description}
-                  onChange={(event) => setCreateDraft((current) => ({ ...current, description: event.target.value }))}
+                  onChange={(event) =>
+                    setCreateDraft((current) => ({ ...current, description: event.target.value }))
+                  }
                   placeholder="Short description"
                 />
               </div>
@@ -350,7 +415,9 @@ export function RegimeMonitorPage() {
                 <Textarea
                   id="regime-create-config"
                   value={createDraft.configJson}
-                  onChange={(event) => setCreateDraft((current) => ({ ...current, configJson: event.target.value }))}
+                  onChange={(event) =>
+                    setCreateDraft((current) => ({ ...current, configJson: event.target.value }))
+                  }
                   rows={14}
                   className="font-mono text-xs"
                 />
@@ -402,7 +469,9 @@ export function RegimeMonitorPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={activateMutation.isPending || revision.version === activeVersion}
+                            disabled={
+                              activateMutation.isPending || revision.version === activeVersion
+                            }
                             onClick={() =>
                               activateMutation.mutate({
                                 modelName: selectedModelName,

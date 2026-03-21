@@ -17,7 +17,7 @@ properties:
       cronExpression: "0 10 * * 1-5"
       parallelism: 1
       replicaCompletionCount: 1
-    replicaRetryLimit: 2
+    replicaRetryLimit: 0
     replicaTimeout: 14400
     registries:
     - server: assetallocationacr.azurecr.io
@@ -25,8 +25,6 @@ properties:
     secrets:
     - name: nasdaq-api-key
       value: ${NASDAQ_API_KEY}
-    - name: api-key
-      value: ${API_KEY}
     - name: azure-storage-connection-string
       value: ${AZURE_STORAGE_CONNECTION_STRING}
     - name: pg-dsn
@@ -58,16 +56,12 @@ properties:
         value: ${AZURE_SUBSCRIPTION_ID}
       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
         value: ${RESOURCE_GROUP}
-      - name: JOB_STARTUP_API_WAKE_ENABLED
-        value: "true"
       - name: JOB_STARTUP_API_CONTAINER_APPS
         value: ${JOB_STARTUP_API_CONTAINER_APPS}
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: TRIGGER_NEXT_JOB_NAME
         value: ${SILVER_EARNINGS_JOB}
-      - name: TRIGGER_NEXT_JOB_REQUIRED
-        value: "true"
       - name: AZURE_CONTAINER_GOLD
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_STORAGE_ACCOUNT_NAME
@@ -82,10 +76,8 @@ properties:
         value: ${AZURE_FOLDER_EARNINGS}
       - name: ASSET_ALLOCATION_API_BASE_URL
         value: ${ASSET_ALLOCATION_API_BASE_URL}
-      - name: ASSET_ALLOCATION_API_KEY
-        secretRef: api-key
-      - name: ASSET_ALLOCATION_API_KEY_HEADER
-        value: "X-API-Key"
+      - name: ASSET_ALLOCATION_API_SCOPE
+        value: ${ASSET_ALLOCATION_API_SCOPE}
       - name: ALPHA_VANTAGE_TIMEOUT_SECONDS
         value: ${ALPHA_VANTAGE_TIMEOUT_SECONDS}
       - name: ALPHA_VANTAGE_MAX_WORKERS

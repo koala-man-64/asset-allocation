@@ -252,7 +252,7 @@ class DataService:
         *,
         container: str,
         client: Any,
-        domain_prefix: str,
+        domain: str,
         symbol: Optional[str] = None,
         report_type: Optional[str] = None,
         limit: Optional[int] = None,
@@ -261,14 +261,14 @@ class DataService:
         resolved_report_type = str(report_type or "").strip().lower()
         if resolved_symbol:
             bucket = bronze_bucketing.bucket_letter(resolved_symbol)
-            blob_path = bronze_bucketing.bucket_blob_path(domain_prefix, bucket)
+            blob_path = bronze_bucketing.active_bucket_blob_path_for_domain(domain, bucket)
         else:
-            blob_path = DataService._first_bronze_blob_path(
-                client,
-                container=container,
-                prefix=f"{str(domain_prefix).strip('/')}/buckets",
-                allowed_suffixes=(".parquet",),
-            )
+            blob_infos = bronze_bucketing.list_active_bucket_blob_infos(domain, client)
+            if not blob_infos:
+                raise FileNotFoundError(f"No Bronze blobs found for domain={domain} in container={container}")
+            blob_path = str(sorted(blob_infos, key=lambda item: str(item.get("name", "")))[0].get("name", "")).strip()
+            if not blob_path:
+                raise FileNotFoundError(f"No Bronze blobs found for domain={domain} in container={container}")
 
         raw_bytes = mdc.read_raw_bytes(blob_path, client=client)
         if not raw_bytes:
@@ -1181,7 +1181,7 @@ class DataService:
             rows = DataService._read_bronze_alpha26_bucket(
                 container=container,
                 client=client,
-                domain_prefix="finance-data",
+                domain="finance",
                 symbol=ticker,
                 report_type=report_type,
                 limit=downstream_limit,
@@ -1246,17 +1246,16 @@ class DataService:
             return DataService._read_bronze_alpha26_bucket(
                 container=container,
                 client=client,
-                domain_prefix="market-data",
+                domain="market",
                 symbol=symbol or None,
                 limit=limit,
             )
 
         if domain == "earnings":
-            prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
             return DataService._read_bronze_alpha26_bucket(
                 container=container,
                 client=client,
-                domain_prefix=prefix,
+                domain="earnings",
                 symbol=symbol or None,
                 limit=limit,
             )
@@ -1265,7 +1264,7 @@ class DataService:
             return DataService._read_bronze_alpha26_bucket(
                 container=container,
                 client=client,
-                domain_prefix="finance-data",
+                domain="finance",
                 symbol=symbol or None,
                 limit=limit,
             )
@@ -1274,7 +1273,7 @@ class DataService:
             return DataService._read_bronze_alpha26_bucket(
                 container=container,
                 client=client,
-                domain_prefix="price-target-data",
+                domain="price-target",
                 symbol=symbol or None,
                 limit=limit,
             )

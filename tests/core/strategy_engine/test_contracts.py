@@ -32,7 +32,6 @@ def test_strategy_config_normalizes_exit_defaults() -> None:
     )
 
     assert config.intrabarConflictPolicy == "stop_first"
-    assert config.exits[0].enabled is True
     assert config.exits[0].priority == 0
     assert config.exits[0].scope == "position"
     assert config.exits[0].action == "exit_full"

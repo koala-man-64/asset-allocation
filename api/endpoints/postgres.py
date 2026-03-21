@@ -3,28 +3,19 @@ import os
 from datetime import date, datetime, time as time_value
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import MetaData, String as SqlString, Table, and_, cast, create_engine, inspect, select, text
 
+from core.gold_column_lookup_catalog import SUPPORTED_GOLD_LOOKUP_TABLES
 from api.service.dependencies import get_settings
 
 router = APIRouter()
 _HIDDEN_EXPLORER_SCHEMAS = frozenset({"information_schema", "public"})
 _BOOLEAN_TRUE_VALUES = frozenset({"1", "true", "t", "yes", "y", "on"})
 _BOOLEAN_FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off"})
-_SUPPORTED_GOLD_EXPLORER_TABLES = frozenset(
-    {
-        "market_data",
-        "finance_data",
-        "earnings_data",
-        "price_target_data",
-        "regime_inputs_daily",
-        "regime_history",
-        "regime_latest",
-        "regime_transitions",
-    }
-)
+_SUPPORTED_GOLD_EXPLORER_TABLES = frozenset(SUPPORTED_GOLD_LOOKUP_TABLES)
+_SUPPORTED_LOOKUP_STATUS = frozenset({"draft", "reviewed", "approved"})
 
 
 class QueryFilter(BaseModel):
@@ -61,6 +52,7 @@ class TableRequest(BaseModel):
 class PostgresColumnMetadata(BaseModel):
     name: str
     data_type: str
+    description: Optional[str] = None
     nullable: bool
     primary_key: bool
     editable: bool
@@ -81,6 +73,30 @@ class UpdateRowRequest(BaseModel):
     table_name: str
     match: Dict[str, Any] = Field(default_factory=dict)
     values: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GoldColumnLookupRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_name: str = Field(alias="schema")
+    table: str
+    column: str
+    data_type: str
+    description: str
+    calculation_type: str
+    calculation_notes: Optional[str] = None
+    calculation_expression: Optional[str] = None
+    calculation_dependencies: List[str] = Field(default_factory=list)
+    source_job: Optional[str] = None
+    status: str
+    updated_at: Optional[str] = None
+
+
+class GoldColumnLookupResponse(BaseModel):
+    rows: List[GoldColumnLookupRecord] = Field(default_factory=list)
+    limit: int
+    offset: int
+    has_more: bool
 
 
 def _resolve_postgres_dsn(request: Request) -> Optional[str]:
@@ -181,7 +197,52 @@ def _reflect_table(engine: Any, *, schema_name: str, table_name: str) -> Table:
     return Table(table_name, metadata, schema=schema_name, autoload_with=engine)
 
 
+def _load_postgres_column_descriptions(
+    engine: Any,
+    *,
+    schema_name: str,
+    table_name: str,
+) -> Dict[str, str]:
+    """
+    Best-effort lookup for Postgres column comments.
+    Returns a column-name keyed map and silently falls back to empty when comments are unavailable.
+    """
+    query = text(
+        """
+        SELECT
+            a.attname AS column_name,
+            d.description AS description
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+        LEFT JOIN pg_catalog.pg_description d
+            ON d.objoid = c.oid AND d.objsubid = a.attnum
+        WHERE n.nspname = :schema_name
+          AND c.relname = :table_name
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        """
+    )
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                query,
+                {"schema_name": schema_name, "table_name": table_name},
+            )
+            descriptions: Dict[str, str] = {}
+            for row in rows:
+                column_name = str(row.column_name or "").strip()
+                description = str(row.description or "").strip()
+                if column_name and description:
+                    descriptions[column_name] = description
+            return descriptions
+    except Exception:
+        return {}
+
+
 def _load_table_metadata(
+    engine: Any,
     insp: Any,
     *,
     schema_name: str,
@@ -189,6 +250,11 @@ def _load_table_metadata(
 ) -> TableMetadataResponse:
     _validate_table_target(
         insp,
+        schema_name=schema_name,
+        table_name=table_name,
+    )
+    column_descriptions = _load_postgres_column_descriptions(
+        engine,
         schema_name=schema_name,
         table_name=table_name,
     )
@@ -217,6 +283,7 @@ def _load_table_metadata(
             PostgresColumnMetadata(
                 name=name,
                 data_type=str(column.get("type") or ""),
+                description=column_descriptions.get(name),
                 nullable=bool(column.get("nullable", True)),
                 primary_key=name in primary_key_set,
                 editable=editable,
@@ -238,6 +305,140 @@ def _load_table_metadata(
         can_edit=can_edit,
         edit_reason=edit_reason,
         columns=columns,
+    )
+
+
+def _normalize_lookup_status(value: Optional[str]) -> Optional[str]:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized not in _SUPPORTED_LOOKUP_STATUS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid status filter. Expected one of: "
+                + ", ".join(sorted(_SUPPORTED_LOOKUP_STATUS))
+            ),
+        )
+    return normalized
+
+
+def _iso_datetime(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    try:
+        text_value = str(value).strip()
+    except Exception:
+        return None
+    return text_value or None
+
+
+def _query_gold_lookup_rows(
+    engine: Any,
+    *,
+    table_name: Optional[str],
+    q: Optional[str],
+    status: Optional[str],
+    limit: int,
+    offset: int,
+) -> GoldColumnLookupResponse:
+    normalized_table = str(table_name or "").strip().lower() or None
+    normalized_status = _normalize_lookup_status(status)
+    query_text = str(q or "").strip()
+
+    if normalized_table and normalized_table not in _SUPPORTED_GOLD_EXPLORER_TABLES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Gold table '{normalized_table}' is not supported by the lookup catalog.",
+        )
+
+    where_clauses = [
+        "schema_name = 'gold'",
+        "table_name = ANY(:supported_tables)",
+    ]
+    query_params: Dict[str, Any] = {
+        "supported_tables": list(_SUPPORTED_GOLD_EXPLORER_TABLES),
+        "limit": int(limit) + 1,
+        "offset": int(offset),
+    }
+
+    if normalized_table:
+        where_clauses.append("table_name = :table_name")
+        query_params["table_name"] = normalized_table
+
+    if normalized_status:
+        where_clauses.append("status = :status")
+        query_params["status"] = normalized_status
+
+    if query_text:
+        where_clauses.append(
+            "(column_name ILIKE :search OR description ILIKE :search OR COALESCE(calculation_notes, '') ILIKE :search)"
+        )
+        query_params["search"] = f"%{query_text}%"
+
+    statement = text(
+        f"""
+        SELECT
+            schema_name,
+            table_name,
+            column_name,
+            data_type,
+            description,
+            calculation_type,
+            calculation_notes,
+            calculation_expression,
+            calculation_dependencies,
+            source_job,
+            status,
+            updated_at
+        FROM gold.column_lookup
+        WHERE {" AND ".join(where_clauses)}
+        ORDER BY table_name, column_name
+        LIMIT :limit
+        OFFSET :offset
+        """
+    )
+
+    with engine.connect() as conn:
+        rows = conn.execute(statement, query_params).mappings().all()
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    payload_rows: List[GoldColumnLookupRecord] = []
+    for row in rows:
+        dependencies = row.get("calculation_dependencies")
+        if isinstance(dependencies, list):
+            normalized_dependencies = [str(item).strip() for item in dependencies if str(item).strip()]
+        elif isinstance(dependencies, tuple):
+            normalized_dependencies = [str(item).strip() for item in dependencies if str(item).strip()]
+        else:
+            normalized_dependencies = []
+
+        payload_rows.append(
+            GoldColumnLookupRecord(
+                schema_name=str(row.get("schema_name") or "gold"),
+                table=str(row.get("table_name") or ""),
+                column=str(row.get("column_name") or ""),
+                data_type=str(row.get("data_type") or ""),
+                description=str(row.get("description") or ""),
+                calculation_type=str(row.get("calculation_type") or "source"),
+                calculation_notes=str(row.get("calculation_notes") or "").strip() or None,
+                calculation_expression=str(row.get("calculation_expression") or "").strip() or None,
+                calculation_dependencies=normalized_dependencies,
+                source_job=str(row.get("source_job") or "").strip() or None,
+                status=str(row.get("status") or "draft"),
+                updated_at=_iso_datetime(row.get("updated_at")),
+            )
+        )
+
+    return GoldColumnLookupResponse(
+        rows=payload_rows,
+        limit=limit,
+        offset=offset,
+        has_more=has_more,
     )
 
 
@@ -420,6 +621,69 @@ def _build_query_conditions(
     return conditions
 
 
+@router.get("/gold-column-lookup/tables")
+def list_gold_lookup_tables(request: Request) -> List[str]:
+    """
+    List distinct gold table names represented in the column lookup catalog.
+    """
+    dsn = _resolve_postgres_dsn(request)
+    if not dsn:
+        raise HTTPException(status_code=500, detail="Database connection string not configured.")
+
+    engine = create_engine(dsn)
+    try:
+        statement = text(
+            """
+            SELECT DISTINCT table_name
+            FROM gold.column_lookup
+            WHERE schema_name = 'gold'
+              AND table_name = ANY(:supported_tables)
+            ORDER BY table_name
+            """
+        )
+        with engine.connect() as conn:
+            rows = conn.execute(statement, {"supported_tables": list(_SUPPORTED_GOLD_EXPLORER_TABLES)}).all()
+        return [str(row[0]) for row in rows if str(row[0] or "").strip()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch gold lookup tables: {str(e)}")
+    finally:
+        engine.dispose()
+
+
+@router.get("/gold-column-lookup", response_model=GoldColumnLookupResponse)
+def list_gold_column_lookup(
+    request: Request,
+    table: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    status: Optional[Literal["draft", "reviewed", "approved"]] = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0),
+) -> GoldColumnLookupResponse:
+    """
+    Query the gold column lookup catalog with optional filters and pagination.
+    """
+    dsn = _resolve_postgres_dsn(request)
+    if not dsn:
+        raise HTTPException(status_code=500, detail="Database connection string not configured.")
+
+    engine = create_engine(dsn)
+    try:
+        return _query_gold_lookup_rows(
+            engine,
+            table_name=table,
+            q=q,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch gold column lookup rows: {str(e)}")
+    finally:
+        engine.dispose()
+
+
 @router.get("/schemas")
 def list_schemas(request: Request) -> List[str]:
     """
@@ -481,6 +745,7 @@ def get_table_metadata(schema_name: str, table_name: str, request: Request) -> T
     try:
         insp = inspect(engine)
         return _load_table_metadata(
+            engine,
             insp,
             schema_name=schema_name,
             table_name=table_name,
@@ -516,6 +781,7 @@ def query_table(payload: QueryRequest, request: Request) -> List[Dict[str, Any]]
             table_name=payload.table_name,
         )
         metadata = _load_table_metadata(
+            engine,
             insp,
             schema_name=payload.schema_name,
             table_name=payload.table_name,
@@ -553,6 +819,7 @@ def update_row(payload: UpdateRowRequest, request: Request) -> Dict[str, Any]:
     try:
         insp = inspect(engine)
         metadata = _load_table_metadata(
+            engine,
             insp,
             schema_name=payload.schema_name,
             table_name=payload.table_name,

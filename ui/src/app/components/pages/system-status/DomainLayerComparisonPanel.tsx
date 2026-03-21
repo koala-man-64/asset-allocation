@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ChevronDown,
@@ -61,13 +61,17 @@ import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import {
   buildLatestJobRunIndex,
+  effectiveJobStatus,
+  formatDuration,
   formatSchedule,
   formatTimeAgo,
   getStatusConfig,
   getAzureJobExecutionsUrl,
-  normalizeJobStatus,
+  hasActiveJobRunningState,
   normalizeAzureJobName,
   normalizeAzurePortalUrl,
+  resolveManagedJobName,
+  isSuspendedJobRunningState,
   toJobStatusLabel
 } from './SystemStatusHelpers';
 import { formatMetadataTimestamp } from './systemStatusClock';
@@ -132,16 +136,12 @@ const LAYER_VISUALS: Record<LayerKey, LayerVisualConfig> = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function extractAzureJobName(jobUrl?: string | null): string | null {
-  const normalized = normalizeAzurePortalUrl(jobUrl);
-  if (!normalized) return null;
-  const match = normalized.match(/\/jobs\/([^/?#]+)/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
+function getPurgeDeletedCount(result: unknown): number {
+  if (typeof result !== 'object' || result === null) {
+    return 0;
   }
+  const totalDeleted = (result as { totalDeleted?: unknown }).totalDeleted;
+  return typeof totalDeleted === 'number' && Number.isFinite(totalDeleted) ? totalDeleted : 0;
 }
 
 function toLayerKey(value: string): LayerKey | null {
@@ -166,6 +166,11 @@ function makeSnapshotKey(layerKey: LayerKey, domainKey: string): string {
   return `${layerKey}/${domainKey}`;
 }
 
+type JobDurationSummary = {
+  averageDurationSeconds: number;
+  sampleCount: number;
+};
+
 function formatInt(value: number | null | undefined): string {
   if (!hasFiniteNumber(value)) return 'N/A';
   return numberFormatter.format(value);
@@ -186,6 +191,36 @@ function resolveColumnCount(metadata?: DomainMetadata | null): number | null {
 function formatColumnCount(value: number | null | undefined): string {
   if (!hasFiniteNumber(value)) return 'cols n/a';
   return `${numberFormatter.format(value)} cols`;
+}
+
+function buildJobDurationSummaryIndex(recentJobs: JobRun[] = []): Map<string, JobDurationSummary> {
+  const totals = new Map<string, { totalSeconds: number; sampleCount: number }>();
+
+  for (const job of recentJobs) {
+    const jobKey = normalizeAzureJobName(job?.jobName);
+    const duration = job?.duration;
+    if (!jobKey || !hasFiniteNumber(duration) || duration < 0) {
+      continue;
+    }
+
+    const current = totals.get(jobKey) || { totalSeconds: 0, sampleCount: 0 };
+    current.totalSeconds += duration;
+    current.sampleCount += 1;
+    totals.set(jobKey, current);
+  }
+
+  const summary = new Map<string, JobDurationSummary>();
+  for (const [jobKey, current] of totals) {
+    if (current.sampleCount <= 0) {
+      continue;
+    }
+    summary.set(jobKey, {
+      averageDurationSeconds: current.totalSeconds / current.sampleCount,
+      sampleCount: current.sampleCount
+    });
+  }
+
+  return summary;
 }
 
 function formatStorageBytes(value: number | null | undefined): string {
@@ -284,6 +319,14 @@ interface DomainLayerComparisonPanelProps {
   recentJobs?: JobRun[];
   jobStates?: Record<string, string>;
   managedContainerJobs?: ManagedContainerJob[];
+  metadataSnapshot?: DomainMetadataSnapshotResponse;
+  metadataUpdatedAt?: string | null;
+  metadataSource?: string | null;
+  onMetadataSnapshotChange?: (
+    updater: (
+      previous: DomainMetadataSnapshotResponse | undefined
+    ) => DomainMetadataSnapshotResponse | undefined
+  ) => void;
   onRefresh?: () => Promise<void> | void;
   isRefreshing?: boolean;
   isFetching?: boolean;
@@ -295,6 +338,10 @@ export function DomainLayerComparisonPanel({
   recentJobs = [],
   jobStates,
   managedContainerJobs = [],
+  metadataSnapshot,
+  metadataUpdatedAt,
+  metadataSource,
+  onMetadataSnapshotChange,
   onRefresh,
   isRefreshing,
   isFetching
@@ -365,6 +412,9 @@ export function DomainLayerComparisonPanel({
   const jobIndex = useMemo(() => {
     return buildLatestJobRunIndex(recentJobs);
   }, [recentJobs]);
+  const jobDurationSummaryIndex = useMemo(() => {
+    return buildJobDurationSummaryIndex(recentJobs);
+  }, [recentJobs]);
 
   const managedJobIndex = useMemo(() => {
     const index = new Map<string, ManagedContainerJob>();
@@ -431,28 +481,42 @@ export function DomainLayerComparisonPanel({
     return index;
   }, [queryPairs]);
 
-  const snapshotQueryKey = queryKeys.domainMetadataSnapshot('all', 'all');
+  const statusInvalidationKeys = useMemo(
+    () => [queryKeys.systemStatusView(), queryKeys.systemHealth()] as const,
+    []
+  );
 
-  const metadataSnapshotQuery = useQuery({
-    queryKey: snapshotQueryKey,
-    queryFn: () => DataService.getDomainMetadataSnapshot({ cacheOnly: true }),
-    enabled: true,
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    refetchOnMount: false
-  });
+  const updateMetadataSnapshot = useCallback(
+    (
+      updater: (
+        previous: DomainMetadataSnapshotResponse | undefined
+      ) => DomainMetadataSnapshotResponse | undefined
+    ) => {
+      if (onMetadataSnapshotChange) {
+        onMetadataSnapshotChange(updater);
+        return;
+      }
+      queryClient.setQueryData(queryKeys.domainMetadataSnapshot('all', 'all'), updater);
+    },
+    [onMetadataSnapshotChange, queryClient]
+  );
+
+  const refreshStatus = useCallback(async () => {
+    if (onRefresh) {
+      await onRefresh();
+      return;
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.systemStatusView() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() })
+    ]);
+  }, [onRefresh, queryClient]);
 
   const { metadataByCell, errorByCell, pendingByCell } = useMemo(() => {
     const metadata = new Map<string, DomainMetadata>();
     const errors = new Map<string, string>();
     const pending = new Set<string>();
-    const snapshotEntries = metadataSnapshotQuery.data?.entries || {};
-    const snapshotErrorMessage = metadataSnapshotQuery.error
-      ? formatSystemStatusText(metadataSnapshotQuery.error)
-      : null;
-    const snapshotPending = metadataSnapshotQuery.isLoading || metadataSnapshotQuery.isFetching;
+    const snapshotEntries = metadataSnapshot?.entries || {};
 
     queryPairs.forEach((pair) => {
       const key = makeCellKey(pair.layerKey, pair.domainKey);
@@ -464,24 +528,19 @@ export function DomainLayerComparisonPanel({
       if (resolved) {
         metadata.set(key, resolved);
       }
-      if (snapshotErrorMessage) {
-        errors.set(key, snapshotErrorMessage);
-      }
-      if (snapshotPending || refreshingCells.has(key)) {
+      if (refreshingCells.has(key)) {
         pending.add(key);
       }
     });
 
     return { metadataByCell: metadata, errorByCell: errors, pendingByCell: pending };
-  }, [metadataSnapshotQuery, queryClient, queryPairs, refreshingCells]);
+  }, [metadataSnapshot, queryClient, queryPairs, refreshingCells]);
 
   const isAnyRefreshInProgress =
     Boolean(isRefreshing) ||
     Boolean(isFetching) ||
     isRefreshingPanelCounts ||
     isResettingCheckpoints ||
-    metadataSnapshotQuery.isLoading ||
-    metadataSnapshotQuery.isFetching ||
     refreshingCells.size > 0;
   const isPanelActionBusy =
     isAnyRefreshInProgress || isResettingAllLists || isResettingLists || isResettingCheckpoints;
@@ -498,8 +557,12 @@ export function DomainLayerComparisonPanel({
       const layer = layersByKey.get(layerColumn.key);
 
       for (const domain of layer?.domains || []) {
-        const configuredJobName =
-          String(domain.jobName || '').trim() || extractAzureJobName(domain.jobUrl) || '';
+        const configuredJobName = resolveManagedJobName({
+          jobName: domain.jobName,
+          jobUrl: domain.jobUrl,
+          layerName: layer?.name,
+          domainName: domain?.name
+        });
         const normalizedJobName = normalizeAzureJobName(configuredJobName);
         if (normalizedJobName) {
           jobNames.add(normalizedJobName);
@@ -540,16 +603,21 @@ export function DomainLayerComparisonPanel({
             .trim()
             .toLowerCase() || 'pending';
 
-        const jobName =
-          String(domainConfig?.jobName || '').trim() ||
-          extractAzureJobName(domainConfig?.jobUrl) ||
-          '';
+        const jobName = resolveManagedJobName({
+          jobName: domainConfig?.jobName,
+          jobUrl: domainConfig?.jobUrl,
+          layerName: layerColumn.label,
+          domainName: row.key
+        });
         const jobKey = normalizeAzureJobName(jobName);
         const run = jobKey ? jobIndex.get(jobKey) : null;
+        const runningState = jobKey ? jobStates?.[jobKey] : undefined;
+        const hasLiveJobState =
+          hasActiveJobRunningState(runningState) || isSuspendedJobRunningState(runningState);
         const jobStatusKey =
-          !jobName || !run
+          !jobName || (!run && !hasLiveJobState)
             ? 'pending'
-            : normalizeJobStatus(run.status);
+            : effectiveJobStatus(run?.status, runningState);
 
         const isCritical =
           ['error', 'failed', 'critical'].includes(dataStatusKey) ||
@@ -568,7 +636,7 @@ export function DomainLayerComparisonPanel({
     }
 
     return byLayer;
-  }, [domainConfigByLayer, domainsByLayer, filteredDomainRows, jobIndex, layerColumns]);
+  }, [domainConfigByLayer, domainsByLayer, filteredDomainRows, jobIndex, jobStates, layerColumns]);
 
   const handleCellRefresh = useCallback(
     async (layerKey: LayerKey, domainKey: string) => {
@@ -586,21 +654,18 @@ export function DomainLayerComparisonPanel({
           refresh: true
         });
         queryClient.setQueryData(queryKeys.domainMetadata(layerKey, domainKey), metadata);
-        queryClient.setQueryData<DomainMetadataSnapshotResponse | undefined>(
-          snapshotQueryKey,
-          (previous) => {
-            const nextEntries = {
-              ...(previous?.entries || {}),
-              [makeSnapshotKey(layerKey, domainKey)]: metadata
-            };
-            return {
-              version: previous?.version || 1,
-              updatedAt: metadata.cachedAt || metadata.computedAt || previous?.updatedAt || null,
-              entries: nextEntries,
-              warnings: (previous?.warnings || []).filter(Boolean)
-            };
-          }
-        );
+        updateMetadataSnapshot((previous) => {
+          const nextEntries = {
+            ...(previous?.entries || {}),
+            [makeSnapshotKey(layerKey, domainKey)]: metadata
+          };
+          return {
+            version: previous?.version || 1,
+            updatedAt: metadata.cachedAt || metadata.computedAt || previous?.updatedAt || null,
+            entries: nextEntries,
+            warnings: (previous?.warnings || []).filter(Boolean)
+          };
+        });
       } catch (error) {
         console.error('[DomainLayerComparisonPanel] cell refresh failed', {
           layerKey,
@@ -616,7 +681,7 @@ export function DomainLayerComparisonPanel({
         });
       }
     },
-    [queryClient, refreshingCells, snapshotQueryKey]
+    [queryClient, refreshingCells, updateMetadataSnapshot]
   );
 
   const refreshDomainMetadataAndStatus = useCallback(
@@ -631,9 +696,7 @@ export function DomainLayerComparisonPanel({
       const metadataRefreshPromise = Promise.allSettled(
         dedupedTargets.map((target) => handleCellRefresh(target.layerKey, target.domainKey))
       );
-      const statusRefreshPromise = onRefresh
-        ? Promise.resolve(onRefresh())
-        : queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+      const statusRefreshPromise = refreshStatus();
 
       const [, statusResult] = await Promise.allSettled([
         metadataRefreshPromise,
@@ -645,7 +708,7 @@ export function DomainLayerComparisonPanel({
         });
       }
     },
-    [handleCellRefresh, onRefresh, queryClient]
+    [handleCellRefresh, refreshStatus]
   );
 
   const refreshLayerMetadataAndStatus = useCallback(
@@ -699,7 +762,7 @@ export function DomainLayerComparisonPanel({
 
       try {
         for (const jobName of jobNames) {
-          await triggerJob(jobName);
+          await triggerJob(jobName, statusInvalidationKeys);
         }
       } finally {
         setTriggeringLayerKeys((previous) => {
@@ -719,7 +782,8 @@ export function DomainLayerComparisonPanel({
       layerTriggerGroups,
       triggerJob,
       triggeringLayerKeys,
-      triggeringJob
+      triggeringJob,
+      statusInvalidationKeys
     ]
   );
 
@@ -734,33 +798,30 @@ export function DomainLayerComparisonPanel({
         });
       }
 
-      queryClient.setQueryData<DomainMetadataSnapshotResponse | undefined>(
-        snapshotQueryKey,
-        (previous) => {
-          const nextEntries = { ...(previous?.entries || {}) };
-          let changed = false;
-          for (const pair of pairs) {
-            const key = makeSnapshotKey(pair.layerKey, pair.domainKey);
-            if (key in nextEntries) {
-              delete nextEntries[key];
-              changed = true;
-            }
+      updateMetadataSnapshot((previous) => {
+        const nextEntries = { ...(previous?.entries || {}) };
+        let changed = false;
+        for (const pair of pairs) {
+          const key = makeSnapshotKey(pair.layerKey, pair.domainKey);
+          if (key in nextEntries) {
+            delete nextEntries[key];
+            changed = true;
           }
-
-          if (!changed && previous) {
-            return previous;
-          }
-
-          return {
-            version: previous?.version || 1,
-            updatedAt: new Date().toISOString(),
-            entries: nextEntries,
-            warnings: (previous?.warnings || []).filter(Boolean)
-          };
         }
-      );
+
+        if (!changed && previous) {
+          return previous;
+        }
+
+        return {
+          version: previous?.version || 1,
+          updatedAt: new Date().toISOString(),
+          entries: nextEntries,
+          warnings: (previous?.warnings || []).filter(Boolean)
+        };
+      });
     },
-    [queryClient, snapshotQueryKey]
+    [queryClient, updateMetadataSnapshot]
   );
 
   const waitForPurgeResult = useCallback(async (operationId: string) => {
@@ -830,8 +891,8 @@ export function DomainLayerComparisonPanel({
       if (!result) {
         throw new Error('Purge returned no completion result.');
       }
-      toast.success(`Purged ${result.totalDeleted} blob(s).`);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+      toast.success(`Purged ${getPurgeDeletedCount(result)} blob(s).`);
+      await refreshStatus();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       const detail = operationId ? `operation ${operationId}: ${message}` : message;
@@ -841,7 +902,7 @@ export function DomainLayerComparisonPanel({
       setActivePurgeTarget(null);
       setPurgeTarget(null);
     }
-  }, [purgeTarget, queryClient, waitForPurgeResult]);
+  }, [purgeTarget, refreshStatus, waitForPurgeResult]);
 
   const confirmDomainListReset = useCallback(async () => {
     const target = listResetTarget;
@@ -860,7 +921,7 @@ export function DomainLayerComparisonPanel({
       );
       await clearDomainMetadataCache([{ layerKey: target.layerKey, domainKey: target.domainKey }]);
       await handleCellRefresh(target.layerKey, target.domainKey);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+      await refreshStatus();
     } catch (error) {
       toast.error(`List reset failed (${formatSystemStatusText(error) || 'Unknown error'})`);
     } finally {
@@ -868,7 +929,7 @@ export function DomainLayerComparisonPanel({
       setResettingCellKey(null);
       setListResetTarget(null);
     }
-  }, [clearDomainMetadataCache, handleCellRefresh, listResetTarget, queryClient]);
+  }, [clearDomainMetadataCache, handleCellRefresh, listResetTarget, refreshStatus]);
 
   const confirmDomainCheckpointReset = useCallback(async () => {
     const target = checkpointResetTarget;
@@ -894,7 +955,7 @@ export function DomainLayerComparisonPanel({
       }
       await clearDomainMetadataCache([{ layerKey: target.layerKey, domainKey: target.domainKey }]);
       await handleCellRefresh(target.layerKey, target.domainKey);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+      await refreshStatus();
     } catch (error) {
       toast.error(`Checkpoint reset failed (${formatSystemStatusText(error) || 'Unknown error'})`);
     } finally {
@@ -902,7 +963,7 @@ export function DomainLayerComparisonPanel({
       setResettingCheckpointCellKey(null);
       setCheckpointResetTarget(null);
     }
-  }, [checkpointResetTarget, clearDomainMetadataCache, handleCellRefresh, queryClient]);
+  }, [checkpointResetTarget, clearDomainMetadataCache, handleCellRefresh, refreshStatus]);
 
   const refreshAllPanelCounts = useCallback(async () => {
     if (
@@ -933,8 +994,7 @@ export function DomainLayerComparisonPanel({
       let refreshedCells = 0;
       let failedCells = 0;
       let firstFailureMessage = '';
-      const previousSnapshot =
-        queryClient.getQueryData<DomainMetadataSnapshotResponse>(snapshotQueryKey) || null;
+      const previousSnapshot = metadataSnapshot || null;
       const nextEntries = { ...(previousSnapshot?.entries || {}) };
 
       refreshResults.forEach((result, index) => {
@@ -961,7 +1021,7 @@ export function DomainLayerComparisonPanel({
         warnings: (previousSnapshot?.warnings || []).filter(Boolean)
       };
 
-      queryClient.setQueryData(snapshotQueryKey, snapshot);
+      updateMetadataSnapshot(() => snapshot);
 
       toast.success(`Refreshed counts for ${refreshedCells}/${queryPairs.length} panel cells.`);
       if (failedCells > 0) {
@@ -982,15 +1042,14 @@ export function DomainLayerComparisonPanel({
     isResettingAllLists,
     isResettingCheckpoints,
     isResettingLists,
+    metadataSnapshot,
     queryClient,
     queryPairs,
-    snapshotQueryKey
+    updateMetadataSnapshot
   ]);
 
   const refreshPanelCoverage = useCallback(async () => {
-    const statusRefreshPromise = onRefresh
-      ? Promise.resolve(onRefresh())
-      : queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+    const statusRefreshPromise = refreshStatus();
 
     if (queryPairs.length > 0) {
       const [, statusResult] = await Promise.allSettled([
@@ -1006,7 +1065,7 @@ export function DomainLayerComparisonPanel({
     }
 
     await statusRefreshPromise;
-  }, [onRefresh, queryClient, queryPairs.length, refreshAllPanelCounts]);
+  }, [queryPairs.length, refreshAllPanelCounts, refreshStatus]);
 
   const confirmResetAllPanelLists = useCallback(async () => {
     if (
@@ -1056,7 +1115,7 @@ export function DomainLayerComparisonPanel({
         toast.success(
           `Reset ${totalFilesReset} list file(s) across ${successfulResets}/${queryPairs.length} panel cells.`
         );
-        void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+        await refreshStatus();
       }
       if (failedResets > 0) {
         toast.error(`Failed to reset ${failedResets} panel cells (first: ${firstFailureMessage})`);
@@ -1072,8 +1131,8 @@ export function DomainLayerComparisonPanel({
     isResettingAllLists,
     isResettingCheckpoints,
     isResettingLists,
-    queryClient,
-    queryPairs
+    queryPairs,
+    refreshStatus
   ]);
 
   return (
@@ -1249,6 +1308,12 @@ export function DomainLayerComparisonPanel({
         <div className="flex min-w-0 items-center gap-2">
           <GitCompareArrows className="h-5 w-5 shrink-0" />
           <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
+        </div>
+        <div className="text-xs text-mcm-walnut/70">
+          {metadataSource === 'persisted-snapshot' ? 'Persisted snapshot' : 'Snapshot'}
+          {metadataUpdatedAt
+            ? ` updated ${formatMetadataTimestamp(metadataUpdatedAt)}`
+            : ' not available'}
         </div>
       </CardHeader>
 
@@ -1466,18 +1531,30 @@ export function DomainLayerComparisonPanel({
                         ? domainConfigByLayer.get(layerColumn.key)?.get(row.key)
                         : undefined;
                       const baseFolderUrl = normalizeAzurePortalUrl(domainConfig?.portalUrl) || '';
-                      const jobName =
-                        String(domainConfig?.jobName || '').trim() ||
-                        extractAzureJobName(domainConfig?.jobUrl) ||
-                        '';
+                      const jobName = resolveManagedJobName({
+                        jobName: domainConfig?.jobName,
+                        jobUrl: domainConfig?.jobUrl,
+                        layerName: layerColumn.label,
+                        domainName: row.key
+                      });
                       const jobKey = normalizeAzureJobName(jobName);
                       const run = jobKey ? jobIndex.get(jobKey) : null;
+                      const durationSummary = jobKey ? jobDurationSummaryIndex.get(jobKey) : null;
                       const managedJob = jobKey ? managedJobIndex.get(jobKey) : null;
                       const lastStartDisplay = (() => {
                         if (!jobName) return 'N/A';
                         if (!run?.startTime) return 'NO RUN';
                         return formatTimeAgo(run.startTime);
                       })();
+                      const averageRuntimeSummary = durationSummary
+                        ? `avg runtime ${formatDuration(durationSummary.averageDurationSeconds)}`
+                        : null;
+                      const averageRuntimeDetail = durationSummary
+                        ? `${formatDuration(durationSummary.averageDurationSeconds)} (${durationSummary.sampleCount} run${durationSummary.sampleCount === 1 ? '' : 's'})`
+                        : 'N/A';
+                      const averageRuntimeTitle = durationSummary
+                        ? `Average from ${durationSummary.sampleCount} recent execution${durationSummary.sampleCount === 1 ? '' : 's'}`
+                        : undefined;
                       const jobUpdatedAt = managedJob?.lastModifiedAt || null;
                       const jobUpdatedDisplay = jobUpdatedAt ? formatTimeAgo(jobUpdatedAt) : 'N/A';
                       const scheduleRaw = String(
@@ -1495,26 +1572,26 @@ export function DomainLayerComparisonPanel({
                       const dataConfig = getStatusConfig(dataStatusKey);
                       const dataLabel = toDataStatusLabel(dataStatusKey);
 
-                      const jobStatusKey = !jobName || !run ? 'pending' : normalizeJobStatus(run.status);
+                      const runningState = jobKey ? jobStates?.[jobKey] : undefined;
+                      const hasLiveJobState =
+                        hasActiveJobRunningState(runningState) ||
+                        isSuspendedJobRunningState(runningState);
+                      const jobStatusKey =
+                        !jobName || (!run && !hasLiveJobState)
+                          ? 'pending'
+                          : effectiveJobStatus(run?.status, runningState);
                       const jobConfig = getStatusConfig(jobStatusKey);
-                      const jobLabel = !jobName ? 'N/A' : !run ? 'NO RUN' : toJobStatusLabel(jobStatusKey);
-                      const jobStatusCode = String(run?.statusCode || run?.status || '')
-                        .trim() || null;
+                      const jobLabel = !jobName
+                        ? 'N/A'
+                        : !run && !hasLiveJobState
+                          ? 'NO RUN'
+                          : toJobStatusLabel(jobStatusKey);
+                      const jobStatusCode =
+                        String(run?.statusCode || run?.status || '').trim() || null;
 
                       const actionJobName = String(run?.jobName || jobName).trim();
-                      const runningState = jobKey ? jobStates?.[jobKey] : undefined;
-                      const isSuspended =
-                        String(runningState || '')
-                          .trim()
-                          .toLowerCase() === 'suspended';
-                      const isRunning =
-                        String(run?.status || '')
-                          .trim()
-                          .toLowerCase() === 'running' ||
-                        String(runningState || '')
-                          .trim()
-                          .toLowerCase()
-                          .includes('running');
+                      const isSuspended = isSuspendedJobRunningState(runningState);
+                      const isRunning = effectiveJobStatus(run?.status, runningState) === 'running';
                       const isControlling =
                         Boolean(actionJobName) && jobControl?.jobName === actionJobName;
                       const isTriggeringThisJob =
@@ -1613,6 +1690,9 @@ export function DomainLayerComparisonPanel({
                         jobLabel,
                         jobStatusCode,
                         lastStartDisplay,
+                        averageRuntimeSummary,
+                        averageRuntimeDetail,
+                        averageRuntimeTitle,
                         jobUpdatedAt,
                         jobUpdatedDisplay,
                         scheduleRaw,
@@ -1787,6 +1867,14 @@ export function DomainLayerComparisonPanel({
                                         updated {formatMetadataTimestamp(model.metadataUpdatedAt)}
                                       </div>
                                     ) : null}
+                                    {model.averageRuntimeSummary ? (
+                                      <div
+                                        className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
+                                        title={model.averageRuntimeTitle}
+                                      >
+                                        {model.averageRuntimeSummary}
+                                      </div>
+                                    ) : null}
                                   </div>
                                   <div className="flex items-center gap-2 self-start">
                                     {model.isCellRefreshing ? (
@@ -1882,6 +1970,13 @@ export function DomainLayerComparisonPanel({
                                       >
                                         {model.lastStartDisplay}
                                       </dd>
+                                      <dt className="text-mcm-walnut/70">avg runtime:</dt>
+                                      <dd
+                                        className="min-w-0 truncate text-right text-mcm-walnut/90"
+                                        title={model.averageRuntimeTitle}
+                                      >
+                                        {model.averageRuntimeDetail}
+                                      </dd>
                                       <dt className="text-mcm-walnut/70">job updated:</dt>
                                       <dd
                                         className="min-w-0 truncate text-right text-mcm-walnut/90"
@@ -1918,9 +2013,7 @@ export function DomainLayerComparisonPanel({
                                             key={`finance-detail-${row.key}-${model.layerColumn.key}-${item.key}`}
                                             className="flex items-center justify-between"
                                           >
-                                            <span className="text-mcm-walnut/80">
-                                              {item.label}
-                                            </span>
+                                            <span className="text-mcm-walnut/80">{item.label}</span>
                                             <span
                                               className={`${StatusTypos.MONO} tabular-nums text-mcm-walnut/95`}
                                             >
@@ -1936,15 +2029,20 @@ export function DomainLayerComparisonPanel({
                                         size="sm"
                                         variant="outline"
                                         className="h-7 px-2 text-[11px]"
-                                        disabled={
-                                          !model.actionJobName || model.isJobControlBlocked
-                                        }
+                                        disabled={!model.actionJobName || model.isJobControlBlocked}
                                         onClick={() => {
                                           if (!model.actionJobName) return;
                                           if (model.isRunning) {
-                                            void setJobSuspended(model.actionJobName, true);
+                                            void setJobSuspended(
+                                              model.actionJobName,
+                                              true,
+                                              statusInvalidationKeys
+                                            );
                                           } else {
-                                            void triggerJob(model.actionJobName);
+                                            void triggerJob(
+                                              model.actionJobName,
+                                              statusInvalidationKeys
+                                            );
                                           }
                                         }}
                                       >
@@ -2054,7 +2152,8 @@ export function DomainLayerComparisonPanel({
                                               if (!model.actionJobName) return;
                                               void setJobSuspended(
                                                 model.actionJobName,
-                                                !model.isSuspended
+                                                !model.isSuspended,
+                                                statusInvalidationKeys
                                               );
                                             }}
                                           >

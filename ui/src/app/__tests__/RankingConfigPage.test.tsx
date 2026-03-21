@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, Mock, vi } from 'vitest';
+import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RankingConfigPage } from '@/app/components/pages/RankingConfigPage';
 import { rankingApi } from '@/services/rankingApi';
@@ -115,7 +115,12 @@ describe('RankingConfigPage', () => {
       { name: 'mom-spy-res', type: 'configured', description: 'desc', updated_at: '2026-03-08' }
     ]);
     (universeApi.listUniverseConfigs as Mock).mockResolvedValue([
-      { name: 'large-cap-quality', description: 'desc', version: 1, updated_at: '2026-03-08T00:00:00Z' }
+      {
+        name: 'large-cap-quality',
+        description: 'desc',
+        version: 1,
+        updated_at: '2026-03-08T00:00:00Z'
+      }
     ]);
   });
 

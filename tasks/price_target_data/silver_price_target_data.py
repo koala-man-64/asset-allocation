@@ -1,8 +1,9 @@
-import pandas as pd
-import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional
+
+import numpy as np
+import pandas as pd
 
 from core import core as mdc
 from core import delta_core
@@ -16,6 +17,7 @@ from tasks.common.watermarks import (
     check_blob_unchanged,
     load_last_success,
     load_watermarks,
+    normalize_watermark_blob_name,
     save_last_success,
     save_watermarks,
     should_process_blob_since_last_success,
@@ -55,6 +57,33 @@ _ALPHA26_PRICE_TARGET_MIN_COLUMNS = [
 ]
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_now_iso() -> str:
+    return _utc_now().isoformat().replace("+00:00", "Z")
+
+
+def _concat_non_empty_frames(
+    frames: list[Optional[pd.DataFrame]],
+    *,
+    columns: list[str],
+    sort: bool = False,
+) -> pd.DataFrame:
+    cleaned_frames = [
+        frame.dropna(axis="columns", how="all")
+        for frame in frames
+        if frame is not None and not frame.empty and not frame.dropna(how="all").empty
+    ]
+    cleaned_frames = [frame for frame in cleaned_frames if not frame.empty]
+    if not cleaned_frames:
+        return pd.DataFrame(columns=columns)
+    if len(cleaned_frames) == 1:
+        return cleaned_frames[0].reindex(columns=columns).copy()
+    return pd.concat(cleaned_frames, ignore_index=True, sort=sort).reindex(columns=columns)
+
+
 def _split_price_target_bucket_rows(
     df_bucket: Optional[pd.DataFrame],
     *,
@@ -74,24 +103,9 @@ def _split_price_target_bucket_rows(
     symbol_mask = out["symbol"] == symbol
     return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
 
-def _extract_ticker(blob_name: str) -> str:
-    return blob_name.replace("price-target-data/", "").replace(".parquet", "")
-
 
 def _parse_alpha26_bucket_from_blob_name(blob_name: str) -> Optional[str]:
-    text = str(blob_name or "").strip("/")
-    parts = text.split("/")
-    if len(parts) < 3:
-        return None
-    if parts[0] != "price-target-data" or parts[1] != "buckets":
-        return None
-    filename = parts[2]
-    if "." in filename:
-        filename = filename.split(".", 1)[0]
-    bucket = filename.strip().upper()
-    if bucket not in set(layer_bucketing.ALPHABET_BUCKETS):
-        return None
-    return bucket
+    return bronze_bucketing.parse_bucket_from_blob_name(blob_name, expected_prefix="price-target-data")
 
 
 def _restore_blob_watermark(
@@ -100,10 +114,11 @@ def _restore_blob_watermark(
     blob_name: str,
     prior_signature: Optional[dict],
 ) -> None:
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if prior_signature is None:
-        watermarks.pop(blob_name, None)
+        watermarks.pop(watermark_key, None)
         return
-    watermarks[blob_name] = dict(prior_signature)
+    watermarks[watermark_key] = dict(prior_signature)
 
 
 def _process_symbol_frame(
@@ -276,7 +291,10 @@ def _process_symbol_frame(
     else:
         if "symbol" in df_other_symbols.columns:
             df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
-        df_bucket_to_store = pd.concat([df_other_symbols, df_merged], ignore_index=True).reset_index(drop=True)
+        df_bucket_to_store = _concat_non_empty_frames(
+            [df_other_symbols, df_merged],
+            columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS,
+        ).reset_index(drop=True)
         delta_core.store_delta(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
@@ -300,47 +318,6 @@ def _process_symbol_frame(
     return "ok"
 
 
-def process_blob(
-    blob,
-    *,
-    watermarks: dict,
-    include_history: bool = True,
-    persist: bool = True,
-    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
-) -> str:
-    blob_name = blob["name"]  # price-target-data/{symbol}.parquet
-    if not blob_name.endswith(".parquet"):
-        return "skipped_non_parquet"
-
-    ticker = blob_name.replace("price-target-data/", "").replace(".parquet", "")
-    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
-        return "skipped_debug_symbols"
-
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        return "skipped_unchanged"
-
-    mdc.write_line(f"Processing {ticker}...")
-    try:
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_new = pd.read_parquet(BytesIO(raw_bytes))
-        status = _process_symbol_frame(
-            ticker=ticker,
-            df_new=df_new,
-            source_name=blob_name,
-            include_history=include_history,
-            persist=persist,
-            alpha26_bucket_frames=alpha26_bucket_frames,
-        )
-        if status == "ok" and signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
-            watermarks[blob_name] = signature
-        return status
-    except Exception as exc:
-        mdc.write_error(f"Failed to process {ticker}: {exc}")
-        return "failed"
-
-
 def process_alpha26_bucket_blob(
     blob,
     *,
@@ -350,10 +327,11 @@ def process_alpha26_bucket_blob(
     alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
 ) -> str:
     blob_name = str(blob.get("name", ""))
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if not blob_name.endswith(".parquet"):
         return "skipped_non_parquet"
 
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(watermark_key))
     if unchanged:
         return "skipped_unchanged"
 
@@ -366,8 +344,8 @@ def process_alpha26_bucket_blob(
 
     if df_bucket is None or df_bucket.empty:
         if signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
-            watermarks[blob_name] = signature
+            signature["updated_at"] = _utc_now_iso()
+            watermarks[watermark_key] = signature
         return "ok"
 
     symbol_col = "symbol" if "symbol" in df_bucket.columns else ("Symbol" if "Symbol" in df_bucket.columns else None)
@@ -395,8 +373,8 @@ def process_alpha26_bucket_blob(
             has_failed = True
 
     if not has_failed and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
-        watermarks[blob_name] = signature
+        signature["updated_at"] = _utc_now_iso()
+        watermarks[watermark_key] = signature
     return "failed" if has_failed else "ok"
 
 
@@ -433,7 +411,10 @@ def _write_alpha26_price_target_buckets(
         bucket_path = DataPaths.get_silver_price_target_bucket_path(bucket)
         parts = bucket_frames.get(bucket, [])
         if parts:
-            df_bucket = pd.concat(parts, ignore_index=True)
+            df_bucket = _concat_non_empty_frames(
+                parts,
+                columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS,
+            )
             if "symbol" in df_bucket.columns and "obs_date" in df_bucket.columns:
                 df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
                 df_bucket["obs_date"] = pd.to_datetime(df_bucket["obs_date"], errors="coerce")
@@ -587,25 +568,19 @@ def main():
     layer_bucketing.silver_layout_mode()
     force_rebuild = layer_bucketing.silver_alpha26_force_rebuild()
     mdc.write_line("Listing Bronze Price Target files...")
-    blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
     watermarks = load_watermarks("bronze_price_target_data")
     last_success = load_last_success("silver_price_target_data")
     watermarks_dirty = False
 
-    blob_list = [
-        b
-        for b in blobs
-        if str(b.get("name", "")).startswith("price-target-data/buckets/")
-        and str(b.get("name", "")).endswith(".parquet")
-    ]
+    blob_list = bronze_bucketing.list_active_bucket_blob_infos("price-target", bronze_client)
     checkpoint_skipped = 0
     forced_schema_migration = 0
     candidate_blobs: list[dict] = []
     for blob in blob_list:
         blob_name = str(blob.get("name", ""))
         force_reprocess = False
-        force_reprocess = False
-        prior = watermarks.get(blob_name)
+        watermark_key = normalize_watermark_blob_name(blob_name)
+        prior = watermarks.get(watermark_key)
         should_process = should_process_blob_since_last_success(
             blob,
             prior_signature=prior,
@@ -636,7 +611,8 @@ def main():
     alpha26_column_count: Optional[int] = len(_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
     for blob in candidate_blobs:
         blob_name = str(blob.get("name", ""))
-        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        watermark_key = normalize_watermark_blob_name(blob_name)
+        prior_signature = dict(watermarks[watermark_key]) if isinstance(watermarks.get(watermark_key), dict) else None
         alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
         status = process_alpha26_bucket_blob(
             blob,
@@ -698,6 +674,18 @@ def main():
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
     reconciliation_failed = 0
+    if failed == 0:
+        try:
+            reconciliation_orphans, reconciliation_deleted_blobs = _run_price_target_reconciliation(
+                bronze_blob_list=blob_list
+            )
+        except Exception as exc:
+            reconciliation_failed = 1
+            mdc.write_error(f"Silver price-target reconciliation failed: {exc}")
+            mdc.write_line(
+                "reconciliation_result layer=silver domain=price-target "
+                "status=failed orphan_count=unknown deleted_blobs=unknown cutoff_rows_dropped=unknown"
+            )
 
     total_failed = failed + reconciliation_failed
     mdc.write_line(
@@ -737,14 +725,15 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-price-target-job"
-    ensure_api_awake_from_env(required=True)
-    raise SystemExit(
-        run_logged_job(
-            job_name=job_name,
-            run=main,
-            on_success=(
-                lambda: write_system_health_marker(layer="silver", domain="price-target", job_name=job_name),
-                trigger_next_job_from_env,
-            ),
+    with mdc.JobLock(job_name, conflict_policy="fail"):
+        ensure_api_awake_from_env(required=True)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(
+                    lambda: write_system_health_marker(layer="silver", domain="price-target", job_name=job_name),
+                    trigger_next_job_from_env,
+                ),
+            )
         )
-    )

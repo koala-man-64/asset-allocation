@@ -19,32 +19,6 @@ jobs:
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-    - name: Validate required secrets
-      if: github.event_name != 'pull_request'
-      env:
-        AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME || vars.AZURE_STORAGE_ACCOUNT_NAME }}
-        NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-        VITE_PORT: ${{ vars.VITE_PORT }}
-      run: |
-        set -euo pipefail
-
-        require_secret() {
-          local name="$1"
-          local value="${!name:-}"
-          value="${value#"${value%%[![:space:]]*}"}"
-          value="${value%"${value##*[![:space:]]}"}"
-          if [ -z "$value" ]; then
-            echo "::error::Missing required GitHub Actions secret: $name"
-            exit 1
-          fi
-        }
-
-        require_secret AZURE_STORAGE_CONNECTION_STRING
-        require_secret AZURE_STORAGE_ACCOUNT_NAME
-        require_secret NASDAQ_API_KEY
-        require_secret VITE_PORT
-
     - name: Prepare pnpm store (ui)
       run: |
         mkdir -p ui/.pnpm-store
@@ -60,18 +34,18 @@ jobs:
     - name: Build UI (ui)
       run: |
         docker run --rm \
-          -e VITE_PORT="${{ vars.VITE_PORT }}" \
+          -e VITE_PORT="5174" \
           -v "${{ github.workspace }}/ui:/app" \
           -v "${{ github.workspace }}/ui/.pnpm-store:/tmp/pnpm-store" \
           -v /app/node_modules \
           -w /app \
           node:20-bookworm-slim@sha256:6c51af7dc83f4708aaac35991306bca8f478351cfd2bda35750a62d7efcf05bb \
-          bash -lc 'set -euo pipefail; corepack enable && pnpm config set store-dir /tmp/pnpm-store && pnpm install --frozen-lockfile && (pnpm format:check || echo "::warning::UI format check failed (non-blocking)") && (pnpm lint || echo "::warning::UI lint failed (non-blocking)") && pnpm exec vitest run --coverage && pnpm build'
+          bash -lc 'set -euo pipefail; corepack enable && pnpm config set store-dir /tmp/pnpm-store && pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm exec vitest run --coverage && pnpm build'
 
     - name: Set up Python
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
-        python-version: '3.10'
+        python-version: '3.14'
         cache: 'pip'
         cache-dependency-path: |
           requirements.lock.txt
@@ -96,7 +70,7 @@ jobs:
     - name: Run tests
       env:
         AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING || 'DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net' }}
-        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME || vars.AZURE_STORAGE_ACCOUNT_NAME || 'test_account' }}
+        AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME || 'test_account' }}
         NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY || 'test' }}
         # Runtime settings for CI
         DISABLE_DOTENV: "true"

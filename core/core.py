@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from io import StringIO, BytesIO
 from pathlib import Path
-from typing import Any, Union, Optional
+from typing import Any, Union, Optional, Literal
 from core.massive_provider import get_complete_ticker_list
 
 import pandas as pd
@@ -164,7 +164,7 @@ def log_environment_diagnostics():
             except Exception:
                 pass
         else:
-            logger.info("Debug symbols disabled or empty.")
+            logger.info("Debug symbols not configured or empty.")
     except Exception as exc:
         logger.warning("Debug symbols refresh skipped: %s", exc)
 
@@ -200,7 +200,6 @@ def log_environment_diagnostics():
         "AZURE_CONTAINER_PLATINUM",
         # Job behavior toggles
         "LOG_FORMAT",
-        "FEATURE_ENGINEERING_MAX_WORKERS",
         "TEST_MODE",
     ]
 
@@ -700,7 +699,7 @@ def get_active_tickers_massive() -> pd.DataFrame:
     """
     api_key = cfg.MASSIVE_API_KEY
     if not api_key:
-        write_warning("Massive symbol fetch disabled (MASSIVE_API_KEY missing).")
+        write_warning("Massive symbol fetch skipped (MASSIVE_API_KEY missing).")
         return pd.DataFrame(columns=["Symbol"])
 
     try:
@@ -803,12 +802,11 @@ def merge_symbol_sources(
     left["source_nasdaq"] = True
     right_m["source_massive"] = True
     right_a["source_alpha_vantage"] = True
-    right_a["source_alphavantage"] = True
 
     av_rename = {
         col: f"{col}_alpha_vantage"
         for col in right_a.columns
-        if col not in {"Symbol", "source_alpha_vantage", "source_alphavantage"}
+        if col not in {"Symbol", "source_alpha_vantage"}
     }
     right_a = right_a.rename(columns=av_rename)
 
@@ -893,7 +891,6 @@ def merge_symbol_sources(
     )
     source_alpha_vantage_bool = source_alpha_vantage.astype("boolean").fillna(False).astype(bool)
     out["source_alpha_vantage"] = source_alpha_vantage_bool
-    out["source_alphavantage"] = source_alpha_vantage_bool
 
     out = out[out["Symbol"].ne("")].drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
     return out
@@ -912,6 +909,11 @@ def _get_symbols_refresh_interval_hours() -> float:
 
 _SYMBOLS_TABLE = "core.symbols"
 _SYMBOL_SYNC_STATE_TABLE = "core.symbol_sync_state"
+_SOURCE_AVAILABILITY_COLUMNS = (
+    "source_nasdaq",
+    "source_massive",
+    "source_alpha_vantage",
+)
 
 
 def _ensure_symbols_tables(cur) -> None:
@@ -946,20 +948,33 @@ def _ensure_symbols_tables(cur) -> None:
         ("source_nasdaq", "BOOLEAN"),
         ("source_massive", "BOOLEAN"),
         ("source_alpha_vantage", "BOOLEAN"),
-        ("source_alphavantage", "BOOLEAN"),
         ("created_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
         ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
     ]
     for name, col_type in columns:
         cur.execute(f"ALTER TABLE {_SYMBOLS_TABLE} ADD COLUMN IF NOT EXISTS {name} {col_type};")
 
-    # Keep both AV source flag spellings in sync for backward compatibility.
+    # Collapse the legacy Alpha Vantage alias into the canonical column before dropping it.
     cur.execute(
         f"""
-        UPDATE {_SYMBOLS_TABLE}
-        SET source_alpha_vantage = COALESCE(source_alpha_vantage, source_alphavantage, FALSE),
-            source_alphavantage = COALESCE(source_alphavantage, source_alpha_vantage, FALSE)
-        WHERE source_alpha_vantage IS NULL OR source_alphavantage IS NULL;
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'core'
+              AND table_name = 'symbols'
+              AND column_name = 'source_alphavantage'
+          ) THEN
+            EXECUTE '
+              UPDATE {_SYMBOLS_TABLE}
+              SET source_alpha_vantage = COALESCE(source_alpha_vantage, source_alphavantage, FALSE)
+              WHERE source_alpha_vantage IS NULL OR source_alpha_vantage = FALSE
+            ';
+
+            EXECUTE 'ALTER TABLE {_SYMBOLS_TABLE} DROP COLUMN source_alphavantage';
+          END IF;
+        END $$;
         """
     )
 
@@ -1054,6 +1069,16 @@ def _unlock_symbols_refresh(cur) -> None:
         pass
 
 
+def strip_source_availability_columns(df_symbols: pd.DataFrame) -> pd.DataFrame:
+    if df_symbols is None:
+        return pd.DataFrame()
+    out = df_symbols.copy()
+    drop_columns = [column for column in _SOURCE_AVAILABILITY_COLUMNS if column in out.columns]
+    if drop_columns:
+        out = out.drop(columns=drop_columns)
+    return out
+
+
 def upsert_symbols_to_db(
     df_symbols: pd.DataFrame, *, sources: Optional[dict[str, Any]] = None, cur: Any = None
 ) -> None:
@@ -1085,18 +1110,11 @@ def upsert_symbols_to_db(
         "source_nasdaq": "source_nasdaq",
         "source_massive": "source_massive",
         "source_alpha_vantage": "source_alpha_vantage",
-        "source_alphavantage": "source_alphavantage",
     }
 
     df_to_upload = df_symbols.copy()
     if "Symbol" not in df_to_upload.columns:
         return
-
-    # Keep both AV source flag spellings in sync.
-    if "source_alpha_vantage" in df_to_upload.columns and "source_alphavantage" not in df_to_upload.columns:
-        df_to_upload["source_alphavantage"] = df_to_upload["source_alpha_vantage"]
-    if "source_alphavantage" in df_to_upload.columns and "source_alpha_vantage" not in df_to_upload.columns:
-        df_to_upload["source_alpha_vantage"] = df_to_upload["source_alphavantage"]
 
     # Normalize and keep only mapped columns.
     existing_cols = [c for c in col_map.keys() if c in df_to_upload.columns]
@@ -1126,13 +1144,13 @@ def upsert_symbols_to_db(
         return False
 
     # Avoid DB type errors by coercing source flags to strict booleans.
-    for col in ("source_nasdaq", "source_massive", "source_alpha_vantage", "source_alphavantage"):
+    for col in ("source_nasdaq", "source_massive", "source_alpha_vantage"):
         if col in df_to_upload.columns:
             df_to_upload[col] = df_to_upload[col].apply(_coerce_source_bool).astype(bool)
 
     # Convert empty strings/NaNs to NULL to avoid wiping out existing values on upsert.
     for col in df_to_upload.columns:
-        if col in {"source_nasdaq", "source_massive", "source_alpha_vantage", "source_alphavantage"}:
+        if col in {"source_nasdaq", "source_massive", "source_alpha_vantage"}:
             continue
         df_to_upload[col] = df_to_upload[col].apply(lambda v: None if v is None or pd.isna(v) or str(v).strip() == "" else v)
 
@@ -1249,7 +1267,7 @@ def refresh_symbols_to_db_if_due() -> None:
                     write_warning("Symbols refresh produced empty symbol universe; skipping DB update.")
                     return
 
-                upsert_symbols_to_db(df_merged, sources=sources, cur=cur)
+                upsert_symbols_to_db(strip_source_availability_columns(df_merged), sources=sources, cur=cur)
                 write_line(f"Symbols refresh complete. merged={len(df_merged)}")
             except Exception as exc:
                 try:
@@ -1307,16 +1325,11 @@ def get_symbols_from_db():
                 'source_nasdaq': 'source_nasdaq',
                 'source_massive': 'source_massive',
                 'source_alpha_vantage': 'source_alpha_vantage',
-                'source_alphavantage': 'source_alphavantage',
                 'updated_at': 'UpdatedAt',
             }
             df.rename(columns=rename_map, inplace=True)
             if "source" in df.columns:
                 df.drop(columns=["source"], inplace=True)
-            if "source_alpha_vantage" in df.columns and "source_alphavantage" not in df.columns:
-                df["source_alphavantage"] = df["source_alpha_vantage"]
-            if "source_alphavantage" in df.columns and "source_alpha_vantage" not in df.columns:
-                df["source_alpha_vantage"] = df["source_alphavantage"]
             if "source_massive" not in df.columns:
                 df["source_massive"] = False
             return df
@@ -1405,7 +1418,7 @@ def get_symbols():
 
         # Best effort: persist immediately if Postgres is configured.
         try:
-            upsert_symbols_to_db(df_symbols, sources={"mode": "bootstrap"})
+            upsert_symbols_to_db(strip_source_availability_columns(df_symbols), sources={"mode": "bootstrap"})
         except Exception:
             pass
     else:
@@ -1429,9 +1442,6 @@ def get_symbols():
     
     df_symbols.drop_duplicates(subset=['Symbol'], inplace=True)
     
-    # Sync new symbols to DB (instead of CSV)
-    sync_symbols_to_db(df_symbols)
-    
     return df_symbols
 
 def is_weekend(date):
@@ -1445,9 +1455,10 @@ class JobLock:
     """
     Context manager for distributed locking using Azure Blob Storage Leases.
 
-    By default, if the lock is already held, the job exits successfully (0) to avoid concurrent execution.
-    Optionally, callers can wait for the lock by setting wait_timeout_seconds to a positive number or None
-    (wait forever).
+    Conflict handling is controlled by ``conflict_policy``:
+      - ``skip_success``: exit 0 immediately when a held lock is encountered.
+      - ``fail``: exit 1 immediately when a held lock is encountered.
+      - ``wait_then_fail``: wait for release until ``wait_timeout_seconds`` then exit 1.
     """
 
     def __init__(
@@ -1455,11 +1466,13 @@ class JobLock:
         job_name: str,
         lease_duration: int = 60,
         *,
+        conflict_policy: Literal["skip_success", "fail", "wait_then_fail"] = "skip_success",
         wait_timeout_seconds: Optional[float] = 0,
         poll_interval_seconds: float = 5.0,
     ):
         self.job_name = job_name
         self.lease_duration = lease_duration
+        self.conflict_policy = str(conflict_policy or "skip_success").strip().lower()
         self.wait_timeout_seconds = wait_timeout_seconds
         self.poll_interval_seconds = poll_interval_seconds
         self.lock_blob_name = f"locks/{job_name}.lock"
@@ -1489,7 +1502,10 @@ class JobLock:
                 os._exit(1)
 
     def __enter__(self):
-        write_line(f"Acquiring lock for {self.job_name}...")
+        write_line(
+            f"Acquiring lock for {self.job_name}... "
+            f"(conflict_policy={self.conflict_policy} wait_timeout_seconds={self.wait_timeout_seconds})"
+        )
         
         if common_storage_client is None:
             write_warning("Common storage client not initialized. Skipping lock check (UNSAFE concurrency).")
@@ -1545,14 +1561,31 @@ class JobLock:
                         raise
 
                     # Locked
-                    if self.wait_timeout_seconds == 0:
-                        write_warning(f"Lock already held for {self.job_name}. Skipping execution.")
+                    if self.conflict_policy == "skip_success":
+                        write_warning(
+                            f"Lock already held for {self.job_name}. "
+                            "Skipping execution with success due to conflict_policy=skip_success."
+                        )
                         raise SystemExit(0)
+                    if self.conflict_policy == "fail":
+                        write_error(
+                            f"Lock already held for {self.job_name}. "
+                            "Failing execution due to conflict_policy=fail."
+                        )
+                        raise SystemExit(1)
+                    if self.conflict_policy != "wait_then_fail":
+                        write_error(
+                            f"Unsupported conflict_policy={self.conflict_policy!r} for lock {self.job_name}."
+                        )
+                        raise SystemExit(1)
 
                     now = time.monotonic()
                     if start_wait is None:
                         start_wait = now
-                        write_line(f"Lock already held for {self.job_name}. Waiting for release...")
+                        write_line(
+                            f"Lock already held for {self.job_name}. Waiting for release "
+                            f"(conflict_policy=wait_then_fail)..."
+                        )
                     else:
                         elapsed = now - start_wait
                         if self.wait_timeout_seconds is not None and elapsed >= self.wait_timeout_seconds:
@@ -1586,18 +1619,32 @@ class JobLock:
             except Exception as e:
                 write_error(f"Error releasing lock: {e}")
 
-def read_raw_bytes(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> bytes:
+def read_raw_bytes(
+    file_path: Union[str, Path],
+    client: Optional[BlobStorageClient] = None,
+    *,
+    missing_ok: bool = False,
+    missing_message: Optional[str] = None,
+) -> bytes:
     """
     Retrieves raw bytes from Azure Blob Storage.
     file_path: Remote path.
     client: Specific client to use.
+    missing_ok: When true, do not emit a warning if the blob is absent/empty.
+    missing_message: Optional info-level message for expected-missing reads.
     """
     if client:
         blob_name = get_remote_path(file_path)
         content_bytes = client.download_data(blob_name)
         if content_bytes:
             return content_bytes
-    
+
+    if missing_ok:
+        text = str(missing_message or "").strip()
+        if text:
+            logger.info(text)
+        return b""
+
     logger.warning(f"Failed to load bytes from {file_path} (client={client is not None}).")
     return b""
 

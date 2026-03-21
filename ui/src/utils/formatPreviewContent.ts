@@ -1,5 +1,10 @@
 const JSON_EXTENSIONS = new Set(['json', 'jsonl', 'ndjson']);
-const JSON_CONTENT_TYPE_HINTS = ['application/json', 'application/ld+json', 'application/x-ndjson', 'text/json'];
+const JSON_CONTENT_TYPE_HINTS = [
+  'application/json',
+  'application/ld+json',
+  'application/x-ndjson',
+  'text/json'
+];
 
 const getFileExtension = (path?: string | null): string => {
   if (!path) {
@@ -25,7 +30,11 @@ const tryFormatJson = (value: string): string | null => {
   }
 };
 
-const isLikelyJsonContent = (content: string, path?: string | null, contentType?: string | null): boolean => {
+const isLikelyJsonContent = (
+  content: string,
+  path?: string | null,
+  contentType?: string | null
+): boolean => {
   const extension = getFileExtension(path);
   if (JSON_EXTENSIONS.has(extension)) {
     return true;

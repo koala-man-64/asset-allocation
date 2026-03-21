@@ -52,17 +52,21 @@ def test_bronze_earnings_missing_values_are_json_safe(monkeypatch):
 
 
 def test_bronze_market_defaults_to_first_blob_when_ticker_missing(monkeypatch):
-    class StubClient:
-        def list_files(self, name_starts_with=None):
-            assert name_starts_with == "market-data/buckets/"
-            return ["market-data/buckets/M.parquet", "market-data/buckets/A.parquet"]
-
-    monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: StubClient())
+    monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: object())
+    monkeypatch.setattr(
+        data_service_module.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda domain, client: [
+            {"name": "market-data/runs/run-123/buckets/M.parquet"},
+            {"name": "market-data/runs/run-123/buckets/A.parquet"},
+        ],
+    )
 
     payload = pd.DataFrame([{"symbol": "AAPL", "date": "2025-01-01", "open": 1.0, "close": 2.0}]).to_parquet(index=False)
 
     def fake_read_raw_bytes(path, client=None):
-        assert path == "market-data/buckets/A.parquet"
+        del client
+        assert path == "market-data/runs/run-123/buckets/A.parquet"
         return payload
 
     monkeypatch.setattr(data_service_module.mdc, "read_raw_bytes", fake_read_raw_bytes)
@@ -74,22 +78,23 @@ def test_bronze_market_defaults_to_first_blob_when_ticker_missing(monkeypatch):
 
 
 def test_bronze_finance_defaults_to_first_blob_when_ticker_missing(monkeypatch):
-    class StubClient:
-        def list_files(self, name_starts_with=None):
-            assert name_starts_with == "finance-data/buckets/"
-            return [
-                "finance-data/buckets/M.parquet",
-                "finance-data/buckets/A.parquet",
-            ]
-
-    monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: StubClient())
+    monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: object())
+    monkeypatch.setattr(
+        data_service_module.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda domain, client: [
+            {"name": "finance-data/runs/run-123/buckets/M.parquet"},
+            {"name": "finance-data/runs/run-123/buckets/A.parquet"},
+        ],
+    )
 
     payload = pd.DataFrame(
         [{"symbol": "AAPL", "report_type": "valuation", "metric": 123}],
     ).to_parquet(index=False)
 
     def fake_read_raw_bytes(path, client=None):
-        assert path == "finance-data/buckets/A.parquet"
+        del client
+        assert path == "finance-data/runs/run-123/buckets/A.parquet"
         return payload
 
     monkeypatch.setattr(data_service_module.mdc, "read_raw_bytes", fake_read_raw_bytes)
@@ -101,20 +106,21 @@ def test_bronze_finance_defaults_to_first_blob_when_ticker_missing(monkeypatch):
 
 
 def test_bronze_generic_finance_defaults_to_first_blob_when_ticker_missing(monkeypatch):
-    class StubClient:
-        def list_files(self, name_starts_with=None):
-            assert name_starts_with == "finance-data/buckets/"
-            return [
-                "finance-data/buckets/M.parquet",
-                "finance-data/buckets/A.parquet",
-            ]
-
-    monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: StubClient())
+    monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: object())
+    monkeypatch.setattr(
+        data_service_module.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda domain, client: [
+            {"name": "finance-data/runs/run-123/buckets/M.parquet"},
+            {"name": "finance-data/runs/run-123/buckets/A.parquet"},
+        ],
+    )
 
     payload = pd.DataFrame([{"symbol": "AAPL", "metric": 123}]).to_parquet(index=False)
 
     def fake_read_raw_bytes(path, client=None):
-        assert path == "finance-data/buckets/A.parquet"
+        del client
+        assert path == "finance-data/runs/run-123/buckets/A.parquet"
         return payload
 
     monkeypatch.setattr(data_service_module.mdc, "read_raw_bytes", fake_read_raw_bytes)

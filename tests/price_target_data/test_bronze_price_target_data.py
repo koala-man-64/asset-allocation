@@ -22,6 +22,18 @@ def storage_cleanup(unique_ticker):
     mdc.get_storage_client(container) 
     yield unique_ticker
 
+
+def _sync_result() -> bronze.symbol_availability.SyncResult:
+    return bronze.symbol_availability.SyncResult(
+        provider="nasdaq",
+        source_column="source_nasdaq",
+        listed_count=1,
+        inserted_count=0,
+        disabled_count=0,
+        duration_ms=1,
+        lock_wait_ms=0,
+    )
+
 # --- Integration Tests ---
 
 
@@ -71,7 +83,50 @@ def test_process_batch_bronze(mock_list_manager, mock_client, mock_nasdaq, uniqu
 @patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
 @patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
 @patch('tasks.price_target_data.bronze_price_target_data.list_manager')
-def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
+def test_process_batch_bronze_logs_symbol_processed_success(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbol = "AAA"
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = False
+    mock_client.get_blob_client.return_value = mock_blob_client
+    mock_nasdaq.get_table.return_value = pd.DataFrame(
+        {
+            "ticker": [symbol],
+            "obs_date": [pd.Timestamp("2024-03-01")],
+            "tp_mean_est": [55.0],
+        }
+    )
+
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch("core.core.store_raw_bytes"), patch(
+            "tasks.price_target_data.bronze_price_target_data.log_bronze_success"
+        ) as mock_log_success:
+            summary = await bronze.process_batch_bronze([symbol], semaphore)
+
+        assert summary["saved"] == 1
+        mock_log_success.assert_any_call(
+            domain="price-target",
+            operation="symbol_processed",
+            symbol=symbol,
+            disposition="written",
+            success_count=1,
+            coverage_status=None,
+            row_count=1,
+        )
+
+    asyncio.run(run_test())
+
+
+@patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
+@patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
+@patch('tasks.price_target_data.bronze_price_target_data.list_manager')
+def test_process_batch_bronze_handles_filtered_missing_symbol(
     mock_list_manager,
     mock_client,
     mock_nasdaq,
@@ -99,10 +154,8 @@ def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
                 semaphore,
                 backfill_start=pd.Timestamp('2024-01-01').date(),
             )
-            assert summary["blacklisted"] == 0
             assert summary["filtered_missing"] == 1
             assert summary["deleted"] == 1
-            mock_list_manager.add_to_blacklist.assert_not_called()
             assert mock_store.call_count >= 1
             stored_paths = [call.args[1] for call in mock_store.call_args_list if len(call.args) >= 2]
             assert f"price-target-data/{symbol_with_data}.parquet" in stored_paths
@@ -135,7 +188,6 @@ def test_process_batch_bronze_deletes_stale_when_cutoff_and_empty_response(
                 semaphore,
                 backfill_start=pd.Timestamp('2024-01-01').date(),
             )
-            assert summary["blacklisted"] == 0
             assert summary["filtered_missing"] == 2
             assert summary["deleted"] == 2
             assert summary["save_failed"] == 0
@@ -187,7 +239,6 @@ def test_process_batch_bronze_uses_watermark_and_appends_existing(
         ) as mock_store:
             summary = await bronze.process_batch_bronze([symbol], semaphore)
             assert summary["saved"] == 1
-            assert summary["blacklisted"] == 0
 
             _, call_kwargs = mock_nasdaq.get_table.call_args
             assert call_kwargs["obs_date"]["gte"] == "2024-03-02"
@@ -235,11 +286,9 @@ def test_process_batch_bronze_missing_after_watermark_keeps_existing(
         ) as mock_store:
             summary = await bronze.process_batch_bronze([symbol], semaphore)
             assert summary["saved"] == 0
-            assert summary["blacklisted"] == 0
             assert summary["filtered_missing"] == 1
             mock_store.assert_not_called()
             mock_client.delete_file.assert_not_called()
-            mock_list_manager.add_to_blacklist.assert_not_called()
             mock_list_manager.add_to_whitelist.assert_called_with(symbol)
 
     asyncio.run(run_test())
@@ -348,7 +397,55 @@ def test_process_batch_bronze_skips_force_when_limited_marker_present(
     asyncio.run(run_test())
 
 
-def test_main_async_returns_success_when_only_blacklisted_symbols_are_detected():
+def test_failure_bucket_key_includes_type_and_path():
+    exc = RuntimeError("boom")
+    setattr(exc, "payload", {"path": "/api/providers/nasdaq/zacks-tp"})
+    key = bronze._failure_bucket_key(exc)
+
+    assert "type=RuntimeError" in key
+    assert "path=/api/providers/nasdaq/zacks-tp" in key
+
+
+@patch("tasks.price_target_data.bronze_price_target_data.nasdaqdatalink")
+@patch("tasks.price_target_data.bronze_price_target_data.bronze_client")
+@patch("tasks.price_target_data.bronze_price_target_data.list_manager")
+def test_process_batch_bronze_logs_structured_save_failure(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbol = "AAA"
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = False
+    mock_client.get_blob_client.return_value = mock_blob_client
+    mock_nasdaq.get_table.return_value = pd.DataFrame(
+        {
+            "ticker": [symbol],
+            "obs_date": [pd.Timestamp("2024-03-01")],
+            "tp_mean_est": [55.0],
+        }
+    )
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch("core.core.store_raw_bytes", side_effect=RuntimeError("disk full")), patch(
+            "tasks.price_target_data.bronze_price_target_data.mdc.write_warning"
+        ) as mock_warning, patch(
+            "tasks.price_target_data.bronze_price_target_data.mdc.write_error"
+        ) as mock_error:
+            summary = await bronze.process_batch_bronze([symbol], semaphore)
+            assert summary["save_failed"] == 1
+
+        warning_messages = [str(call.args[0]) for call in mock_warning.call_args_list if call.args]
+        error_messages = [str(call.args[0]) for call in mock_error.call_args_list if call.args]
+        assert any("Bronze price target batch failure summary:" in msg for msg in warning_messages)
+        assert any("scope=symbol=AAA type=RuntimeError" in msg for msg in warning_messages)
+        assert any("Failed to save AAA: type=RuntimeError message=disk full" in msg for msg in error_messages)
+
+    asyncio.run(run_test())
+
+
+def test_main_async_returns_success_when_only_filtered_missing_symbols_are_detected():
     symbol = "AAA"
 
     async def run_test():
@@ -360,14 +457,17 @@ def test_main_async_returns_success_when_only_blacklisted_symbols_are_detected()
             "tasks.price_target_data.bronze_price_target_data.resolve_backfill_start_date",
             return_value=None,
         ), patch(
-            "tasks.price_target_data.bronze_price_target_data.mdc.get_symbols",
+            "tasks.price_target_data.bronze_price_target_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.symbol_availability.get_domain_symbols",
             return_value=pd.DataFrame({"Symbol": [symbol]}),
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.bronze_bucketing.is_alpha26_mode",
             return_value=False,
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.process_batch_bronze",
-            new=AsyncMock(return_value={"blacklisted": 1}),
+            new=AsyncMock(return_value={"filtered_missing": 1}),
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.list_manager"
         ) as mock_list_manager, patch(

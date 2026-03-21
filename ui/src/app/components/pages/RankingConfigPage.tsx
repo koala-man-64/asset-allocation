@@ -21,7 +21,14 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/app/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/app/components/ui/table';
 import { Textarea } from '@/app/components/ui/textarea';
 import { rankingApi } from '@/services/rankingApi';
 import { strategyApi } from '@/services/strategyApi';
@@ -110,8 +117,14 @@ function parseParamValue(value: string): string | number | boolean | null {
   return Number.isFinite(parsed) ? parsed : trimmed;
 }
 
-function getTransformParamConfig(type: RankingTransformType): Array<{ key: string; label: string }> {
-  if (type === 'clip') return [{ key: 'lower', label: 'Lower Bound' }, { key: 'upper', label: 'Upper Bound' }];
+function getTransformParamConfig(
+  type: RankingTransformType
+): Array<{ key: string; label: string }> {
+  if (type === 'clip')
+    return [
+      { key: 'lower', label: 'Lower Bound' },
+      { key: 'upper', label: 'Upper Bound' }
+    ];
   if (type === 'winsorize') {
     return [
       { key: 'lowerQuantile', label: 'Lower Quantile' },
@@ -135,7 +148,9 @@ function TransformListEditor({
     <div className="space-y-3 rounded-2xl border border-border/50 bg-background/55 p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+          <div className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">
+            {label}
+          </div>
           <div className="text-xs text-muted-foreground">Transforms run in array order.</div>
         </div>
         <Button
@@ -158,7 +173,10 @@ function TransformListEditor({
           {transforms.map((transform, index) => {
             const paramFields = getTransformParamConfig(transform.type);
             return (
-              <div key={`${label}-${index}`} className="space-y-3 rounded-xl border border-border/50 bg-card/80 p-3">
+              <div
+                key={`${label}-${index}`}
+                className="space-y-3 rounded-xl border border-border/50 bg-card/80 p-3"
+              >
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="min-w-[220px] flex-1">
                     <Label htmlFor={`${label}-transform-${index}`}>Transform</Label>
@@ -186,7 +204,9 @@ function TransformListEditor({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => onChange(transforms.filter((_, itemIndex) => itemIndex !== index))}
+                    onClick={() =>
+                      onChange(transforms.filter((_, itemIndex) => itemIndex !== index))
+                    }
                   >
                     <Trash2 className="h-4 w-4" />
                     Remove
@@ -233,12 +253,20 @@ export function RankingConfigPage() {
   const [previewStrategyName, setPreviewStrategyName] = useState('');
   const [previewDate, setPreviewDate] = useState(() => new Date().toISOString().slice(0, 10));
 
-  const { data: schemas = [], isLoading: isSchemasLoading, error: schemasError } = useQuery({
+  const {
+    data: schemas = [],
+    isLoading: isSchemasLoading,
+    error: schemasError
+  } = useQuery({
     queryKey: ['ranking-schemas'],
     queryFn: () => rankingApi.listRankingSchemas()
   });
 
-  const { data: rankingCatalog, isLoading: isCatalogLoading, error: rankingCatalogError } = useQuery({
+  const {
+    data: rankingCatalog,
+    isLoading: isCatalogLoading,
+    error: rankingCatalogError
+  } = useQuery({
     queryKey: ['ranking-catalog'],
     queryFn: () => rankingApi.getRankingCatalog()
   });
@@ -373,7 +401,9 @@ export function RankingConfigPage() {
           <p className="page-kicker">Ranking Configuration</p>
           <h1 className="page-title">Ranking Configurations</h1>
           <p className="page-subtitle">
-            Manage Postgres-backed ranking schemas, attach a saved ranking universe, preview against strategy and ranking universe intersections, and materialize platinum outputs with score and rank.
+            Manage Postgres-backed ranking schemas, attach a saved ranking universe, preview against
+            strategy and ranking universe intersections, and materialize platinum outputs with score
+            and rank.
           </p>
         </div>
         <div className="flex gap-3">
@@ -383,7 +413,9 @@ export function RankingConfigPage() {
           </Button>
           <Button
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending || !draft.name.trim() || !draft.config.universeConfigName}
+            disabled={
+              saveMutation.isPending || !draft.name.trim() || !draft.config.universeConfigName
+            }
           >
             {saveMutation.isPending ? 'Saving...' : 'Save Ranking Configuration'}
           </Button>
@@ -395,7 +427,9 @@ export function RankingConfigPage() {
           <CardHeader className="border-b border-border/40">
             <div className="space-y-1">
               <CardTitle className="font-display text-xl">Ranking Configuration Catalog</CardTitle>
-              <CardDescription>Select a ranking configuration to review or edit its grouped factor stack.</CardDescription>
+              <CardDescription>
+                Select a ranking configuration to review or edit its grouped factor stack.
+              </CardDescription>
             </div>
             <CardAction>
               <Badge variant="secondary">{schemas.length} total</Badge>
@@ -431,8 +465,12 @@ export function RankingConfigPage() {
                     >
                       <TableCell className="whitespace-normal">
                         <div className="space-y-1">
-                          <div className="font-display text-base text-foreground">{schema.name}</div>
-                          <div className="text-xs text-muted-foreground">{schema.description || 'No description provided.'}</div>
+                          <div className="font-display text-base text-foreground">
+                            {schema.name}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {schema.description || 'No description provided.'}
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -452,7 +490,10 @@ export function RankingConfigPage() {
             <CardHeader className="border-b border-border/40">
               <div className="space-y-1">
                 <CardTitle className="font-display text-xl">Ranking Configuration Editor</CardTitle>
-                <CardDescription>Groups combine weighted factors, then group and overall transforms run in array order.</CardDescription>
+                <CardDescription>
+                  Groups combine weighted factors, then group and overall transforms run in array
+                  order.
+                </CardDescription>
               </div>
               <CardAction>
                 <Badge variant="secondary">{selectedSchemaLabel}</Badge>
@@ -474,7 +515,9 @@ export function RankingConfigPage() {
                         id="ranking-name"
                         readOnly={Boolean(selectedSchemaName)}
                         value={draft.name}
-                        onChange={(event) => updateDraft((current) => ({ ...current, name: event.target.value }))}
+                        onChange={(event) =>
+                          updateDraft((current) => ({ ...current, name: event.target.value }))
+                        }
                         placeholder="e.g. quality-momentum"
                       />
                     </div>
@@ -484,7 +527,10 @@ export function RankingConfigPage() {
                         id="ranking-description"
                         value={draft.description || ''}
                         onChange={(event) =>
-                          updateDraft((current) => ({ ...current, description: event.target.value }))
+                          updateDraft((current) => ({
+                            ...current,
+                            description: event.target.value
+                          }))
                         }
                         placeholder="Explain what this schema optimizes for."
                       />
@@ -518,24 +564,35 @@ export function RankingConfigPage() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      Ranking schemas now require a separately managed universe config. Materialization intersects this universe with the strategy universe.
+                      Ranking schemas now require a separately managed universe config.
+                      Materialization intersects this universe with the strategy universe.
                     </p>
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Groups</div>
-                      <div className="mt-2 font-display text-lg text-foreground">{draft.config.groups.length}</div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                        Groups
+                      </div>
+                      <div className="mt-2 font-display text-lg text-foreground">
+                        {draft.config.groups.length}
+                      </div>
                     </div>
                     <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Factors</div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                        Factors
+                      </div>
                       <div className="mt-2 font-display text-lg text-foreground">
                         {draft.config.groups.reduce((sum, group) => sum + group.factors.length, 0)}
                       </div>
                     </div>
                     <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-                      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Version</div>
-                      <div className="mt-2 font-display text-lg text-foreground">v{draft.version || 1}</div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                        Version
+                      </div>
+                      <div className="mt-2 font-display text-lg text-foreground">
+                        v{draft.version || 1}
+                      </div>
                     </div>
                   </div>
 
@@ -571,7 +628,10 @@ export function RankingConfigPage() {
                     {draft.config.groups.map((group, groupIndex) => {
                       const groupLabel = `group-${groupIndex}`;
                       return (
-                        <div key={`${group.name}-${groupIndex}`} className="space-y-4 rounded-3xl border border-border/60 bg-card/70 p-5">
+                        <div
+                          key={`${group.name}-${groupIndex}`}
+                          className="space-y-4 rounded-3xl border border-border/60 bg-card/70 p-5"
+                        >
                           <div className="flex flex-wrap items-center gap-3">
                             <div className="grid min-w-[220px] flex-1 gap-2">
                               <Label htmlFor={`${groupLabel}-name`}>Group Name</Label>
@@ -582,7 +642,10 @@ export function RankingConfigPage() {
                                   updateDraft((current) => {
                                     const nextGroups = current.config.groups.slice();
                                     nextGroups[groupIndex] = { ...group, name: event.target.value };
-                                    return { ...current, config: { ...current.config, groups: nextGroups } };
+                                    return {
+                                      ...current,
+                                      config: { ...current.config, groups: nextGroups }
+                                    };
                                   })
                                 }
                               />
@@ -601,7 +664,10 @@ export function RankingConfigPage() {
                                       ...group,
                                       weight: Number(event.target.value) || 0
                                     };
-                                    return { ...current, config: { ...current.config, groups: nextGroups } };
+                                    return {
+                                      ...current,
+                                      config: { ...current.config, groups: nextGroups }
+                                    };
                                   })
                                 }
                               />
@@ -614,7 +680,9 @@ export function RankingConfigPage() {
                                   ...current,
                                   config: {
                                     ...current.config,
-                                    groups: current.config.groups.filter((_, itemIndex) => itemIndex !== groupIndex)
+                                    groups: current.config.groups.filter(
+                                      (_, itemIndex) => itemIndex !== groupIndex
+                                    )
                                   }
                                 }))
                               }
@@ -631,7 +699,10 @@ export function RankingConfigPage() {
                               updateDraft((current) => {
                                 const nextGroups = current.config.groups.slice();
                                 nextGroups[groupIndex] = { ...group, transforms: nextTransforms };
-                                return { ...current, config: { ...current.config, groups: nextGroups } };
+                                return {
+                                  ...current,
+                                  config: { ...current.config, groups: nextGroups }
+                                };
                               })
                             }
                           />
@@ -639,8 +710,12 @@ export function RankingConfigPage() {
                           <div className="space-y-3">
                             <div className="flex items-center justify-between gap-3">
                               <div>
-                                <div className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Factors</div>
-                                <div className="text-xs text-muted-foreground">Each factor references a numeric gold column.</div>
+                                <div className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">
+                                  Factors
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Each factor references a numeric gold column.
+                                </div>
                               </div>
                               <Button
                                 type="button"
@@ -656,7 +731,9 @@ export function RankingConfigPage() {
                                         {
                                           name: `${group.name}-factor-${group.factors.length + 1}`,
                                           table: rankingCatalog?.tables[0]?.name || 'market_data',
-                                          column: rankingCatalog?.tables[0]?.columns[0]?.name || 'return_20d',
+                                          column:
+                                            rankingCatalog?.tables[0]?.columns[0]?.name ||
+                                            'return_20d',
                                           weight: 1,
                                           direction: 'desc',
                                           missingValuePolicy: 'exclude',
@@ -664,7 +741,10 @@ export function RankingConfigPage() {
                                         }
                                       ]
                                     };
-                                    return { ...current, config: { ...current.config, groups: nextGroups } };
+                                    return {
+                                      ...current,
+                                      config: { ...current.config, groups: nextGroups }
+                                    };
                                   })
                                 }
                               >
@@ -687,7 +767,9 @@ export function RankingConfigPage() {
                                   >
                                     <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr_auto]">
                                       <div className="grid gap-2">
-                                        <Label htmlFor={`${groupLabel}-factor-name-${factorIndex}`}>Factor Name</Label>
+                                        <Label htmlFor={`${groupLabel}-factor-name-${factorIndex}`}>
+                                          Factor Name
+                                        </Label>
                                         <Input
                                           id={`${groupLabel}-factor-name-${factorIndex}`}
                                           value={factor.name}
@@ -695,15 +777,28 @@ export function RankingConfigPage() {
                                             updateDraft((current) => {
                                               const nextGroups = current.config.groups.slice();
                                               const nextFactors = group.factors.slice();
-                                              nextFactors[factorIndex] = { ...factor, name: event.target.value };
-                                              nextGroups[groupIndex] = { ...group, factors: nextFactors };
-                                              return { ...current, config: { ...current.config, groups: nextGroups } };
+                                              nextFactors[factorIndex] = {
+                                                ...factor,
+                                                name: event.target.value
+                                              };
+                                              nextGroups[groupIndex] = {
+                                                ...group,
+                                                factors: nextFactors
+                                              };
+                                              return {
+                                                ...current,
+                                                config: { ...current.config, groups: nextGroups }
+                                              };
                                             })
                                           }
                                         />
                                       </div>
                                       <div className="grid gap-2">
-                                        <Label htmlFor={`${groupLabel}-factor-table-${factorIndex}`}>Gold Table</Label>
+                                        <Label
+                                          htmlFor={`${groupLabel}-factor-table-${factorIndex}`}
+                                        >
+                                          Gold Table
+                                        </Label>
                                         <Select
                                           value={factor.table}
                                           onValueChange={(value) =>
@@ -716,12 +811,20 @@ export function RankingConfigPage() {
                                                 table: value,
                                                 column: nextColumns[0]?.name || factor.column
                                               };
-                                              nextGroups[groupIndex] = { ...group, factors: nextFactors };
-                                              return { ...current, config: { ...current.config, groups: nextGroups } };
+                                              nextGroups[groupIndex] = {
+                                                ...group,
+                                                factors: nextFactors
+                                              };
+                                              return {
+                                                ...current,
+                                                config: { ...current.config, groups: nextGroups }
+                                              };
                                             })
                                           }
                                         >
-                                          <SelectTrigger id={`${groupLabel}-factor-table-${factorIndex}`}>
+                                          <SelectTrigger
+                                            id={`${groupLabel}-factor-table-${factorIndex}`}
+                                          >
                                             <SelectValue placeholder="Select table" />
                                           </SelectTrigger>
                                           <SelectContent>
@@ -734,20 +837,35 @@ export function RankingConfigPage() {
                                         </Select>
                                       </div>
                                       <div className="grid gap-2">
-                                        <Label htmlFor={`${groupLabel}-factor-column-${factorIndex}`}>Column</Label>
+                                        <Label
+                                          htmlFor={`${groupLabel}-factor-column-${factorIndex}`}
+                                        >
+                                          Column
+                                        </Label>
                                         <Select
                                           value={factor.column}
                                           onValueChange={(value) =>
                                             updateDraft((current) => {
                                               const nextGroups = current.config.groups.slice();
                                               const nextFactors = group.factors.slice();
-                                              nextFactors[factorIndex] = { ...factor, column: value };
-                                              nextGroups[groupIndex] = { ...group, factors: nextFactors };
-                                              return { ...current, config: { ...current.config, groups: nextGroups } };
+                                              nextFactors[factorIndex] = {
+                                                ...factor,
+                                                column: value
+                                              };
+                                              nextGroups[groupIndex] = {
+                                                ...group,
+                                                factors: nextFactors
+                                              };
+                                              return {
+                                                ...current,
+                                                config: { ...current.config, groups: nextGroups }
+                                              };
                                             })
                                           }
                                         >
-                                          <SelectTrigger id={`${groupLabel}-factor-column-${factorIndex}`}>
+                                          <SelectTrigger
+                                            id={`${groupLabel}-factor-column-${factorIndex}`}
+                                          >
                                             <SelectValue placeholder="Select column" />
                                           </SelectTrigger>
                                           <SelectContent>
@@ -760,7 +878,11 @@ export function RankingConfigPage() {
                                         </Select>
                                       </div>
                                       <div className="grid gap-2">
-                                        <Label htmlFor={`${groupLabel}-factor-weight-${factorIndex}`}>Weight</Label>
+                                        <Label
+                                          htmlFor={`${groupLabel}-factor-weight-${factorIndex}`}
+                                        >
+                                          Weight
+                                        </Label>
                                         <Input
                                           id={`${groupLabel}-factor-weight-${factorIndex}`}
                                           type="number"
@@ -774,8 +896,14 @@ export function RankingConfigPage() {
                                                 ...factor,
                                                 weight: Number(event.target.value) || 0
                                               };
-                                              nextGroups[groupIndex] = { ...group, factors: nextFactors };
-                                              return { ...current, config: { ...current.config, groups: nextGroups } };
+                                              nextGroups[groupIndex] = {
+                                                ...group,
+                                                factors: nextFactors
+                                              };
+                                              return {
+                                                ...current,
+                                                config: { ...current.config, groups: nextGroups }
+                                              };
                                             })
                                           }
                                         />
@@ -789,9 +917,14 @@ export function RankingConfigPage() {
                                               const nextGroups = current.config.groups.slice();
                                               nextGroups[groupIndex] = {
                                                 ...group,
-                                                factors: group.factors.filter((_, itemIndex) => itemIndex !== factorIndex)
+                                                factors: group.factors.filter(
+                                                  (_, itemIndex) => itemIndex !== factorIndex
+                                                )
                                               };
-                                              return { ...current, config: { ...current.config, groups: nextGroups } };
+                                              return {
+                                                ...current,
+                                                config: { ...current.config, groups: nextGroups }
+                                              };
                                             })
                                           }
                                         >
@@ -803,20 +936,35 @@ export function RankingConfigPage() {
 
                                     <div className="grid gap-4 md:grid-cols-2">
                                       <div className="grid gap-2">
-                                        <Label htmlFor={`${groupLabel}-factor-direction-${factorIndex}`}>Direction</Label>
+                                        <Label
+                                          htmlFor={`${groupLabel}-factor-direction-${factorIndex}`}
+                                        >
+                                          Direction
+                                        </Label>
                                         <Select
                                           value={factor.direction}
                                           onValueChange={(value) =>
                                             updateDraft((current) => {
                                               const nextGroups = current.config.groups.slice();
                                               const nextFactors = group.factors.slice();
-                                              nextFactors[factorIndex] = { ...factor, direction: value as 'asc' | 'desc' };
-                                              nextGroups[groupIndex] = { ...group, factors: nextFactors };
-                                              return { ...current, config: { ...current.config, groups: nextGroups } };
+                                              nextFactors[factorIndex] = {
+                                                ...factor,
+                                                direction: value as 'asc' | 'desc'
+                                              };
+                                              nextGroups[groupIndex] = {
+                                                ...group,
+                                                factors: nextFactors
+                                              };
+                                              return {
+                                                ...current,
+                                                config: { ...current.config, groups: nextGroups }
+                                              };
                                             })
                                           }
                                         >
-                                          <SelectTrigger id={`${groupLabel}-factor-direction-${factorIndex}`}>
+                                          <SelectTrigger
+                                            id={`${groupLabel}-factor-direction-${factorIndex}`}
+                                          >
                                             <SelectValue placeholder="Select direction" />
                                           </SelectTrigger>
                                           <SelectContent>
@@ -829,7 +977,11 @@ export function RankingConfigPage() {
                                         </Select>
                                       </div>
                                       <div className="grid gap-2">
-                                        <Label htmlFor={`${groupLabel}-factor-missing-${factorIndex}`}>Missing Policy</Label>
+                                        <Label
+                                          htmlFor={`${groupLabel}-factor-missing-${factorIndex}`}
+                                        >
+                                          Missing Policy
+                                        </Label>
                                         <Select
                                           value={factor.missingValuePolicy}
                                           onValueChange={(value) =>
@@ -840,12 +992,20 @@ export function RankingConfigPage() {
                                                 ...factor,
                                                 missingValuePolicy: value as 'exclude' | 'zero'
                                               };
-                                              nextGroups[groupIndex] = { ...group, factors: nextFactors };
-                                              return { ...current, config: { ...current.config, groups: nextGroups } };
+                                              nextGroups[groupIndex] = {
+                                                ...group,
+                                                factors: nextFactors
+                                              };
+                                              return {
+                                                ...current,
+                                                config: { ...current.config, groups: nextGroups }
+                                              };
                                             })
                                           }
                                         >
-                                          <SelectTrigger id={`${groupLabel}-factor-missing-${factorIndex}`}>
+                                          <SelectTrigger
+                                            id={`${groupLabel}-factor-missing-${factorIndex}`}
+                                          >
                                             <SelectValue placeholder="Select policy" />
                                           </SelectTrigger>
                                           <SelectContent>
@@ -866,9 +1026,18 @@ export function RankingConfigPage() {
                                         updateDraft((current) => {
                                           const nextGroups = current.config.groups.slice();
                                           const nextFactors = group.factors.slice();
-                                          nextFactors[factorIndex] = { ...factor, transforms: nextTransforms };
-                                          nextGroups[groupIndex] = { ...group, factors: nextFactors };
-                                          return { ...current, config: { ...current.config, groups: nextGroups } };
+                                          nextFactors[factorIndex] = {
+                                            ...factor,
+                                            transforms: nextTransforms
+                                          };
+                                          nextGroups[groupIndex] = {
+                                            ...group,
+                                            factors: nextFactors
+                                          };
+                                          return {
+                                            ...current,
+                                            config: { ...current.config, groups: nextGroups }
+                                          };
                                         })
                                       }
                                     />
@@ -926,7 +1095,8 @@ export function RankingConfigPage() {
               <div className="space-y-1">
                 <CardTitle className="font-display text-xl">Preview and Materialize</CardTitle>
                 <CardDescription>
-                  Use a saved strategy plus the current ranking universe to preview ranked symbols for one date or materialize the full platinum output.
+                  Use a saved strategy plus the current ranking universe to preview ranked symbols
+                  for one date or materialize the full platinum output.
                 </CardDescription>
               </div>
             </CardHeader>
@@ -968,7 +1138,11 @@ export function RankingConfigPage() {
                       <Button
                         type="button"
                         variant="secondary"
-                        disabled={previewMutation.isPending || !previewStrategyName || !draft.config.universeConfigName}
+                        disabled={
+                          previewMutation.isPending ||
+                          !previewStrategyName ||
+                          !draft.config.universeConfigName
+                        }
                         onClick={() => previewMutation.mutate()}
                       >
                         <Eye className="h-4 w-4" />
@@ -995,7 +1169,8 @@ export function RankingConfigPage() {
                             {previewMutation.data.strategyName} on {previewMutation.data.asOfDate}
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {previewMutation.data.rowCount} symbols ranked with the current draft configuration.
+                            {previewMutation.data.rowCount} symbols ranked with the current draft
+                            configuration.
                           </div>
                         </div>
                         <Badge variant="secondary">{previewMutation.data.rows.length} shown</Badge>
@@ -1028,7 +1203,8 @@ export function RankingConfigPage() {
                     </div>
                   ) : (
                     <div className="rounded-2xl border-2 border-dashed border-mcm-walnut/35 bg-mcm-cream/70 p-6 text-sm text-muted-foreground">
-                      Select a strategy and date, then preview the current ranking draft before materializing.
+                      Select a strategy and date, then preview the current ranking draft before
+                      materializing.
                     </div>
                   )}
                 </>

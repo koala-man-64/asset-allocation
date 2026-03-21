@@ -24,6 +24,48 @@ def test_all_bucket_blob_paths_returns_26_alpha_files() -> None:
     assert paths[-1] == "market-data/buckets/Z.parquet"
 
 
+def test_canonical_bucket_blob_name_collapses_run_scoped_bucket_paths() -> None:
+    assert (
+        bronze_bucketing.canonical_bucket_blob_name("market-data/runs/run-123/buckets/A.parquet")
+        == "market-data/buckets/A.parquet"
+    )
+    assert bronze_bucketing.canonical_bucket_blob_name("market-data/buckets/A.parquet") == "market-data/buckets/A.parquet"
+
+
+def test_parse_bucket_from_blob_name_accepts_legacy_and_run_scoped_paths() -> None:
+    assert bronze_bucketing.parse_bucket_from_blob_name("market-data/buckets/M.parquet", expected_prefix="market-data") == "M"
+    assert (
+        bronze_bucketing.parse_bucket_from_blob_name(
+            "market-data/runs/run-123/buckets/Z.parquet",
+            expected_prefix="market-data",
+        )
+        == "Z"
+    )
+
+
+def test_list_active_bucket_blob_infos_prefers_manifest(monkeypatch) -> None:
+    manifest = {
+        "producedAt": "2026-03-17T01:02:03+00:00",
+        "bucketPaths": [
+            {"name": "market-data/runs/run-789/buckets/A.parquet", "bucket": "A"},
+        ],
+    }
+    monkeypatch.setattr(bronze_bucketing.run_manifests, "load_latest_bronze_alpha26_manifest", lambda _domain: manifest)
+
+    class _Client:
+        def list_files(self, name_starts_with=None):
+            raise AssertionError(f"listing fallback should not be used: {name_starts_with}")
+
+    listed = bronze_bucketing.list_active_bucket_blob_infos("market", _Client())
+    assert listed == [
+        {
+            "name": "market-data/runs/run-789/buckets/A.parquet",
+            "bucket": "A",
+            "last_modified": "2026-03-17T01:02:03+00:00",
+        }
+    ]
+
+
 def test_layout_modes_fail_fast_when_not_alpha26(monkeypatch) -> None:
     monkeypatch.setenv("BRONZE_LAYOUT_MODE", "unsupported")
     monkeypatch.setenv("SILVER_LAYOUT_MODE", "unsupported")

@@ -54,6 +54,14 @@ def _extract_bearer_token(header_value: str) -> str:
     return token
 
 
+def _claim_text(claims: Dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = claims.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "-"
+
+
 class AuthManager:
     def __init__(self, settings: ServiceSettings):
         self._settings = settings
@@ -168,26 +176,25 @@ class AuthManager:
                 raise AuthError(status_code=403, detail=f"Missing required roles: {', '.join(missing)}.")
 
         subject = str(claims.get("sub") or claims.get("oid") or "") or None
-        return AuthContext(mode=self._settings.auth_mode, subject=subject, claims=dict(claims))
+        return AuthContext(mode="oidc", subject=subject, claims=dict(claims))
 
     def authenticate_headers(self, headers: Dict[str, str]) -> AuthContext:
         normalized = {str(k).lower(): str(v) for k, v in headers.items()}
-        mode = self._settings.auth_mode
-        if mode == "none":
-            return AuthContext(mode=mode, subject=None, claims={})
-
-        if mode in {"api_key", "api_key_or_oidc"} and self._settings.api_key:
-            provided = (normalized.get(str(self._settings.api_key_header).lower()) or "").strip()
-            if provided and provided == self._settings.api_key:
-                logger.info("Auth success via api_key")
-                return AuthContext(mode=mode, subject=None, claims={})
-
-        if mode in {"oidc", "api_key_or_oidc"}:
+        if self._settings.oidc_auth_enabled:
             authorization = (normalized.get("authorization") or "").strip()
             if authorization and _is_bearer_auth(authorization):
                 token = _extract_bearer_token(authorization)
                 ctx = self._verify_bearer_token(token)
-                logger.info("Auth success via oidc: subject=%s", ctx.subject or "-")
+                logger.info(
+                    "Auth success via oidc: subject=%s oid=%s tid=%s azp=%s",
+                    ctx.subject or "-",
+                    _claim_text(ctx.claims, "oid"),
+                    _claim_text(ctx.claims, "tid"),
+                    _claim_text(ctx.claims, "azp", "appid"),
+                )
                 return ctx
+
+        if self._settings.anonymous_local_auth_enabled:
+            return AuthContext(mode="anonymous", subject=None, claims={})
 
         raise AuthError(status_code=401, detail="Unauthorized.", www_authenticate="Bearer")

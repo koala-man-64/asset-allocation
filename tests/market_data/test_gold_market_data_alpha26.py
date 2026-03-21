@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from core import core as core_module
 from core import delta_core as delta_core_module
@@ -466,8 +467,6 @@ def test_main_fails_closed_when_gold_reconciliation_fails(monkeypatch):
         lambda: gold.FeatureJobConfig(
             silver_container="silver",
             gold_container="gold",
-            max_workers=1,
-            tickers=[],
         ),
     )
     monkeypatch.setattr(
@@ -485,3 +484,29 @@ def test_main_fails_closed_when_gold_reconciliation_fails(monkeypatch):
     monkeypatch.setattr(core_module, "write_error", lambda *_args, **_kwargs: None)
 
     assert gold.main() == 1
+
+
+def test_build_job_config_reads_required_containers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver")
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold")
+
+    cfg = gold._build_job_config()
+
+    assert cfg.silver_container == "silver"
+    assert cfg.gold_container == "gold"
+
+
+def test_build_job_config_requires_silver_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AZURE_CONTAINER_SILVER", raising=False)
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold")
+
+    with pytest.raises(ValueError, match="AZURE_CONTAINER_SILVER"):
+        gold._build_job_config()
+
+
+def test_build_job_config_requires_gold_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver")
+    monkeypatch.delenv("AZURE_CONTAINER_GOLD", raising=False)
+
+    with pytest.raises(ValueError, match="AZURE_CONTAINER_GOLD"):
+        gold._build_job_config()

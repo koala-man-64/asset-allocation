@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
+
+from core.api_gateway_auth import build_access_token_provider
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 60.0
@@ -22,6 +25,14 @@ _DEFAULT_API_READINESS_MAX_ATTEMPTS = 6
 _DEFAULT_API_READINESS_SLEEP_SECONDS = 10.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+try:
+    _GATEWAY_TRACE_ERROR_LIMIT = max(1, int(str(os.environ.get("MASSIVE_GATEWAY_TRACE_ERROR_LIMIT") or "200").strip()))
+except Exception:
+    _GATEWAY_TRACE_ERROR_LIMIT = 200
+_GATEWAY_TRACE_COUNTS: collections.Counter[str] = collections.Counter()
+_GATEWAY_TRACE_LOCK = threading.Lock()
+_TIMEOUT_FLOOR_WARNING_LOCK = threading.Lock()
+_TIMEOUT_FLOOR_WARNING_EMITTED = False
 
 
 class MassiveGatewayError(RuntimeError):
@@ -94,11 +105,46 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _emit_bounded_gateway_warning(category: str, message: str) -> None:
+    with _GATEWAY_TRACE_LOCK:
+        seen = int(_GATEWAY_TRACE_COUNTS.get(category, 0))
+        if seen >= _GATEWAY_TRACE_ERROR_LIMIT:
+            return
+        current = seen + 1
+        _GATEWAY_TRACE_COUNTS[category] = current
+    logger.warning("[massive-gateway:%s#%s] %s", category, current, message)
+    if current == _GATEWAY_TRACE_ERROR_LIMIT:
+        logger.info(
+            "[massive-gateway:%s] further logs suppressed after %s entries.",
+            category,
+            _GATEWAY_TRACE_ERROR_LIMIT,
+        )
+
+
+def _warn_timeout_floor_once(configured_timeout_seconds: float) -> None:
+    global _TIMEOUT_FLOOR_WARNING_EMITTED
+    with _TIMEOUT_FLOOR_WARNING_LOCK:
+        if _TIMEOUT_FLOOR_WARNING_EMITTED:
+            return
+        _TIMEOUT_FLOOR_WARNING_EMITTED = True
+    logger.warning(
+        "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=%s is too low for Massive market requests; using %s.",
+        configured_timeout_seconds,
+        _MIN_API_GATEWAY_TIMEOUT_SECONDS,
+    )
+
+
 @dataclass(frozen=True)
 class MassiveGatewayClientConfig:
     base_url: str
-    api_key: Optional[str]
-    api_key_header: str
+    api_scope: Optional[str]
     timeout_seconds: float
     warmup_enabled: bool = _DEFAULT_API_WARMUP_ENABLED
     warmup_max_attempts: int = _DEFAULT_API_WARMUP_MAX_ATTEMPTS
@@ -122,10 +168,12 @@ class MassiveGatewayClient:
         config: MassiveGatewayClientConfig,
         *,
         http_client: Optional[httpx.Client] = None,
+        access_token_provider: Optional[Callable[[], str]] = None,
     ) -> None:
         self.config = config
         self._owns_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(config.timeout_seconds), trust_env=False)
+        self._access_token_provider = access_token_provider
         self._warmup_lock = threading.Lock()
         self._warmup_attempted = False
         self._warmup_succeeded = not config.warmup_enabled
@@ -140,26 +188,20 @@ class MassiveGatewayClient:
             raise ValueError("ASSET_ALLOCATION_API_BASE_URL is required for Massive ETL via API gateway.")
         base_url = str(base_url).rstrip("/")
 
-        api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(os.environ.get("API_KEY"))
-        api_key_header = (
-            _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY_HEADER"))
-            or _strip_or_none(os.environ.get("API_KEY_HEADER"))
-            or "X-API-Key"
-        )
+        api_scope = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_SCOPE"))
+        if not api_scope:
+            raise ValueError(
+                "ASSET_ALLOCATION_API_SCOPE is required for Massive ETL via the Asset Allocation API gateway."
+            )
 
         timeout_seconds = _env_float(
             "ASSET_ALLOCATION_API_TIMEOUT_SECONDS",
             _env_float("MASSIVE_TIMEOUT_SECONDS", _MIN_API_GATEWAY_TIMEOUT_SECONDS),
         )
         if timeout_seconds < _MIN_API_GATEWAY_TIMEOUT_SECONDS:
-            logger.warning(
-                "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=%s is too low for Massive market requests; using %s.",
-                timeout_seconds,
-                _MIN_API_GATEWAY_TIMEOUT_SECONDS,
-            )
+            _warn_timeout_floor_once(timeout_seconds)
             timeout_seconds = _MIN_API_GATEWAY_TIMEOUT_SECONDS
 
-        warmup_enabled = _env_bool("ASSET_ALLOCATION_API_WARMUP_ENABLED", _DEFAULT_API_WARMUP_ENABLED)
         warmup_max_attempts = max(1, _env_int("ASSET_ALLOCATION_API_WARMUP_ATTEMPTS", _DEFAULT_API_WARMUP_MAX_ATTEMPTS))
         warmup_base_delay_seconds = max(
             0.0,
@@ -173,7 +215,6 @@ class MassiveGatewayClient:
             0.1,
             _env_float("ASSET_ALLOCATION_API_WARMUP_PROBE_TIMEOUT_SECONDS", _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS),
         )
-        readiness_enabled = _env_bool("ASSET_ALLOCATION_API_READINESS_ENABLED", _DEFAULT_API_READINESS_ENABLED)
         readiness_max_attempts = max(
             1,
             _env_int("ASSET_ALLOCATION_API_READINESS_ATTEMPTS", _DEFAULT_API_READINESS_MAX_ATTEMPTS),
@@ -186,15 +227,14 @@ class MassiveGatewayClient:
         return MassiveGatewayClient(
             MassiveGatewayClientConfig(
                 base_url=base_url,
-                api_key=api_key,
-                api_key_header=str(api_key_header),
+                api_scope=api_scope,
                 timeout_seconds=float(timeout_seconds),
-                warmup_enabled=warmup_enabled,
+                warmup_enabled=True,
                 warmup_max_attempts=warmup_max_attempts,
                 warmup_base_delay_seconds=warmup_base_delay_seconds,
                 warmup_max_delay_seconds=warmup_max_delay_seconds,
                 warmup_probe_timeout_seconds=warmup_probe_timeout_seconds,
-                readiness_enabled=readiness_enabled,
+                readiness_enabled=True,
                 readiness_max_attempts=readiness_max_attempts,
                 readiness_sleep_seconds=readiness_sleep_seconds,
             )
@@ -212,8 +252,18 @@ class MassiveGatewayClient:
 
     def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self.config.api_key:
-            headers[str(self.config.api_key_header)] = str(self.config.api_key)
+        if self._access_token_provider is None:
+            if not self.config.api_scope:
+                raise MassiveGatewayAuthError(
+                    "ASSET_ALLOCATION_API_SCOPE is required for bearer-token access to the Asset Allocation API gateway."
+                )
+            self._access_token_provider = build_access_token_provider(self.config.api_scope)
+        try:
+            headers["Authorization"] = f"Bearer {self._access_token_provider()}"
+        except Exception as exc:
+            raise MassiveGatewayAuthError(
+                "Failed to acquire bearer token for the Asset Allocation API gateway."
+            ) from exc
 
         caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME"))
         caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME"))
@@ -412,6 +462,14 @@ class MassiveGatewayClient:
 
         detail = self._extract_detail(resp)
         payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
+        caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME")) or "unknown"
+        caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME")) or "n/a"
+        _emit_bounded_gateway_warning(
+            f"{path}:{resp.status_code}",
+            f"API gateway request failed caller_job={caller_job} caller_execution={caller_execution} "
+            f"path={path} status={resp.status_code} params={_truncate_trace_text(json.dumps(params or {}, sort_keys=True))} "
+            f"detail={_truncate_trace_text(detail)}",
+        )
 
         if resp.status_code in {401, 403}:
             raise MassiveGatewayAuthError(
@@ -488,6 +546,31 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/snapshot", params=params)
         return resp.json()
 
+    def get_tickers(
+        self,
+        *,
+        market: str = "stocks",
+        locale: Optional[str] = "us",
+        active: bool = True,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "market": str(market or "stocks").strip() or "stocks",
+            "active": "true" if active else "false",
+        }
+        normalized_locale = _strip_or_none(locale)
+        if normalized_locale is not None:
+            params["locale"] = normalized_locale
+        resp = self._request("/api/providers/massive/tickers", params=params)
+        payload = resp.json()
+        if isinstance(payload, dict):
+            results = payload.get("results")
+            if isinstance(results, list):
+                return results
+        raise MassiveGatewayError(
+            "Unexpected Massive ticker list payload.",
+            payload={"path": "/api/providers/massive/tickers", "payload_type": type(payload).__name__},
+        )
+
     def get_short_interest(
         self,
         *,
@@ -523,6 +606,24 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/fundamentals/float", params=params)
         return resp.json()
 
+    def get_ratios(
+        self,
+        *,
+        symbol: str,
+        sort: Optional[str] = None,
+        limit: Optional[int] = None,
+        pagination: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol}
+        if sort:
+            params["sort"] = sort
+        if limit is not None:
+            params["limit"] = int(limit)
+        if pagination is not None:
+            params["pagination"] = "true" if pagination else "false"
+        resp = self._request("/api/providers/massive/fundamentals/ratios", params=params)
+        return resp.json()
+
     def get_finance_report(
         self,
         *,
@@ -533,6 +634,14 @@ class MassiveGatewayClient:
         limit: Optional[int] = None,
         pagination: Optional[bool] = None,
     ) -> dict[str, Any]:
+        normalized_report = str(report or "").strip().lower()
+        if normalized_report == "valuation":
+            return self.get_ratios(
+                symbol=symbol,
+                sort=sort,
+                limit=limit,
+                pagination=pagination,
+            )
         params: dict[str, Any] = {"symbol": symbol}
         if timeframe:
             params["timeframe"] = timeframe
@@ -542,5 +651,5 @@ class MassiveGatewayClient:
             params["limit"] = int(limit)
         if pagination is not None:
             params["pagination"] = "true" if pagination else "false"
-        resp = self._request(f"/api/providers/massive/financials/{report}", params=params)
+        resp = self._request(f"/api/providers/massive/financials/{normalized_report}", params=params)
         return resp.json()

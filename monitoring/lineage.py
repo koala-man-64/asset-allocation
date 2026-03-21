@@ -31,16 +31,47 @@ def get_lineage_snapshot() -> Dict[str, Any]:
             {
                 "layer": "bronze",
                 "domains": [
-                    {"domain": "market", "artifact": "market-data/*.csv"},
-                    {"domain": "finance", "artifact": "finance-data/*.csv"},
-                    {"domain": "earnings", "artifact": "earnings-data/*.csv"},
-                    {"domain": "price-target", "artifact": "price-target-data/*.csv"},
+                    {
+                        "domain": "market",
+                        "artifact": (
+                            "market-data/runs/<run_id>/buckets/<bucket>.parquet + "
+                            "system/run-manifests/bronze_market/latest.json + "
+                            "system/bronze-index/market/latest.parquet"
+                        ),
+                    },
+                    {
+                        "domain": "finance",
+                        "artifact": (
+                            "finance-data/runs/<run_id>/buckets/<bucket>.parquet + "
+                            "system/run-manifests/bronze_finance/latest.json + "
+                            "system/bronze-index/finance/latest.parquet"
+                        ),
+                    },
+                    {
+                        "domain": "earnings",
+                        "artifact": (
+                            "earnings-data/runs/<run_id>/buckets/<bucket>.parquet + "
+                            "system/run-manifests/bronze_earnings/latest.json + "
+                            "system/bronze-index/earnings/latest.parquet"
+                        ),
+                    },
+                    {
+                        "domain": "price-target",
+                        "artifact": (
+                            "price-target-data/runs/<run_id>/buckets/<bucket>.parquet + "
+                            "system/run-manifests/bronze_price_target/latest.json + "
+                            "system/bronze-index/price-target/latest.parquet"
+                        ),
+                    },
                 ],
             },
             {
                 "layer": "silver",
                 "domains": [
-                    {"domain": "market", "artifact": "market-data/<ticker> (delta)"},
+                    {
+                        "domain": "market",
+                        "artifact": "market-data/buckets/<bucket> (delta) + system/silver-index/market/latest.parquet",
+                    },
                     {"domain": "finance", "artifact": "finance-data/<subdomain>/<ticker>_* (delta)"},
                     {"domain": "earnings", "artifact": "earnings-data/<ticker> (delta)"},
                     {"domain": "price-target", "artifact": "price-target-data/<ticker> (delta)"},
@@ -49,7 +80,10 @@ def get_lineage_snapshot() -> Dict[str, Any]:
             {
                 "layer": "gold",
                 "domains": [
-                    {"domain": "market", "artifact": "market/<ticker> (delta)"},
+                    {
+                        "domain": "market",
+                        "artifact": "market/buckets/<bucket> (delta) + system/gold-index/market/latest.parquet",
+                    },
                     {"domain": "finance", "artifact": "finance/<ticker> (delta)"},
                     {"domain": "earnings", "artifact": "earnings/<ticker> (delta)"},
                     {"domain": "price-target", "artifact": "targets/<ticker> (delta)"},

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from tasks.common import run_manifests
 
 
-def test_create_bronze_finance_manifest_writes_manifest_and_latest(monkeypatch):
+def test_create_bronze_alpha26_manifest_writes_manifest_and_latest(monkeypatch):
     saved: dict[str, dict] = {}
 
     monkeypatch.setattr(run_manifests.mdc, "common_storage_client", object())
@@ -15,27 +16,34 @@ def test_create_bronze_finance_manifest_writes_manifest_and_latest(monkeypatch):
         lambda payload, path: saved.setdefault(path, payload),
     )
 
-    out = run_manifests.create_bronze_finance_manifest(
+    out = run_manifests.create_bronze_alpha26_manifest(
+        domain="finance",
         producer_job_name="bronze-finance-job",
-        listed_blobs=[
+        data_prefix="finance-data/runs/run-123",
+        bucket_paths=[
             {
-                "name": "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
+                "name": "finance-data/runs/run-123/buckets/A.parquet",
+                "bucket": "A",
                 "etag": "etag-a",
                 "last_modified": datetime(2026, 2, 26, 16, 0, tzinfo=timezone.utc),
                 "size": 42,
             }
         ],
-        metadata={"processed": 1},
+        index_path="system/bronze-index/finance/latest.parquet",
+        metadata={"symbolCount": 1},
+        run_id="run-123",
     )
 
     assert out is not None
-    run_id = str(out["runId"])
-    manifest_path = f"system/run-manifests/bronze_finance/{run_id}.json"
+    manifest_path = "system/run-manifests/bronze_finance/run-123.json"
     latest_path = "system/run-manifests/bronze_finance/latest.json"
     assert manifest_path in saved
     assert latest_path in saved
-    assert saved[manifest_path]["blobCount"] == 1
-    assert saved[latest_path]["runId"] == run_id
+    assert saved[manifest_path]["bucketCount"] == 1
+    assert saved[manifest_path]["bucketPaths"][0]["name"] == "finance-data/runs/run-123/buckets/A.parquet"
+    assert saved[manifest_path]["metadata"]["symbolCount"] == 1
+    assert saved[latest_path]["runId"] == "run-123"
+    assert saved[latest_path]["dataPrefix"] == "finance-data/runs/run-123"
 
 
 def test_create_bronze_finance_manifest_normalizes_string_last_modified(monkeypatch):
@@ -75,21 +83,47 @@ def test_create_bronze_finance_manifest_normalizes_string_last_modified(monkeypa
 def test_load_latest_bronze_finance_manifest_resolves_pointer(monkeypatch):
     monkeypatch.setattr(run_manifests.mdc, "common_storage_client", object())
 
-    def _fake_get(path: str):
+    def _fake_read(path: str, client=None, *, missing_ok=False, missing_message=None):
+        del client, missing_ok, missing_message
         if path.endswith("/latest.json"):
-            return {
-                "runId": "bronze-finance-20260226T000000000000Z-abcd1234",
-                "manifestPath": "system/run-manifests/bronze_finance/bronze-finance-20260226T000000000000Z-abcd1234.json",
-            }
+            return json.dumps(
+                {
+                    "runId": "bronze-finance-20260226T000000000000Z-abcd1234",
+                    "manifestPath": (
+                        "system/run-manifests/bronze_finance/"
+                        "bronze-finance-20260226T000000000000Z-abcd1234.json"
+                    ),
+                }
+            ).encode("utf-8")
         if path.endswith("abcd1234.json"):
-            return {"runId": "bronze-finance-20260226T000000000000Z-abcd1234", "blobs": []}
-        return None
+            return json.dumps(
+                {
+                    "runId": "bronze-finance-20260226T000000000000Z-abcd1234",
+                    "dataPrefix": "finance-data/runs/bronze-finance-20260226T000000000000Z-abcd1234",
+                    "bucketPaths": [{"name": "finance-data/runs/bronze-finance-20260226T000000000000Z-abcd1234/buckets/A.parquet"}],
+                }
+            ).encode("utf-8")
+        return b""
 
-    monkeypatch.setattr(run_manifests.mdc, "get_common_json_content", _fake_get)
+    monkeypatch.setattr(run_manifests.mdc, "read_raw_bytes", _fake_read)
     manifest = run_manifests.load_latest_bronze_finance_manifest()
     assert manifest is not None
     assert manifest["runId"].endswith("abcd1234")
     assert manifest["manifestPath"].endswith("abcd1234.json")
+    assert manifest["dataPrefix"].endswith("abcd1234")
+
+
+def test_resolve_active_bronze_alpha26_prefix_returns_manifest_data_prefix(monkeypatch):
+    monkeypatch.setattr(
+        run_manifests,
+        "load_latest_bronze_alpha26_manifest",
+        lambda domain: {
+            "domain": domain,
+            "dataPrefix": "market-data/runs/run-456",
+        },
+    )
+
+    assert run_manifests.resolve_active_bronze_alpha26_prefix("market") == "market-data/runs/run-456"
 
 
 def test_write_and_read_silver_manifest_ack(monkeypatch):
@@ -117,15 +151,17 @@ def test_write_and_read_silver_manifest_ack(monkeypatch):
     assert run_manifests.silver_finance_ack_exists("bronze-finance-20260226T000000000000Z-abcd1234") is True
 
 
-def test_manifest_blobs_normalizes_and_sorts():
+def test_manifest_blobs_normalizes_sorts_and_inherits_produced_at():
     manifest = {
-        "blobs": [
-            {"name": "finance-data/Balance Sheet/B_quarterly_balance-sheet.json"},
-            {"name": "finance-data/Balance Sheet/A_quarterly_balance-sheet.json"},
-        ]
+        "producedAt": "2026-02-26T00:00:00+00:00",
+        "bucketPaths": [
+            {"name": "finance-data/runs/run-1/buckets/B.parquet"},
+            {"name": "finance-data/runs/run-1/buckets/A.parquet"},
+        ],
     }
     out = run_manifests.manifest_blobs(manifest)
     assert [item["name"] for item in out] == [
-        "finance-data/Balance Sheet/A_quarterly_balance-sheet.json",
-        "finance-data/Balance Sheet/B_quarterly_balance-sheet.json",
+        "finance-data/runs/run-1/buckets/A.parquet",
+        "finance-data/runs/run-1/buckets/B.parquet",
     ]
+    assert all(item["last_modified"] == "2026-02-26T00:00:00+00:00" for item in out)

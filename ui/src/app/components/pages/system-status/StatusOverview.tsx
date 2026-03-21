@@ -6,6 +6,7 @@ import {
   normalizeJobStatus,
   normalizeAzureJobName,
   normalizeAzurePortalUrl,
+  resolveManagedJobName,
   toJobStatusLabel
 } from './SystemStatusHelpers';
 import { StatusTypos } from './StatusTokens';
@@ -37,29 +38,13 @@ const runStartEpoch = (raw?: string | null): number => {
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 };
 
-function extractAzureJobName(jobUrl?: string | null): string | null {
-  const normalized = normalizeAzurePortalUrl(jobUrl);
-  if (!normalized) return null;
-  const match = normalized.match(/\/jobs\/([^/?#]+)/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
-
 interface StatusOverviewProps {
   overall: string;
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
 }
 
-export function StatusOverview({
-  overall,
-  dataLayers,
-  recentJobs
-}: StatusOverviewProps) {
+export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOverviewProps) {
   const sysConfig = getStatusConfig(overall);
   const apiAnim =
     sysConfig.animation === 'spin'
@@ -183,9 +168,15 @@ export function StatusOverview({
       let pending = 0;
 
       for (const domain of layer.domains || []) {
-        if (!domain?.jobName) continue;
+        const jobName = resolveManagedJobName({
+          jobName: domain?.jobName,
+          jobUrl: domain?.jobUrl,
+          layerName: layer.name,
+          domainName: domain?.name
+        });
+        if (!jobName) continue;
         total += 1;
-        const key = normalizeAzureJobName(domain.jobName);
+        const key = normalizeAzureJobName(jobName);
         const job = key ? jobIndex.get(key) : undefined;
         if (!job) {
           pending += 1;
@@ -332,7 +323,9 @@ export function StatusOverview({
                 </TableHead>
                 {dataLayers.map((layer) => {
                   const metric = medallionIndex.get(layer.name);
-                  const layerUpdatedAgo = layer.lastUpdated ? formatTimeAgo(layer.lastUpdated) : '--';
+                  const layerUpdatedAgo = layer.lastUpdated
+                    ? formatTimeAgo(layer.lastUpdated)
+                    : '--';
                   const containerConfig = metric?.containerConfig ?? getStatusConfig(layer.status);
                   const containerLabel =
                     metric?.containerLabel ?? String(layer.status || '').toUpperCase();
@@ -369,9 +362,12 @@ export function StatusOverview({
                               {jobLabel}
                             </span>
                           </div>
-                          <div className={`${StatusTypos.MONO} mt-1 text-[10px] text-mcm-walnut/60`}>
+                          <div
+                            className={`${StatusTypos.MONO} mt-1 text-[10px] text-mcm-walnut/60`}
+                          >
                             data {String(layer.status || 'unknown').toUpperCase()} • jobs{' '}
-                            {String(jobStatusKey || 'pending').toUpperCase()} • updated {layerUpdatedAgo}
+                            {String(jobStatusKey || 'pending').toUpperCase()} • updated{' '}
+                            {layerUpdatedAgo}
                           </div>
                         </div>
                         <DropdownMenu>
@@ -387,7 +383,9 @@ export function StatusOverview({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="min-w-[200px]">
-                            <DropdownMenuLabel className="text-xs">{layer.name} tier</DropdownMenuLabel>
+                            <DropdownMenuLabel className="text-xs">
+                              {layer.name} tier
+                            </DropdownMenuLabel>
                             <DropdownMenuItem
                               disabled={isLayerLoading}
                               onSelect={() => void suspendLayerJobs(layer, true)}
@@ -470,10 +468,12 @@ export function StatusOverview({
                           <TableCell className={`${matrixCell} text-left`}>
                             {domain ? (
                               (() => {
-                                const jobName =
-                                  String(domain.jobName || '').trim() ||
-                                  extractAzureJobName(domain.jobUrl) ||
-                                  '';
+                                const jobName = resolveManagedJobName({
+                                  jobName: domain.jobName,
+                                  jobUrl: domain.jobUrl,
+                                  layerName: layer.name,
+                                  domainName: domain.name
+                                });
                                 const jobKey = normalizeAzureJobName(jobName);
                                 const run = jobKey ? jobIndex.get(jobKey) : null;
                                 const updatedAgo = domain.lastUpdated
@@ -512,7 +512,9 @@ export function StatusOverview({
                                       >
                                         data {dataLabel}
                                       </span>
-                                      <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/60`}>
+                                      <span
+                                        className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/60`}
+                                      >
                                         {updatedAgo}
                                       </span>
                                     </div>
@@ -522,7 +524,9 @@ export function StatusOverview({
                                       >
                                         jobs {jobLabel}
                                       </span>
-                                      <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
+                                      <span
+                                        className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}
+                                      >
                                         {jobName ? 'job configured' : 'job n/a'}
                                       </span>
                                     </div>
@@ -530,7 +534,9 @@ export function StatusOverview({
                                 );
                               })()
                             ) : (
-                              <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}>
+                              <span
+                                className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}
+                              >
                                 —
                               </span>
                             )}
@@ -538,11 +544,15 @@ export function StatusOverview({
 
                           <TableCell className={`${matrixCell} text-center`}>
                             {domain ? (
-                              <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
+                              <span
+                                className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}
+                              >
                                 Controls moved to Domain Layer Coverage
                               </span>
                             ) : (
-                              <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}>
+                              <span
+                                className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}
+                              >
                                 —
                               </span>
                             )}

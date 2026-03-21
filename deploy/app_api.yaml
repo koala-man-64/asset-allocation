@@ -10,7 +10,7 @@ properties:
   configuration:
     activeRevisionsMode: Single
     ingress:
-      external: ${INGRESS_EXTERNAL}
+      external: false
       targetPort: 80
       transport: auto
       allowInsecure: false
@@ -18,8 +18,6 @@ properties:
     - server: ${ACR_LOGIN_SERVER}
       identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     secrets:
-    - name: api-key
-      value: "${API_KEY}"
     - name: azure-storage-connection-string
       value: "${AZURE_STORAGE_CONNECTION_STRING}"
     - name: alpha-vantage-api-key
@@ -93,10 +91,6 @@ properties:
         value: "${AZURE_FOLDER_TARGETS}"
       - name: AZURE_CONTAINER_COMMON
         value: "${AZURE_CONTAINER_COMMON}"
-      - name: API_KEY
-        secretRef: api-key
-      - name: API_KEY_HEADER
-        value: "X-API-Key"
       - name: ALPHA_VANTAGE_API_KEY
         secretRef: alpha-vantage-api-key
       - name: ALPHA_VANTAGE_RATE_LIMIT_PER_MIN
@@ -113,14 +107,10 @@ properties:
         value: "${MASSIVE_BASE_URL}"
       - name: MASSIVE_TIMEOUT_SECONDS
         value: "${MASSIVE_TIMEOUT_SECONDS}"
-      - name: MASSIVE_PREFER_OFFICIAL_SDK
-        value: "${MASSIVE_PREFER_OFFICIAL_SDK}"
       - name: POSTGRES_DSN
         secretRef: backtest-pg-dsn
       - name: API_ROOT_PREFIX
         value: "${API_ROOT_PREFIX}"
-      - name: API_AUTH_MODE
-        value: "${API_AUTH_MODE}"
       - name: API_OIDC_ISSUER
         value: "${API_OIDC_ISSUER}"
       - name: API_OIDC_AUDIENCE
@@ -141,18 +131,10 @@ properties:
         value: "129600"
       - name: SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON
         value: "${SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON}"
-      - name: SYSTEM_HEALTH_MARKERS_ENABLED
-        value: "${SYSTEM_HEALTH_MARKERS_ENABLED}"
       - name: SYSTEM_HEALTH_MARKERS_CONTAINER
         value: "${SYSTEM_HEALTH_MARKERS_CONTAINER}"
       - name: SYSTEM_HEALTH_MARKERS_PREFIX
         value: "${SYSTEM_HEALTH_MARKERS_PREFIX}"
-      - name: SYSTEM_HEALTH_MARKERS_DUAL_READ
-        value: "${SYSTEM_HEALTH_MARKERS_DUAL_READ}"
-      - name: SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS
-        value: "${SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS}"
-      - name: UI_AUTH_MODE
-        value: "${UI_AUTH_MODE}"
       - name: UI_OIDC_CLIENT_ID
         value: "${UI_OIDC_CLIENT_ID}"
       - name: UI_OIDC_AUTHORITY
@@ -185,12 +167,8 @@ properties:
         value: "${SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB}"
       - name: SYSTEM_HEALTH_VERBOSE_IDS
         value: "${SYSTEM_HEALTH_VERBOSE_IDS}"
-      - name: SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED
-        value: "${SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED}"
       - name: SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION
         value: "${SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION}"
-      - name: SYSTEM_HEALTH_MONITOR_METRICS_ENABLED
-        value: "${SYSTEM_HEALTH_MONITOR_METRICS_ENABLED}"
       - name: SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION
         value: "${SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION}"
       - name: SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES
@@ -205,8 +183,6 @@ properties:
         value: "${SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS}"
       - name: SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON
         value: "${SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON}"
-      - name: SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED
-        value: "${SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED}"
       - name: SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID
         value: "${SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID}"
       - name: SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS
@@ -215,6 +191,12 @@ properties:
         value: "${SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES}"
       - name: SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON
         value: "${SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON}"
+      - name: REALTIME_LOG_STREAM_POLL_SECONDS
+        value: "${REALTIME_LOG_STREAM_POLL_SECONDS}"
+      - name: REALTIME_LOG_STREAM_LOOKBACK_SECONDS
+        value: "${REALTIME_LOG_STREAM_LOOKBACK_SECONDS}"
+      - name: REALTIME_LOG_STREAM_BATCH_SIZE
+        value: "${REALTIME_LOG_STREAM_BATCH_SIZE}"
       resources:
         cpu: 0.75
         memory: 1.5Gi

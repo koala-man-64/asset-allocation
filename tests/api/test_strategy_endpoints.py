@@ -30,7 +30,6 @@ def _sample_universe_payload() -> dict:
 
 @pytest.mark.asyncio
 async def test_save_strategy_persists_universe_reference(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
 
     captured: dict[str, object] = {}
@@ -82,7 +81,6 @@ async def test_save_strategy_persists_universe_reference(monkeypatch: pytest.Mon
 
 @pytest.mark.asyncio
 async def test_save_strategy_rejects_unknown_universe_reference(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(UniverseRepository, "get_universe_config", lambda self, name: None)
 
@@ -113,7 +111,6 @@ async def test_save_strategy_rejects_unknown_universe_reference(monkeypatch: pyt
 
 @pytest.mark.asyncio
 async def test_get_strategy_detail_round_trips_structured_universe(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
 
     strategy_payload = {
@@ -146,7 +143,6 @@ async def test_get_strategy_detail_round_trips_structured_universe(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_universe_catalog_endpoint_returns_gold_tables(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
 
     monkeypatch.setattr(
@@ -185,7 +181,6 @@ async def test_universe_catalog_endpoint_returns_gold_tables(monkeypatch: pytest
 async def test_universe_preview_endpoint_maps_validation_errors_to_400(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
 
     def fake_preview(_dsn: str, _universe, *, sample_limit: int = 25):  # type: ignore[no-untyped-def]

@@ -38,7 +38,9 @@ describe('apiService cold start handling', () => {
 
   it('warms up once and does not repeat warm-up calls on later requests', async () => {
     fetchMock
-      .mockResolvedValueOnce(new Response('warming', { status: 503, statusText: 'Service Unavailable' }))
+      .mockResolvedValueOnce(
+        new Response('warming', { status: 503, statusText: 'Service Unavailable' })
+      )
       .mockResolvedValueOnce(jsonResponse({ status: 'ok' }))
       .mockResolvedValueOnce(jsonResponse({ data: 1 }))
       .mockResolvedValueOnce(jsonResponse({ data: 2 }));
@@ -60,7 +62,9 @@ describe('apiService cold start handling', () => {
   it('retries transient response failures for primary requests', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: 'ok' }))
-      .mockResolvedValueOnce(new Response('temporary failure', { status: 503, statusText: 'Service Unavailable' }))
+      .mockResolvedValueOnce(
+        new Response('temporary failure', { status: 503, statusText: 'Service Unavailable' })
+      )
       .mockResolvedValueOnce(jsonResponse({ data: 7 }));
 
     const { request } = await importApiService();

@@ -69,9 +69,26 @@ def test_signature_matches_prefers_etag_when_present():
     assert watermarks.signature_matches(prior, current) is False
 
 
+def test_signature_matches_falls_back_to_run_scoped_name_when_timestamp_missing():
+    prior = {"name": "market-data/runs/run-1/buckets/A.parquet"}
+    current_same = {"name": "market-data/runs/run-1/buckets/A.parquet"}
+    current_new = {"name": "market-data/runs/run-2/buckets/A.parquet"}
+
+    assert watermarks.signature_matches(prior, current_same) is True
+    assert watermarks.signature_matches(prior, current_new) is False
+
+
+def test_normalize_watermark_blob_name_collapses_run_scoped_bucket_paths():
+    assert (
+        watermarks.normalize_watermark_blob_name("market-data/runs/run-1/buckets/A.parquet")
+        == "market-data/buckets/A.parquet"
+    )
+    assert watermarks.normalize_watermark_blob_name("market-data/whitelist.csv") == "market-data/whitelist.csv"
+
+
 def test_should_process_blob_since_last_success_requires_change_for_known_blob():
     blob = {
-        "name": "market-data/AAPL.csv",
+        "name": "market-data/buckets/A.parquet",
         "etag": "etag-1",
         "last_modified": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     }
@@ -91,12 +108,12 @@ def test_should_process_blob_since_last_success_requires_change_for_known_blob()
 
 def test_should_process_blob_since_last_success_processes_new_or_changed_blob():
     unchanged_blob = {
-        "name": "market-data/AAPL.csv",
+        "name": "market-data/buckets/A.parquet",
         "etag": "etag-1",
         "last_modified": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     }
     changed_blob = {
-        "name": "market-data/AAPL.csv",
+        "name": "market-data/buckets/A.parquet",
         "etag": "etag-2",
         "last_modified": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     }

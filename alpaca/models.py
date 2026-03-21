@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, Literal, Optional, Any
+from datetime import datetime, timezone
+from typing import Any, Dict, Literal, Optional
 
 @dataclass
 class AlpacaAccount:
@@ -139,5 +139,5 @@ class BrokerageState:
     positions: Dict[str, AlpacaPosition]
     open_orders: Dict[str, AlpacaOrder]
     position_states: Dict[str, PositionStateLike]
-    last_update: datetime = field(default_factory=datetime.utcnow)
+    last_update: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     version: int = 0

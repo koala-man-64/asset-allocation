@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, Optional
 import pandas as pd
 
 from core import core as mdc
+from tasks.common import run_manifests
 
 
 ALPHABET_BUCKETS: tuple[str, ...] = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -68,6 +69,48 @@ def bucket_blob_path_for_domain(domain: str, bucket: str) -> str:
     return bucket_blob_path(domain_prefix(domain), bucket)
 
 
+def active_domain_prefix(domain: str) -> str:
+    resolved = run_manifests.resolve_active_bronze_alpha26_prefix(domain)
+    return str(resolved or domain_prefix(domain)).strip().strip("/")
+
+
+def active_bucket_blob_path_for_domain(domain: str, bucket: str) -> str:
+    return bucket_blob_path(active_domain_prefix(domain), bucket)
+
+
+def canonical_bucket_blob_name(blob_name: str) -> str:
+    text = str(blob_name or "").strip().strip("/")
+    if not text:
+        return ""
+    parts = text.split("/")
+    if len(parts) < 3 or parts[-2] != "buckets":
+        return text
+    if "runs" not in parts[:-2]:
+        return text
+    run_index = parts.index("runs")
+    if run_index <= 0 or run_index != len(parts) - 4:
+        return text
+    return "/".join([*parts[:run_index], "buckets", parts[-1]])
+
+
+def parse_bucket_from_blob_name(blob_name: str, *, expected_prefix: Optional[str] = None) -> Optional[str]:
+    canonical = canonical_bucket_blob_name(blob_name)
+    parts = canonical.split("/")
+    if len(parts) < 3 or parts[-2] != "buckets":
+        return None
+    prefix = "/".join(parts[:-2]).strip("/")
+    normalized_expected = str(expected_prefix or "").strip().strip("/")
+    if normalized_expected and prefix != normalized_expected:
+        return None
+    filename = parts[-1]
+    if "." in filename:
+        filename = filename.split(".", 1)[0]
+    bucket = filename.strip().upper()
+    if bucket not in ALPHABET_BUCKETS:
+        return None
+    return bucket
+
+
 def bucket_blob_path(prefix: str, bucket: str) -> str:
     clean_prefix = str(prefix or "").strip().strip("/")
     clean_bucket = str(bucket or "").strip().upper()
@@ -82,6 +125,49 @@ def all_bucket_blob_paths(prefix: str) -> list[str]:
 
 def bucket_blob_paths_for_domain(domain: str) -> list[str]:
     return all_bucket_blob_paths(domain_prefix(domain))
+
+
+def active_bucket_blob_paths_for_domain(domain: str) -> list[str]:
+    return all_bucket_blob_paths(active_domain_prefix(domain))
+
+
+def list_active_bucket_blob_infos(domain: str, client: Any) -> list[dict[str, Any]]:
+    manifest = run_manifests.load_latest_bronze_alpha26_manifest(domain)
+    if isinstance(manifest, dict):
+        out = run_manifests.manifest_blobs(manifest)
+        if out:
+            return out
+
+    prefix = f"{domain_prefix(domain).strip('/')}/buckets/"
+    list_files = getattr(client, "list_files", None)
+    if callable(list_files):
+        names = sorted(
+            str(name)
+            for name in list_files(name_starts_with=prefix)
+            if str(name).startswith(prefix) and str(name).endswith(".parquet")
+        )
+        return [{"name": name} for name in names]
+
+    container_client = getattr(client, "container_client", None)
+    if container_client is None or not hasattr(container_client, "list_blobs"):
+        return []
+    out: list[dict[str, Any]] = []
+    for blob in container_client.list_blobs(name_starts_with=prefix):
+        name = str(getattr(blob, "name", "") or "")
+        if not name or not name.endswith(".parquet"):
+            continue
+        entry: dict[str, Any] = {"name": name}
+        size = getattr(blob, "size", None)
+        if isinstance(size, int):
+            entry["size"] = size
+        last_modified = getattr(blob, "last_modified", None)
+        try:
+            entry["last_modified"] = last_modified.isoformat() if last_modified is not None else None
+        except Exception:
+            pass
+        out.append(entry)
+    out.sort(key=lambda item: str(item.get("name", "")))
+    return out
 
 
 def empty_bucket_frames(schema_columns: Iterable[str]) -> dict[str, pd.DataFrame]:
@@ -139,6 +225,21 @@ def read_bucket_parquet(
                 df[col] = pd.NA
         df = df[columns]
     return df
+
+
+def read_active_bucket_parquet(
+    *,
+    client: Any,
+    domain: str,
+    bucket: str,
+    columns: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    return read_bucket_parquet(
+        client=client,
+        prefix=active_domain_prefix(domain),
+        bucket=bucket,
+        columns=columns,
+    )
 
 
 def write_symbol_index(

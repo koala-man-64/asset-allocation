@@ -94,7 +94,6 @@ class ExitRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(..., min_length=1, max_length=128)
-    enabled: bool = True
     type: ExitRuleType
     scope: ExitScope = "position"
     priceField: PriceField | None = None
@@ -183,6 +182,38 @@ class StrategyConfig(BaseModel):
     regimePolicy: RegimePolicy | None = None
     intrabarConflictPolicy: IntrabarConflictPolicy = "stop_first"
     exits: list[ExitRule] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_legacy_toggle_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        regime_policy = payload.get("regimePolicy")
+        if isinstance(regime_policy, dict):
+            normalized_policy = dict(regime_policy)
+            if normalized_policy.get("enabled") is False:
+                payload["regimePolicy"] = None
+            else:
+                normalized_policy.pop("enabled", None)
+                payload["regimePolicy"] = normalized_policy
+
+        raw_exits = payload.get("exits")
+        if isinstance(raw_exits, list):
+            normalized_exits: list[object] = []
+            for raw_rule in raw_exits:
+                if not isinstance(raw_rule, dict):
+                    normalized_exits.append(raw_rule)
+                    continue
+                if raw_rule.get("enabled") is False:
+                    continue
+                normalized_rule = dict(raw_rule)
+                normalized_rule.pop("enabled", None)
+                normalized_exits.append(normalized_rule)
+            payload["exits"] = normalized_exits
+
+        return payload
 
     @field_validator("universeConfigName", mode="before")
     @classmethod

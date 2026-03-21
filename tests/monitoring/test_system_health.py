@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import pytest
 
 from api.service.app import create_app
+from api.service.auth import AuthContext, AuthError
 from api.endpoints import system as system_endpoint
 from monitoring.delta_log import find_latest_delta_version
 from monitoring import system_health
@@ -129,8 +130,6 @@ def test_make_job_portal_url_uses_resource_anchor() -> None:
 
 @pytest.mark.asyncio
 async def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("API_KEY", raising=False)
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
 
@@ -143,18 +142,22 @@ async def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_KEY", "secret")
-    monkeypatch.setenv("API_AUTH_MODE", "api_key")
-    monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
-    monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
+async def test_system_health_requires_oidc_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_OIDC_ISSUER", "https://issuer.example.com")
+    monkeypatch.setenv("API_OIDC_AUDIENCE", "asset-allocation-api")
 
     app = create_app()
     async with get_test_client(app) as client:
+        def authenticate_headers(headers: Dict[str, str]) -> AuthContext:
+            if headers.get("authorization") != "Bearer token":
+                raise AuthError(status_code=401, detail="Unauthorized.", www_authenticate="Bearer")
+            return AuthContext(mode="oidc", subject="user-123", claims={"sub": "user-123"})
+
+        monkeypatch.setattr(app.state.auth, "authenticate_headers", authenticate_headers)
         resp = await client.get("/api/system/health")
         assert resp.status_code == 401
 
-        resp2 = await client.get("/api/system/health", headers={"X-API-Key": "secret"})
+        resp2 = await client.get("/api/system/health", headers={"Authorization": "Bearer token"})
         assert resp2.status_code == 200
 
 
@@ -162,7 +165,6 @@ async def test_system_health_requires_api_key_when_configured(tmp_path: Path, mo
 async def test_system_health_sanitizes_non_finite_signal_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
 
     class FakeCache:
         def get(self, refresh_fn: Any, *, force_refresh: bool = False) -> CacheGetResult[Dict[str, Any]]:
@@ -538,13 +540,107 @@ def test_system_health_healthy_when_latest_job_execution_succeeds(monkeypatch: p
     assert not any(alert["title"] == "Job execution failed" for alert in payload["alerts"])
 
 
+def test_system_health_defaults_blank_arm_timeout_and_job_execution_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "myjob")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "")
+    monkeypatch.setenv("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", "")
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 5, tzinfo=timezone.utc)
+    captured_cfg: Dict[str, Any] = {}
+    job_url = "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob"
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob",
+            "systemData": {"lastModifiedAt": "2024-01-05T00:00:10Z"},
+            "properties": {"provisioningState": "Succeeded"},
+        },
+        f"{job_url}/executions": {
+            "value": [
+                {
+                    "name": "myjob-exec-1",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-05T00:00:00Z",
+                        "endTime": "2024-01-05T00:00:05Z",
+                    },
+                },
+                {
+                    "name": "myjob-exec-2",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-04T00:00:00Z",
+                        "endTime": "2024-01-04T00:00:05Z",
+                    },
+                },
+                {
+                    "name": "myjob-exec-3",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-03T00:00:00Z",
+                        "endTime": "2024-01-03T00:00:05Z",
+                    },
+                },
+                {
+                    "name": "myjob-exec-4",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-02T00:00:00Z",
+                        "endTime": "2024-01-02T00:00:05Z",
+                    },
+                },
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            captured_cfg["timeout_seconds"] = cfg.timeout_seconds
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert captured_cfg["timeout_seconds"] == pytest.approx(
+        system_health.DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS
+    )
+    assert payload["overall"] == "healthy"
+    assert len(payload["recentJobs"]) == system_health.DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB
+    assert payload["recentJobs"][0]["status"] == "success"
+    assert not any(alert["title"] == "Azure monitoring unavailable" for alert in payload["alerts"])
+
+
 def test_system_health_critical_on_job_failure_reason_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "myjob")
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
 
     monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
@@ -631,7 +727,6 @@ def test_system_health_degraded_on_bronze_symbol_jump(monkeypatch: pytest.Monkey
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "bronze-finance-job")
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
     monkeypatch.setenv("SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS", "168")
     monkeypatch.setenv(
@@ -692,22 +787,25 @@ def test_system_health_degraded_on_bronze_symbol_jump(monkeypatch: pytest.Monkey
 
         def query(self, *, workspace_id: str, query: str, timespan: Optional[str] = None) -> Dict[str, Any]:
             assert workspace_id == "workspace"
-            assert "alpha26 buckets written" in query
-            return {
-                "tables": [
-                    {
-                        "columns": [
-                            {"name": "TimeGenerated"},
-                            {"name": "symbol_count"},
-                            {"name": "msg"},
-                        ],
-                        "rows": [
-                            ["2024-01-01T00:05:00Z", 18246, "Bronze finance alpha26 buckets written: symbols=18246"],
-                            ["2023-12-31T00:05:00Z", 200, "Bronze finance alpha26 buckets written: symbols=200"],
-                        ],
-                    }
-                ]
-            }
+            if "alpha26 buckets written" in query:
+                return {
+                    "tables": [
+                        {
+                            "columns": [
+                                {"name": "TimeGenerated"},
+                                {"name": "symbol_count"},
+                                {"name": "msg"},
+                            ],
+                            "rows": [
+                                ["2024-01-01T00:05:00Z", 18246, "Bronze finance alpha26 buckets written: symbols=18246"],
+                                ["2023-12-31T00:05:00Z", 200, "Bronze finance alpha26 buckets written: symbols=200"],
+                            ],
+                        }
+                    ]
+                }
+            if "Bronze Massive finance ingest complete:" in query:
+                return {"tables": [{"columns": [], "rows": []}]}
+            raise AssertionError(f"Unexpected query: {query}")
 
         def close(self) -> None:
             return None
@@ -720,12 +818,109 @@ def test_system_health_degraded_on_bronze_symbol_jump(monkeypatch: pytest.Monkey
     assert any(alert["title"] == "Bronze symbol count jump" and alert["severity"] == "warning" for alert in payload["alerts"])
 
 
+def test_system_health_critical_on_bronze_finance_zero_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "bronze-finance-job")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
+    monkeypatch.setenv("SYSTEM_HEALTH_BRONZE_FINANCE_ZERO_WRITE_LOOKBACK_HOURS", "168")
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    job_url = (
+        "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/bronze-finance-job"
+    )
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/bronze-finance-job",
+            "properties": {"provisioningState": "Succeeded"},
+        },
+        f"{job_url}/executions": {
+            "value": [
+                {
+                    "name": "bronze-finance-job-exec-1",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-01T00:00:00Z",
+                        "endTime": "2024-01-01T00:10:00Z",
+                    },
+                }
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    class FakeAzureLogAnalyticsClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def query(self, *, workspace_id: str, query: str, timespan: Optional[str] = None) -> Dict[str, Any]:
+            assert workspace_id == "workspace"
+            assert "Bronze Massive finance ingest complete:" in query
+            return {
+                "tables": [
+                    {
+                        "columns": [
+                            {"name": "TimeGenerated"},
+                            {"name": "processed"},
+                            {"name": "written"},
+                            {"name": "msg"},
+                        ],
+                        "rows": [
+                            [
+                                "2024-01-01T00:10:00Z",
+                                12269,
+                                0,
+                                "Bronze Massive finance ingest complete: processed=12269 written=0 failed=12269",
+                            ],
+                        ],
+                    }
+                ]
+            }
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+    monkeypatch.setattr(system_health, "AzureLogAnalyticsClient", FakeAzureLogAnalyticsClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert payload["overall"] == "critical"
+    assert any(
+        alert["title"] == "Bronze finance wrote zero rows" and alert["severity"] == "error"
+        for alert in payload["alerts"]
+    )
+
+
 def test_system_health_critical_on_resource_health_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", "myapp")
-    monkeypatch.setenv("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED", "true")
 
     monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
 

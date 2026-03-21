@@ -9,6 +9,10 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
   - `[deploy/sql/postgres/migrations/0024_add_gold_earnings_calendar_columns.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0024_add_gold_earnings_calendar_columns.sql)`
   - `[deploy/sql/postgres/migrations/0027_add_gold_market_structure_features.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0027_add_gold_market_structure_features.sql)`
 - Shared sync helper: `[tasks/common/postgres_gold_sync.py](/mnt/c/Users/rdpro/Projects/AssetAllocation/tasks/common/postgres_gold_sync.py)`
+- Column metadata catalog:
+  - migration: `[deploy/sql/postgres/migrations/0031_gold_column_lookup.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0031_gold_column_lookup.sql)`
+  - seed: `[core/metadata/gold_column_lookup_seed.json](/mnt/c/Users/rdpro/Projects/AssetAllocation/core/metadata/gold_column_lookup_seed.json)`
+  - sync script: `[scripts/sync_gold_column_lookup.py](/mnt/c/Users/rdpro/Projects/AssetAllocation/scripts/sync_gold_column_lookup.py)`
 - Serving tables:
   - `gold.market_data`
   - `gold.finance_data`

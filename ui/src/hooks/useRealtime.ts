@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+
 import { config } from '@/config';
-import { backtestKeys } from '@/services/backtestHooks';
 import { queryKeys } from '@/hooks/useDataQueries';
+import { appendAuthHeaders } from '@/services/authTransport';
+import { backtestKeys } from '@/services/backtestHooks';
 import {
   CONSOLE_LOG_STREAM_EVENT_TYPE,
   REALTIME_SUBSCRIBE_EVENT,
@@ -37,6 +40,10 @@ type TopicSubscriptionDetail = {
   topics?: unknown;
 };
 
+type RealtimeTicketResponse = {
+  ticket?: unknown;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
@@ -47,10 +54,10 @@ export function useRealtime() {
   const keepAliveRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const dynamicTopicCountsRef = useRef<Map<string, number>>(new Map());
+  const connectInFlightRef = useRef(false);
+  const realtimeUnavailableRef = useRef(false);
 
   useEffect(() => {
-    // `config.apiBaseUrl` is the API base (expected to include `/api`).
-    // The websocket endpoint is mounted at `/api/ws/updates`, so append `/ws/updates`.
     const httpBase = config.apiBaseUrl.replace(/\/+$/, '');
     const wsPath = `${httpBase}/ws/updates`;
     const wsUrl = new URL(wsPath, window.location.origin);
@@ -58,9 +65,7 @@ export function useRealtime() {
 
     function normalizeTopics(value: unknown): string[] {
       if (!Array.isArray(value)) return [];
-      return value
-        .map((topic) => String(topic || '').trim())
-        .filter((topic) => topic.length > 0);
+      return value.map((topic) => String(topic || '').trim()).filter((topic) => topic.length > 0);
     }
 
     function getDynamicTopics(): string[] {
@@ -77,7 +82,10 @@ export function useRealtime() {
       wsRef.current.send(JSON.stringify({ action, topics: filtered }));
     }
 
-    function updateDynamicSubscriptions(action: 'subscribe' | 'unsubscribe', topics: string[]): void {
+    function updateDynamicSubscriptions(
+      action: 'subscribe' | 'unsubscribe',
+      topics: string[]
+    ): void {
       const filtered = normalizeTopics(topics);
       if (filtered.length === 0) return;
 
@@ -116,58 +124,123 @@ export function useRealtime() {
       updateDynamicSubscriptions('unsubscribe', normalizeTopics(customEvent.detail?.topics));
     }
 
-    function connect() {
-      if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
-      const wsHref = wsUrl.toString();
-      const ws = new WebSocket(wsHref);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        // Subscribe to server topics so publish events are delivered.
-        const topics = [...SUBSCRIPTION_TOPICS, ...getDynamicTopics()];
-        sendSubscription('subscribe', topics);
-
-        // Keep the connection active behind ingress/load-balancers.
-        if (keepAliveRef.current) {
-          window.clearInterval(keepAliveRef.current);
-        }
-        keepAliveRef.current = window.setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send('ping');
-          }
-        }, 30_000);
-      };
-
-      ws.onmessage = (event) => {
-        if (event.data === 'pong') return;
-        try {
-          const message: unknown = JSON.parse(event.data);
-          handleMessage(message);
-        } catch (err) {
-          console.error('[Realtime] Failed to parse message:', err);
-        }
-      };
-
-      ws.onclose = () => {
-        if (keepAliveRef.current) {
-          window.clearInterval(keepAliveRef.current);
-          keepAliveRef.current = null;
-        }
-        wsRef.current = null;
-        if (reconnectTimeoutRef.current) {
-          window.clearTimeout(reconnectTimeoutRef.current);
-        }
-        reconnectTimeoutRef.current = window.setTimeout(connect, 5000);
-      };
-
-      ws.onerror = (err) => {
-        console.error('[Realtime] Error:', err);
-        ws.close();
-      };
+    function markRealtimeUnavailable(message: string): void {
+      if (realtimeUnavailableRef.current) {
+        return;
+      }
+      realtimeUnavailableRef.current = true;
+      toast.error(message);
     }
 
-    function handleMessage(message: unknown) {
+    function scheduleReconnect(): void {
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+      }
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        void connect();
+      }, 5000);
+    }
+
+    async function fetchRealtimeTicket(): Promise<string | null> {
+      const headers = await appendAuthHeaders();
+      const response = await fetch(`${httpBase}/realtime/ticket`, {
+        method: 'POST',
+        headers,
+        cache: 'no-store'
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Realtime ticket request failed (${response.status})`);
+      }
+
+      const payload = (await response.json()) as RealtimeTicketResponse;
+      const ticket = typeof payload.ticket === 'string' ? payload.ticket.trim() : '';
+      if (!ticket) {
+        throw new Error('Realtime ticket response was missing a ticket.');
+      }
+      return ticket;
+    }
+
+    async function connect(): Promise<void> {
+      if (connectInFlightRef.current) return;
+      if (
+        wsRef.current?.readyState === WebSocket.OPEN ||
+        wsRef.current?.readyState === WebSocket.CONNECTING
+      ) {
+        return;
+      }
+
+      connectInFlightRef.current = true;
+      try {
+        let wsHref = wsUrl.toString();
+        const ticket = await fetchRealtimeTicket();
+        const authedUrl = new URL(wsHref);
+        authedUrl.searchParams.set('ticket', String(ticket));
+        wsHref = authedUrl.toString();
+
+        const ws = new WebSocket(wsHref);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          connectInFlightRef.current = false;
+          realtimeUnavailableRef.current = false;
+
+          const topics = [...SUBSCRIPTION_TOPICS, ...getDynamicTopics()];
+          sendSubscription('subscribe', topics);
+
+          if (keepAliveRef.current) {
+            window.clearInterval(keepAliveRef.current);
+          }
+          keepAliveRef.current = window.setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send('ping');
+            }
+          }, 30_000);
+        };
+
+        ws.onmessage = (event) => {
+          if (event.data === 'pong') return;
+          try {
+            const message: unknown = JSON.parse(event.data);
+            handleMessage(message);
+          } catch (err) {
+            console.error('[Realtime] Failed to parse message:', err);
+          }
+        };
+
+        ws.onclose = (event) => {
+          connectInFlightRef.current = false;
+          if (keepAliveRef.current) {
+            window.clearInterval(keepAliveRef.current);
+            keepAliveRef.current = null;
+          }
+          wsRef.current = null;
+
+          if (event.code === 4401) {
+            markRealtimeUnavailable(
+              'Realtime updates unavailable: websocket authentication was rejected.'
+            );
+          }
+
+          scheduleReconnect();
+        };
+
+        ws.onerror = (err) => {
+          console.error('[Realtime] Error:', err);
+          ws.close();
+        };
+      } catch (err) {
+        connectInFlightRef.current = false;
+        wsRef.current = null;
+        console.error('[Realtime] Ticket request failed:', err);
+        const message = err instanceof Error ? err.message : 'Realtime authentication failed.';
+        markRealtimeUnavailable(`Realtime updates unavailable: ${message}`);
+        scheduleReconnect();
+      }
+    }
+
+    function handleMessage(message: unknown): void {
       if (!isRecord(message)) return;
 
       let topic: string | null = null;
@@ -194,7 +267,6 @@ export function useRealtime() {
         payload = envelope.data;
       }
 
-      // Backward-compat with old event format expected by the UI.
       if (!eventType && typeof envelope.type === 'string') {
         eventType = envelope.type;
       }
@@ -219,8 +291,7 @@ export function useRealtime() {
               timestamp: typeof line.timestamp === 'string' ? line.timestamp : undefined,
               stream_s: typeof line.stream_s === 'string' ? line.stream_s : null,
               message: typeof line.message === 'string' ? line.message : '',
-              executionName:
-                typeof line.executionName === 'string' ? line.executionName : null
+              executionName: typeof line.executionName === 'string' ? line.executionName : null
             })),
             polledAt: typeof payload.polledAt === 'string' ? payload.polledAt : undefined
           });
@@ -246,11 +317,19 @@ export function useRealtime() {
         topic === 'container-apps' ||
         eventType === 'SYSTEM_HEALTH_UPDATE' ||
         eventType === 'JOB_STATE_CHANGED' ||
-        eventType === 'CONTAINER_APP_STATE_CHANGED';
+        eventType === 'CONTAINER_APP_STATE_CHANGED' ||
+        eventType === 'DOMAIN_METADATA_SNAPSHOT_CHANGED';
 
       if (shouldRefreshSystem) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.systemStatusView() });
         void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
         void queryClient.invalidateQueries({ queryKey: CONTAINER_APPS_QUERY_KEY });
+      }
+
+      if (topic === 'system-health' || eventType === 'DOMAIN_METADATA_SNAPSHOT_CHANGED') {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.domainMetadataSnapshot('all', 'all')
+        });
       }
 
       if (topic === 'runtime-config' || eventType === 'RUNTIME_CONFIG_CHANGED') {
@@ -265,7 +344,7 @@ export function useRealtime() {
 
     window.addEventListener(REALTIME_SUBSCRIBE_EVENT, handleTopicSubscriptionRequest);
     window.addEventListener(REALTIME_UNSUBSCRIBE_EVENT, handleTopicUnsubscriptionRequest);
-    connect();
+    void connect();
 
     return () => {
       window.removeEventListener(REALTIME_SUBSCRIBE_EVENT, handleTopicSubscriptionRequest);
@@ -278,8 +357,8 @@ export function useRealtime() {
         window.clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      connectInFlightRef.current = false;
       if (wsRef.current) {
-        // Prevent reconnect on unmount
         wsRef.current.onclose = null;
         wsRef.current.close();
         wsRef.current = null;

@@ -16,11 +16,26 @@ _SNAKE_CASE_CAMEL_1 = re.compile(r"(.)([A-Z][a-z]+)")
 _SNAKE_CASE_CAMEL_2 = re.compile(r"([a-z0-9])([A-Z])")
 
 
-def _coerce_to_naive_datetime(series: pd.Series) -> pd.Series:
-    parsed = pd.to_datetime(series, errors="coerce")
+def coerce_to_naive_datetime(series: pd.Series) -> pd.Series:
+    parsed = pd.to_datetime(series, errors="coerce", utc=True, format="mixed")
     if hasattr(parsed.dtype, "tz") and parsed.dtype.tz is not None:
         parsed = parsed.dt.tz_convert(None)
     return parsed
+
+
+def parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | None:
+    if raw is None:
+        return default
+    value = str(raw).strip()
+    if not value:
+        return default
+    if value.lower() in {"none", "inf", "infinite", "forever"}:
+        return None
+    try:
+        parsed = float(value)
+    except Exception:
+        return default
+    return max(0.0, parsed)
 
 
 def _to_snake_case(value: Any) -> str:
@@ -90,7 +105,7 @@ def normalize_date_column(
     else:
         out = out.copy()
 
-    out[canonical] = _coerce_to_naive_datetime(out[canonical])
+    out[canonical] = coerce_to_naive_datetime(out[canonical])
     if out[canonical].isna().all():
         raise ContractViolation(f"{context}: date column '{canonical}' has no parseable values")
     return out

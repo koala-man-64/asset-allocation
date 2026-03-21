@@ -15,7 +15,14 @@ import {
 import { Button } from '@/app/components/ui/button';
 import { Checkbox } from '@/app/components/ui/checkbox';
 import { Input } from '@/app/components/ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/app/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { DataService } from '@/services/DataService';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
@@ -70,7 +77,8 @@ const aggregationOptions: AggregationOption[] = [
 ];
 
 const formFieldClass = 'space-y-1.5';
-const formLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground';
+const formLabelClass =
+  'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground';
 const formInputClass = 'h-10 bg-input-background';
 const formSelectClass =
   'h-10 w-full rounded-xl border-2 border-mcm-walnut bg-input-background px-3 text-sm font-semibold text-foreground outline-none transition-[color,box-shadow] focus-visible:border-mcm-teal focus-visible:ring-mcm-teal/40 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50';
@@ -97,9 +105,13 @@ function buildPurgeExpression(
   aggregation: AggregationKey,
   recentRows: number
 ): string {
-  const display = Number.isInteger(value) ? `${value}` : `${value}`.replace(/0+$/, '').replace(/\.$/, '');
+  const display = Number.isInteger(value)
+    ? `${value}`
+    : `${value}`.replace(/0+$/, '').replace(/\.$/, '');
   const metric =
-    recentRows === 1 && aggregation === 'avg' ? column : `${aggregation}(${column}) over last ${recentRows} rows`;
+    recentRows === 1 && aggregation === 'avg'
+      ? column
+      : `${aggregation}(${column}) over last ${recentRows} rows`;
   switch (operator) {
     case 'gt':
       return `${metric} > ${display}`;
@@ -118,9 +130,7 @@ function buildPurgeExpression(
   }
 }
 
-function extractBatchResult(
-  operation: PurgeOperationResponse
-): {
+function extractBatchResult(operation: PurgeOperationResponse): {
   symbolResults: PurgeSymbolResultItem[];
   requestedSymbolCount: number;
   completed: number;
@@ -151,10 +161,14 @@ function extractBatchResult(
   const failed = result.failed || 0;
   const skipped = result.skipped || 0;
   const completed = result.completed ?? succeeded + failed + skipped;
-  const pending = result.pending ?? Math.max(requestedSymbolCount - completed - (result.inProgress || 0), 0);
+  const pending =
+    result.pending ?? Math.max(requestedSymbolCount - completed - (result.inProgress || 0), 0);
   const inProgress = result.inProgress || 0;
   const progressPct =
-    result.progressPct ?? (requestedSymbolCount > 0 ? Number(((completed / requestedSymbolCount) * 100).toFixed(2)) : 100);
+    result.progressPct ??
+    (requestedSymbolCount > 0
+      ? Number(((completed / requestedSymbolCount) * 100).toFixed(2))
+      : 100);
   return {
     symbolResults: result.symbolResults || [],
     requestedSymbolCount,
@@ -169,7 +183,9 @@ function extractBatchResult(
   };
 }
 
-function extractCandidatePreviewResult(operation: PurgeOperationResponse): PurgeCandidatesResponse | null {
+function extractCandidatePreviewResult(
+  operation: PurgeOperationResponse
+): PurgeCandidatesResponse | null {
   const result = operation.result as Partial<PurgeCandidatesResponse> | undefined;
   if (!result || typeof result !== 'object') return null;
   if (!result.criteria || !result.summary || !Array.isArray(result.symbols)) return null;
@@ -205,7 +221,9 @@ export function SymbolPurgeByCriteriaPage() {
   const [confirmText, setConfirmText] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [operationId, setOperationId] = useState<string | null>(null);
-  const [operationStatus, setOperationStatus] = useState<'running' | 'succeeded' | 'failed' | null>(null);
+  const [operationStatus, setOperationStatus] = useState<'running' | 'succeeded' | 'failed' | null>(
+    null
+  );
   const [operationError, setOperationError] = useState<string | null>(null);
   const [symbolExecutionResults, setSymbolExecutionResults] = useState<PurgeSymbolResultItem[]>([]);
   const [completionSummary, setCompletionSummary] = useState<{
@@ -230,7 +248,9 @@ export function SymbolPurgeByCriteriaPage() {
 
   const previewExpression = useMemo(
     () =>
-      isValueValid ? buildPurgeExpression(operator, column || 'column', parsedValue, aggregation, recentRows) : '',
+      isValueValid
+        ? buildPurgeExpression(operator, column || 'column', parsedValue, aggregation, recentRows)
+        : '',
     [operator, column, isValueValid, parsedValue, aggregation, recentRows]
   );
 
@@ -290,7 +310,9 @@ export function SymbolPurgeByCriteriaPage() {
       setAvailableColumns(keys);
       setColumnsRequireRetrieve(false);
       setColumn((previous) => (!previous || !keys.includes(previous) ? (keys[0] ?? '') : previous));
-      toast.success(`Retrieved ${keys.length} cached column${keys.length === 1 ? '' : 's'} for ${layer}/${domain}.`);
+      toast.success(
+        `Retrieved ${keys.length} cached column${keys.length === 1 ? '' : 's'} for ${layer}/${domain}.`
+      );
     } catch (error: unknown) {
       const message = formatSystemStatusText(error) || 'Unable to refresh columns.';
       setColumnsError(message);
@@ -344,7 +366,7 @@ export function SymbolPurgeByCriteriaPage() {
 
   const applyOperationProgress = useCallback((operation: PurgeOperationResponse): void => {
     setOperationStatus(operation.status);
-    setOperationError(operation.status === 'failed' ? (operation.error || null) : null);
+    setOperationError(operation.status === 'failed' ? operation.error || null : null);
 
     const result = extractBatchResult(operation);
     if (!result) return;
@@ -363,91 +385,97 @@ export function SymbolPurgeByCriteriaPage() {
     });
   }, []);
 
-  const pollOperation = useCallback(async (targetOperationId: string): Promise<PurgeOperationResponse> => {
-    const startedAt = Date.now();
-    const timeoutMs = 5 * 60_000;
-    let attempt = 0;
+  const pollOperation = useCallback(
+    async (targetOperationId: string): Promise<PurgeOperationResponse> => {
+      const startedAt = Date.now();
+      const timeoutMs = 5 * 60_000;
+      let attempt = 0;
 
-    while (true) {
-      let polledOperation: unknown;
-      try {
-        polledOperation = await DataService.getPurgeOperation(targetOperationId);
-      } catch (error) {
-        const message = formatSystemStatusText(error) || 'Unable to poll purge status.';
-        if (Date.now() - startedAt > timeoutMs) {
-          throw new Error(message || 'Purge did not complete before timeout.');
+      while (true) {
+        let polledOperation: unknown;
+        try {
+          polledOperation = await DataService.getPurgeOperation(targetOperationId);
+        } catch (error) {
+          const message = formatSystemStatusText(error) || 'Unable to poll purge status.';
+          if (Date.now() - startedAt > timeoutMs) {
+            throw new Error(message || 'Purge did not complete before timeout.');
+          }
+
+          const delay = 700 + Math.min(attempt * 150, 900);
+          attempt += 1;
+          await sleep(delay);
+          continue;
         }
 
-        const delay = 700 + Math.min(attempt * 150, 900);
-        attempt += 1;
-        await sleep(delay);
-        continue;
-      }
-
-      const operation = polledOperation as PurgeOperationResponse;
-      applyOperationProgress(operation);
-      if (operation.status === 'succeeded') {
-        if (!operation.result) {
-          throw new Error('Purge completed without a result payload.');
-        }
-        return operation;
-      }
-
-      if (operation.status === 'failed') {
-        if (operation.result) {
+        const operation = polledOperation as PurgeOperationResponse;
+        applyOperationProgress(operation);
+        if (operation.status === 'succeeded') {
+          if (!operation.result) {
+            throw new Error('Purge completed without a result payload.');
+          }
           return operation;
         }
-        const message = operation.error || 'Purge failed.';
-        throw new Error(message);
-      }
 
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(
-          `Purge is still running. Check system state for progress. operationId=${targetOperationId}`
-        );
-      }
+        if (operation.status === 'failed') {
+          if (operation.result) {
+            return operation;
+          }
+          const message = operation.error || 'Purge failed.';
+          throw new Error(message);
+        }
 
-      const delay = 700 + Math.min(attempt * 150, 900);
-      attempt += 1;
-      await sleep(delay);
-    }
-  }, [applyOperationProgress]);
-
-  const pollPreviewOperation = useCallback(async (targetOperationId: string): Promise<PurgeOperationResponse> => {
-    const startedAt = Date.now();
-    const timeoutMs = 2 * 60_000;
-    let attempt = 0;
-
-    while (true) {
-      let polledOperation: unknown;
-      try {
-        polledOperation = await DataService.getPurgeOperation(targetOperationId);
-      } catch (error) {
-        const message = formatSystemStatusText(error) || 'Unable to poll preview status.';
         if (Date.now() - startedAt > timeoutMs) {
-          throw new Error(message || 'Preview did not complete before timeout.');
+          throw new Error(
+            `Purge is still running. Check system state for progress. operationId=${targetOperationId}`
+          );
+        }
+
+        const delay = 700 + Math.min(attempt * 150, 900);
+        attempt += 1;
+        await sleep(delay);
+      }
+    },
+    [applyOperationProgress]
+  );
+
+  const pollPreviewOperation = useCallback(
+    async (targetOperationId: string): Promise<PurgeOperationResponse> => {
+      const startedAt = Date.now();
+      const timeoutMs = 2 * 60_000;
+      let attempt = 0;
+
+      while (true) {
+        let polledOperation: unknown;
+        try {
+          polledOperation = await DataService.getPurgeOperation(targetOperationId);
+        } catch (error) {
+          const message = formatSystemStatusText(error) || 'Unable to poll preview status.';
+          if (Date.now() - startedAt > timeoutMs) {
+            throw new Error(message || 'Preview did not complete before timeout.');
+          }
+          const delay = 700 + Math.min(attempt * 150, 900);
+          attempt += 1;
+          await sleep(delay);
+          continue;
+        }
+
+        const operation = polledOperation as PurgeOperationResponse;
+        if (operation.status === 'succeeded') {
+          return operation;
+        }
+        if (operation.status === 'failed') {
+          throw new Error(operation.error || 'Candidate preview failed.');
+        }
+        if (Date.now() - startedAt > timeoutMs) {
+          throw new Error(`Candidate preview is still running. operationId=${targetOperationId}`);
         }
         const delay = 700 + Math.min(attempt * 150, 900);
         attempt += 1;
         await sleep(delay);
-        continue;
       }
-
-      const operation = polledOperation as PurgeOperationResponse;
-      if (operation.status === 'succeeded') {
-        return operation;
-      }
-      if (operation.status === 'failed') {
-        throw new Error(operation.error || 'Candidate preview failed.');
-      }
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Candidate preview is still running. operationId=${targetOperationId}`);
-      }
-      const delay = 700 + Math.min(attempt * 150, 900);
-      attempt += 1;
-      await sleep(delay);
-    }
-  }, []);
+    },
+    []
+  );
 
   const runPreview = async () => {
     if (!canPreview) {
@@ -482,7 +510,9 @@ export function SymbolPurgeByCriteriaPage() {
 
       const operation = await DataService.createPurgeCandidatesOperation(payload);
       const finishedOperation =
-        operation.status === 'succeeded' ? operation : await pollPreviewOperation(operation.operationId);
+        operation.status === 'succeeded'
+          ? operation
+          : await pollPreviewOperation(operation.operationId);
       const response = extractCandidatePreviewResult(finishedOperation);
       if (!response) {
         throw new Error('Candidate preview completed without a valid result payload.');
@@ -531,7 +561,9 @@ export function SymbolPurgeByCriteriaPage() {
     const selected = Array.from(selectedSymbols).sort();
     try {
       await navigator.clipboard.writeText(selected.join(', '));
-      toast.success(`${selected.length} symbol${selected.length === 1 ? '' : 's'} copied to clipboard.`);
+      toast.success(
+        `${selected.length} symbol${selected.length === 1 ? '' : 's'} copied to clipboard.`
+      );
     } catch {
       toast.error('Clipboard access is unavailable in this browser context.');
     }
@@ -571,7 +603,8 @@ export function SymbolPurgeByCriteriaPage() {
 
       setOperationId(response.operationId);
       applyOperationProgress(response);
-      const finished = response.status === 'succeeded' ? response : await pollOperation(response.operationId);
+      const finished =
+        response.status === 'succeeded' ? response : await pollOperation(response.operationId);
 
       const result = extractBatchResult(finished);
       if (!result) {
@@ -621,7 +654,9 @@ export function SymbolPurgeByCriteriaPage() {
 
     try {
       const blacklist = await DataService.getPurgeBlacklistSymbols();
-      const symbols = (blacklist.symbols || []).map((item) => String(item || '').trim()).filter((item) => item.length > 0);
+      const symbols = (blacklist.symbols || [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.length > 0);
       const uniqueSymbols = Array.from(new Set(symbols));
       if (!uniqueSymbols.length) {
         setOperationStatus(null);
@@ -640,7 +675,8 @@ export function SymbolPurgeByCriteriaPage() {
 
       setOperationId(response.operationId);
       applyOperationProgress(response);
-      const finished = response.status === 'succeeded' ? response : await pollOperation(response.operationId);
+      const finished =
+        response.status === 'succeeded' ? response : await pollOperation(response.operationId);
 
       const result = extractBatchResult(finished);
       if (!result) {
@@ -722,7 +758,8 @@ export function SymbolPurgeByCriteriaPage() {
             </select>
             {showBronzeWarning ? (
               <p className="text-[11px] leading-relaxed text-amber-600">
-                Bronze-wide criteria are approximated from the silver preview layer. Silver/gold is recommended.
+                Bronze-wide criteria are approximated from the silver preview layer. Silver/gold is
+                recommended.
               </p>
             ) : null}
           </div>
@@ -768,13 +805,19 @@ export function SymbolPurgeByCriteriaPage() {
                 onClick={() => void refreshColumns()}
                 disabled={columnsLoading}
               >
-                {columnsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {columnsLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
                 {columnsRequireRetrieve ? 'Retrieve Columns' : 'Refresh Columns'}
               </Button>
               <p className="text-[11px] text-muted-foreground">Source: common ADLS cache</p>
             </div>
             {columnsRequireRetrieve ? (
-              <p className="text-[11px] text-amber-600">Columns are not cached for this layer/domain yet.</p>
+              <p className="text-[11px] text-amber-600">
+                Columns are not cached for this layer/domain yet.
+              </p>
             ) : null}
             {columnsError ? <p className="text-[11px] text-destructive">{columnsError}</p> : null}
           </div>
@@ -807,7 +850,9 @@ export function SymbolPurgeByCriteriaPage() {
               />
               {!isValueValid || !isPercentValid ? (
                 <p className="text-[11px] text-destructive">
-                  {isValueValid ? 'Percentile must be between 1 and 100.' : 'Numeric value must be finite.'}
+                  {isValueValid
+                    ? 'Percentile must be between 1 and 100.'
+                    : 'Numeric value must be finite.'}
                 </p>
               ) : null}
             </div>
@@ -846,15 +891,23 @@ export function SymbolPurgeByCriteriaPage() {
             disabled={!canPreview || candidateLoading}
             className="h-10 w-full gap-2"
           >
-            {candidateLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            {candidateLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
             {candidateLoading ? 'Previewing…' : 'Preview symbols'}
           </Button>
 
-          {validationError ? <p className="text-[11px] text-destructive">{validationError}</p> : null}
+          {validationError ? (
+            <p className="text-[11px] text-destructive">{validationError}</p>
+          ) : null}
 
           <div className="rounded-xl border border-border/70 bg-muted/30 p-2.5 text-xs text-muted-foreground">
             <p className="font-semibold text-foreground">Rule summary</p>
-            <p className="font-mono break-words mt-1">{previewExpression || 'No valid rule yet.'}</p>
+            <p className="font-mono break-words mt-1">
+              {previewExpression || 'No valid rule yet.'}
+            </p>
           </div>
         </div>
       </section>
@@ -871,17 +924,37 @@ export function SymbolPurgeByCriteriaPage() {
               </p>
             </div>
             <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => void handleCopySelected()} disabled={selectedCount === 0}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCopySelected()}
+                disabled={selectedCount === 0}
+              >
                 <ClipboardCopy className="h-4 w-4" />
                 Copy selected
               </Button>
-              <Button variant="outline" size="sm" onClick={handleSelectAll} disabled={!candidateRows.length}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSelectAll}
+                disabled={!candidateRows.length}
+              >
                 Select all
               </Button>
-              <Button variant="outline" size="sm" onClick={handleClearAll} disabled={!candidateRows.length}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleClearAll}
+                disabled={!candidateRows.length}
+              >
                 Clear all
               </Button>
-              <Button variant="outline" size="sm" onClick={handleInvert} disabled={!candidateRows.length}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleInvert}
+                disabled={!candidateRows.length}
+              >
                 <ArrowUpDown className="h-4 w-4" />
                 Invert
               </Button>
@@ -898,7 +971,10 @@ export function SymbolPurgeByCriteriaPage() {
                 <TableRow>
                   <TableHead className="w-12">Select</TableHead>
                   <TableHead>Symbol</TableHead>
-                  <TableHead className="w-[140px] cursor-pointer" onClick={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}>
+                  <TableHead
+                    className="w-[140px] cursor-pointer"
+                    onClick={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}
+                  >
                     Matched value
                   </TableHead>
                   <TableHead className="w-[180px]">Rows contributing</TableHead>
@@ -909,7 +985,9 @@ export function SymbolPurgeByCriteriaPage() {
                 {sortedCandidates.length === 0 && (
                   <TableRow>
                     <td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                      {candidateLoading ? 'Loading candidates…' : 'No candidates yet. Select rule criteria and preview.'}
+                      {candidateLoading
+                        ? 'Loading candidates…'
+                        : 'No candidates yet. Select rule criteria and preview.'}
                     </td>
                   </TableRow>
                 )}
@@ -954,13 +1032,19 @@ export function SymbolPurgeByCriteriaPage() {
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-border/70 bg-muted/30 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected symbols</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                Selected symbols
+              </p>
               <p className="text-2xl font-black font-mono">{selectedCount}</p>
             </div>
             <div className="rounded-md border border-border/70 bg-muted/30 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Estimated purge target</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                Estimated purge target
+              </p>
               <p className="text-2xl font-black font-mono">
-                {candidateResponse ? formatNumber(candidateResponse.summary.estimatedDeletionTargets) : '—'}
+                {candidateResponse
+                  ? formatNumber(candidateResponse.summary.estimatedDeletionTargets)
+                  : '—'}
               </p>
             </div>
           </div>
@@ -973,8 +1057,13 @@ export function SymbolPurgeByCriteriaPage() {
 
           <div className="mt-4 space-y-3">
             <label className="inline-flex w-full items-start gap-3 text-xs font-semibold uppercase tracking-wide">
-              <Checkbox checked={confirmChecked} onCheckedChange={(next) => setConfirmChecked(Boolean(next))} />
-              <span className="leading-snug">I understand this is destructive and cannot be undone.</span>
+              <Checkbox
+                checked={confirmChecked}
+                onCheckedChange={(next) => setConfirmChecked(Boolean(next))}
+              />
+              <span className="leading-snug">
+                I understand this is destructive and cannot be undone.
+              </span>
             </label>
 
             <div className="grid gap-3 xl:grid-cols-[auto_200px_minmax(0,1fr)] xl:items-center">
@@ -1052,28 +1141,48 @@ export function SymbolPurgeByCriteriaPage() {
           {completionSummary ? (
             <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Requested</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Requested
+                </div>
                 <div className="font-black font-mono">{completionSummary.requested}</div>
               </div>
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Completed</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Completed
+                </div>
                 <div className="font-black font-mono">{completionSummary.completed}</div>
               </div>
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">In Progress</div>
-                <div className="font-black font-mono text-amber-600">{completionSummary.inProgress}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  In Progress
+                </div>
+                <div className="font-black font-mono text-amber-600">
+                  {completionSummary.inProgress}
+                </div>
               </div>
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Succeeded</div>
-                <div className="font-black font-mono text-emerald-600">{completionSummary.succeeded}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Succeeded
+                </div>
+                <div className="font-black font-mono text-emerald-600">
+                  {completionSummary.succeeded}
+                </div>
               </div>
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Failed</div>
-                <div className="font-black font-mono text-destructive">{completionSummary.failed}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Failed
+                </div>
+                <div className="font-black font-mono text-destructive">
+                  {completionSummary.failed}
+                </div>
               </div>
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Deleted</div>
-                <div className="font-black font-mono">{formatNumber(completionSummary.totalDeleted)}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Deleted
+                </div>
+                <div className="font-black font-mono">
+                  {formatNumber(completionSummary.totalDeleted)}
+                </div>
               </div>
             </div>
           ) : null}
@@ -1099,7 +1208,9 @@ export function SymbolPurgeByCriteriaPage() {
                   {symbolExecutionResults.map((row) => (
                     <TableRow key={row.symbol}>
                       <TableCell className="font-mono">{row.symbol}</TableCell>
-                      <TableCell className={`font-semibold ${statusClass(row)}`}>{row.status.toUpperCase()}</TableCell>
+                      <TableCell className={`font-semibold ${statusClass(row)}`}>
+                        {row.status.toUpperCase()}
+                      </TableCell>
                       <TableCell>{formatNumber(row.deleted || 0)}</TableCell>
                       <TableCell>{row.error || '—'}</TableCell>
                     </TableRow>

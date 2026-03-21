@@ -2,66 +2,79 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import type { AccountInfo, AuthenticationResult } from '@azure/msal-browser';
 import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/msal-browser';
 
+import { config } from '@/config';
 import { setAccessTokenProvider } from '@/services/authTransport';
 
-type AuthMode = 'none' | 'oidc' | 'api_key';
+const POST_LOGIN_PATH_STORAGE_KEY = 'asset-allocation.post-login-path';
+const DEFAULT_POST_LOGIN_PATH = '/system-status';
 
-type RuntimeConfig = {
-  authMode?: string;
-  oidcClientId?: string;
-  oidcAuthority?: string;
-  oidcScopes?: string[] | string;
-};
-
-function getRuntimeConfig(): RuntimeConfig {
-  return (window.__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
-}
-
-function parseScopes(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw
-      .map(String)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-  if (typeof raw !== 'string') return [];
-  const normalized = raw.replace(/,/g, ' ').trim();
-  return normalized ? normalized.split(/\s+/).filter(Boolean) : [];
-}
-
-function parseAuthMode(rawValue: unknown): AuthMode {
-  const raw = String(rawValue ?? '')
-    .trim()
-    .toLowerCase();
-  if (!raw) return 'none';
-  if (raw === 'oidc') return 'oidc';
-  if (raw === 'api_key') return 'api_key';
-  return 'none';
+function describeAuthError(prefix: string, err: unknown): string {
+  const detail = err instanceof Error ? err.message.trim() : String(err ?? '').trim();
+  return detail ? `${prefix} ${detail}` : prefix;
 }
 
 export interface AuthContextType {
   enabled: boolean;
+  ready: boolean;
   authenticated: boolean;
   userLabel: string | null;
-  signIn: () => void;
+  error: string | null;
+  signIn: (returnPath?: string) => void;
   signOut: () => void;
+}
+
+function isCallbackPath(pathname: string): boolean {
+  return pathname === '/auth/callback';
+}
+
+function resolveReturnPath(fallback?: string): string {
+  const trimmed = String(fallback ?? '').trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  if (typeof window === 'undefined') {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (!currentPath || isCallbackPath(window.location.pathname)) {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  return currentPath;
+}
+
+function storePostLoginRedirectPath(path: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(POST_LOGIN_PATH_STORAGE_KEY, resolveReturnPath(path));
+  } catch {
+    // Ignore sessionStorage failures and fall back to the default route after login.
+  }
+}
+
+export function consumePostLoginRedirectPath(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  try {
+    const stored = String(window.sessionStorage.getItem(POST_LOGIN_PATH_STORAGE_KEY) ?? '').trim();
+    window.sessionStorage.removeItem(POST_LOGIN_PATH_STORAGE_KEY);
+    return stored || DEFAULT_POST_LOGIN_PATH;
+  } catch {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const runtime = getRuntimeConfig();
-  const mode = parseAuthMode(runtime.authMode ?? import.meta.env.VITE_AUTH_MODE);
-  const oidcClientId = String(
-    runtime.oidcClientId ?? import.meta.env.VITE_OIDC_CLIENT_ID ?? ''
-  ).trim();
-  const oidcAuthority = String(
-    runtime.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY ?? ''
-  ).trim();
-  const oidcScopesRaw = runtime.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES;
-  const oidcScopes = useMemo(() => parseScopes(oidcScopesRaw), [oidcScopesRaw]);
+  const oidcClientId = config.oidcClientId;
+  const oidcAuthority = config.oidcAuthority;
+  const oidcScopes = config.oidcScopes;
+  const oidcRedirectUri = config.oidcRedirectUri;
 
-  const enabled = mode === 'oidc' && Boolean(oidcClientId && oidcAuthority);
+  const enabled =
+    config.oidcEnabled &&
+    Boolean(oidcClientId && oidcAuthority && oidcRedirectUri && oidcScopes.length > 0);
 
   const msal = useMemo(() => {
     if (!enabled) return null;
@@ -69,47 +82,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       auth: {
         clientId: oidcClientId,
         authority: oidcAuthority,
-        redirectUri: window.location.origin,
-        postLogoutRedirectUri: window.location.origin
+        redirectUri: oidcRedirectUri,
+        postLogoutRedirectUri: oidcRedirectUri
       },
       cache: {
         cacheLocation: 'sessionStorage'
       }
     });
-  }, [enabled, oidcClientId, oidcAuthority]);
+  }, [enabled, oidcAuthority, oidcClientId, oidcRedirectUri]);
+
+  const ensureMsalInitialized = useMemo(() => {
+    if (!msal) return null;
+    let initializationPromise: Promise<PublicClientApplication> | null = null;
+    return () => {
+      if (!initializationPromise) {
+        initializationPromise = msal.initialize().then(() => msal);
+      }
+      return initializationPromise;
+    };
+  }, [msal]);
 
   const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!msal) {
+    if (!ensureMsalInitialized) {
       setAccount(null);
+      setError(null);
+      setReady(true);
       return;
     }
 
     let cancelled = false;
+    setReady(false);
+    setError(null);
 
-    msal
-      .handleRedirectPromise()
-      .then((result: AuthenticationResult | null) => {
+    ensureMsalInitialized()
+      .then((instance) =>
+        instance
+          .handleRedirectPromise()
+          .then((result: AuthenticationResult | null) => ({ instance, result }))
+      )
+      .then(({ instance, result }) => {
         const chosen =
-          result?.account ?? msal.getActiveAccount() ?? msal.getAllAccounts()[0] ?? null;
+          result?.account ?? instance.getActiveAccount() ?? instance.getAllAccounts()[0] ?? null;
         if (chosen) {
-          msal.setActiveAccount(chosen);
+          instance.setActiveAccount(chosen);
         }
-        if (!cancelled) setAccount(chosen);
+        if (!cancelled) {
+          setAccount(chosen);
+          setReady(true);
+        }
       })
       .catch((err) => {
         console.error('OIDC redirect handling failed', err);
-        if (!cancelled) setAccount(null);
+        if (!cancelled) {
+          setAccount(null);
+          setError(describeAuthError('OIDC redirect handling failed.', err));
+          setReady(true);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [msal]);
+  }, [ensureMsalInitialized]);
 
   useEffect(() => {
-    if (!msal) {
+    if (!ensureMsalInitialized) {
       setAccessTokenProvider(null);
       return;
     }
@@ -117,7 +158,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAccessTokenProvider(async () => {
       if (!account) return null;
       try {
-        const result = await msal.acquireTokenSilent({
+        const instance = await ensureMsalInitialized();
+        const result = await instance.acquireTokenSilent({
           account,
           scopes: oidcScopes
         });
@@ -134,16 +176,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setAccessTokenProvider(null);
     };
-  }, [msal, account, oidcScopes]);
+  }, [account, ensureMsalInitialized, oidcScopes]);
 
-  const signIn = () => {
-    if (!msal) return;
-    void msal.loginRedirect({ scopes: oidcScopes });
+  const signIn = (returnPath?: string) => {
+    if (!ensureMsalInitialized) return;
+    setError(null);
+    storePostLoginRedirectPath(resolveReturnPath(returnPath));
+    void ensureMsalInitialized()
+      .then((instance) =>
+        instance.loginRedirect({
+          scopes: oidcScopes
+        })
+      )
+      .catch((err) => {
+        console.error('OIDC sign-in failed', err);
+        setError(describeAuthError('OIDC sign-in could not be started.', err));
+      });
   };
 
   const signOut = () => {
-    if (!msal) return;
-    void msal.logoutRedirect({ account: account ?? undefined });
+    if (!ensureMsalInitialized) return;
+    setError(null);
+    void ensureMsalInitialized()
+      .then((instance) => instance.logoutRedirect({ account: account ?? undefined }))
+      .catch((err) => {
+        console.error('OIDC sign-out failed', err);
+        setError(describeAuthError('OIDC sign-out could not be completed.', err));
+      });
   };
 
   const userLabel = account?.name || account?.username || null;
@@ -152,8 +211,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         enabled,
+        ready,
         authenticated: Boolean(account),
         userLabel,
+        error,
         signIn,
         signOut
       }}

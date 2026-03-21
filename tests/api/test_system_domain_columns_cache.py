@@ -92,7 +92,6 @@ def test_run_with_timeout_raises_timeout_error() -> None:
 
 @pytest.mark.asyncio
 async def test_get_domain_columns_prefers_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_read_domain_columns_from_artifact",

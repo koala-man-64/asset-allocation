@@ -7,18 +7,21 @@ import pytest
 from tasks.common import job_trigger
 
 
-def test_ensure_api_awake_raises_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_api_awake_cloud_runtime_probes_health(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
-    monkeypatch.setenv("JOB_STARTUP_API_WAKE_ENABLED", "false")
     monkeypatch.setenv("CONTAINER_APP_JOB_EXECUTION_NAME", "exec-1")
 
-    def _unexpected_probe(**_kwargs):
-        raise AssertionError("health probe should not run when startup wake is disabled")
+    probe_calls: list[str] = []
 
-    monkeypatch.setattr(job_trigger, "_probe_health", _unexpected_probe)
+    def _probe_once(**kwargs):
+        probe_calls.append(kwargs["health_url"])
+        return True, "status=200"
 
-    with pytest.raises(RuntimeError, match="JOB_STARTUP_API_WAKE_ENABLED=false"):
-        job_trigger.ensure_api_awake_from_env(required=True)
+    monkeypatch.setattr(job_trigger, "_probe_health", _probe_once)
+
+    job_trigger.ensure_api_awake_from_env(required=True)
+
+    assert probe_calls == ["http://asset-allocation-api/healthz"]
 
 
 def test_ensure_api_awake_raises_when_required_and_base_url_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -33,7 +36,6 @@ def test_ensure_api_awake_starts_container_app_and_recovers(monkeypatch: pytest.
     monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
-    monkeypatch.setenv("JOB_STARTUP_API_WAKE_ENABLED", "true")
     monkeypatch.setenv("CONTAINER_APP_JOB_EXECUTION_NAME", "exec-1")
 
     probes = iter(
@@ -70,7 +72,6 @@ def test_ensure_api_awake_local_waits_for_local_health(monkeypatch: pytest.Monke
     monkeypatch.delenv("CONTAINER_APP_REPLICA_NAME", raising=False)
     monkeypatch.delenv("CONTAINER_APP_ENV_DNS_SUFFIX", raising=False)
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
-    monkeypatch.setenv("JOB_STARTUP_API_WAKE_ENABLED", "true")
     monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
 
     probe_calls: list[str] = []
@@ -97,12 +98,8 @@ def test_ensure_api_awake_local_waits_for_local_health(monkeypatch: pytest.Monke
 
     job_trigger.ensure_api_awake_from_env(required=True)
 
-    assert probe_calls == [
-        "http://127.0.0.1:9000/healthz",
-        "http://127.0.0.1:9000/healthz",
-        "http://127.0.0.1:9000/healthz",
-    ]
-    assert (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or "").strip() == "http://127.0.0.1:9000"
+    assert probe_calls == []
+    assert (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or "").strip() == "http://asset-allocation-api"
 
 
 def test_resolve_startup_container_apps_matches_allowlist_from_domain(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -112,3 +109,29 @@ def test_resolve_startup_container_apps_matches_allowlist_from_domain(monkeypatc
 
     resolved = job_trigger._resolve_startup_container_apps("https://asset-allocation-api.internal.azurecontainerapps.io")
     assert resolved == ["asset-allocation-api"]
+
+
+def test_trigger_next_job_from_env_logs_multi_job_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRIGGER_NEXT_JOB_NAME", "silver-market-job, gold-market-job")
+
+    messages: list[str] = []
+    dispatched: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(job_trigger.mdc, "write_line", messages.append)
+    monkeypatch.setattr(
+        job_trigger,
+        "trigger_containerapp_job_start",
+        lambda *, job_name, required=True: dispatched.append((job_name, required)),
+    )
+
+    job_trigger.trigger_next_job_from_env()
+
+    assert dispatched == [
+        ("silver-market-job", True),
+        ("gold-market-job", True),
+    ]
+    assert any(
+        "Downstream trigger plan: jobs=silver-market-job,gold-market-job required=true count=2"
+        in message
+        for message in messages
+    )

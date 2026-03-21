@@ -64,6 +64,8 @@ def _handle_massive_error(exc: Exception) -> None:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     if isinstance(exc, MassiveNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, MassiveError) and getattr(exc, "status_code", None) == 400:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if isinstance(exc, (MassiveAuthError, MassiveServerError, MassiveError)):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     raise HTTPException(status_code=500, detail=f"Unexpected error: {type(exc).__name__}: {exc}") from exc
@@ -114,7 +116,9 @@ def get_daily_time_series(
 def get_unified_snapshot(
     request: Request,
     symbols: str = Query(..., description="Comma-separated ticker list (e.g. AAPL,MSFT,TSLA)."),
-    asset_type: str = Query(default="stocks", alias="type", description="Massive snapshot type filter (default=stocks)."),
+    asset_type: str = Query(
+        default="stocks", alias="type", description="Massive snapshot type filter (default=stocks)."
+    ),
     gateway: MassiveGateway = Depends(_get_gateway),
 ) -> JSONResponse:
     validate_auth(request)
@@ -131,12 +135,34 @@ def get_unified_snapshot(
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
+@router.get("/tickers")
+def get_reference_tickers(
+    request: Request,
+    market: str = Query(default="stocks", description="Massive reference market filter."),
+    locale: Optional[str] = Query(default="us", description="Optional Massive locale filter."),
+    active: bool = Query(default=True, description="Return active tickers when true."),
+    gateway: MassiveGateway = Depends(_get_gateway),
+) -> JSONResponse:
+    validate_auth(request)
+    try:
+        with _caller_context(request):
+            payload = gateway.get_tickers(market=market, locale=locale, active=bool(active))
+    except Exception as exc:
+        _handle_massive_error(exc)
+        raise
+    return JSONResponse({"results": payload}, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/fundamentals/short-interest")
 def get_short_interest(
     request: Request,
     symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
-    settlement_date_gte: Optional[str] = Query(default=None, description="Optional settlement date lower bound (YYYY-MM-DD)."),
-    settlement_date_lte: Optional[str] = Query(default=None, description="Optional settlement date upper bound (YYYY-MM-DD)."),
+    settlement_date_gte: Optional[str] = Query(
+        default=None, description="Optional settlement date lower bound (YYYY-MM-DD)."
+    ),
+    settlement_date_lte: Optional[str] = Query(
+        default=None, description="Optional settlement date upper bound (YYYY-MM-DD)."
+    ),
     gateway: MassiveGateway = Depends(_get_gateway),
 ) -> JSONResponse:
     validate_auth(request)
@@ -145,7 +171,11 @@ def get_short_interest(
         raise HTTPException(status_code=400, detail="symbol is required.")
     parsed_settlement_date_gte = _parse_iso_date(settlement_date_gte, field_name="settlement_date_gte")
     parsed_settlement_date_lte = _parse_iso_date(settlement_date_lte, field_name="settlement_date_lte")
-    if parsed_settlement_date_gte and parsed_settlement_date_lte and parsed_settlement_date_gte > parsed_settlement_date_lte:
+    if (
+        parsed_settlement_date_gte
+        and parsed_settlement_date_lte
+        and parsed_settlement_date_gte > parsed_settlement_date_lte
+    ):
         raise HTTPException(status_code=400, detail="'settlement_date_gte' must be <= 'settlement_date_lte'.")
     try:
         with _caller_context(request):
@@ -218,8 +248,35 @@ def get_float(
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
+@router.get("/fundamentals/ratios")
+def get_ratios(
+    request: Request,
+    symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
+    sort: Optional[str] = Query(default=None, description="Optional Massive sort key (for example date.desc)."),
+    limit: Optional[int] = Query(default=None, ge=1, description="Optional page size."),
+    pagination: bool = Query(default=True, description="Follow Massive next_url pagination when true."),
+    gateway: MassiveGateway = Depends(_get_gateway),
+) -> JSONResponse:
+    validate_auth(request)
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol is required.")
+    try:
+        with _caller_context(request):
+            payload = gateway.get_finance_report(
+                symbol=sym,
+                report="valuation",
+                sort=sort,
+                limit=limit,
+                pagination=bool(pagination),
+            )
+    except Exception as exc:
+        _handle_massive_error(exc)
+        raise
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/financials/{report}")
-@router.get("/finance/{report}")  # Backwards-compatible alias
 def get_finance_report(
     request: Request,
     report: FinanceReport,

@@ -6,8 +6,8 @@ import os
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta, timezone
-from io import BytesIO, StringIO
+from datetime import date, datetime, timezone
+from io import StringIO
 from typing import Any, Callable, Optional, Dict, Sequence
 
 import pandas as pd
@@ -18,19 +18,24 @@ from core.alpha_vantage_gateway_client import (
     AlphaVantageGatewayInvalidSymbolError,
     AlphaVantageGatewayThrottleError,
 )
+from core import symbol_availability
 from core import config as cfg
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
-from tasks.common import domain_artifacts
+from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
+from tasks.common.bronze_observability import log_bronze_success, should_log_bronze_success
+from tasks.common.bronze_symbol_policy import (
+    BronzeCoverageUnavailableError,
+    build_bronze_run_id,
+    clear_invalid_candidate_marker,
+    record_invalid_symbol_candidate,
+)
 from tasks.common.job_status import resolve_job_run_status
 from tasks.common.bronze_backfill_coverage import (
-    extract_min_date_from_dataframe,
     extract_min_date_from_rows,
-    load_coverage_marker,
     normalize_date,
     resolve_backfill_start_date,
-    should_force_backfill,
     write_coverage_marker,
 )
 from tasks.common.backfill import filter_by_date
@@ -47,9 +52,9 @@ list_manager = ListManager(
 )
 
 
-EARNINGS_STALE_DAYS = 7
 _COVERAGE_DOMAIN = "earnings"
 _COVERAGE_PROVIDER = "alpha-vantage"
+_INVALID_CANDIDATE_REASON = "provider_invalid_symbol"
 _EARNINGS_CALENDAR_HORIZONS = frozenset({"3month", "6month", "12month"})
 _EARNINGS_CALENDAR_EXPECTED_COLUMNS = (
     "symbol",
@@ -135,8 +140,10 @@ def _format_payload_preview(payload: Any, *, max_chars: int = 500) -> Optional[s
     return text
 
 
-def _format_invalid_payload_warning(symbol: str, exc: BaseException) -> str:
-    message = f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
+def _format_invalid_candidate_warning(symbol: str, exc: BaseException, *, promoted: bool) -> str:
+    message = f"Bronze earnings invalid symbol candidate for {symbol}."
+    if promoted:
+        message += " Promoted to domain blacklist after 2 runs."
     preview_payload = getattr(exc, "payload", None)
     if preview_payload is None:
         preview_payload = {}
@@ -192,22 +199,8 @@ def _validate_environment() -> None:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
     if not os.environ.get("ASSET_ALLOCATION_API_BASE_URL"):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
-    if not (
-        os.environ.get("ASSET_ALLOCATION_API_KEY")
-        or os.environ.get("API_KEY")
-        or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
-    ):
-        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
-
-
-def _is_fresh(blob_last_modified: Optional[datetime], *, fresh_days: int) -> bool:
-    if blob_last_modified is None:
-        return False
-    try:
-        age = datetime.now(timezone.utc) - blob_last_modified
-    except Exception:
-        return False
-    return age <= timedelta(days=max(0, fresh_days))
+    if not os.environ.get("ASSET_ALLOCATION_API_SCOPE"):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_SCOPE' is strictly required.")
 
 
 def _coerce_float(value: Any) -> Optional[float]:
@@ -324,39 +317,6 @@ def _event_identity_key(df: pd.DataFrame) -> pd.Series:
     return preferred.dt.strftime("%Y-%m-%d").fillna("")
 
 
-def _select_actual_rows(df: Optional[pd.DataFrame]) -> pd.DataFrame:
-    canonical = _canonicalize_earnings_frame(df)
-    if canonical.empty:
-        return canonical
-    return canonical.loc[canonical["record_type"] == "actual"].copy().reset_index(drop=True)
-
-
-def _select_past_scheduled_rows(df: Optional[pd.DataFrame]) -> pd.DataFrame:
-    canonical = _canonicalize_earnings_frame(df)
-    if canonical.empty:
-        return canonical
-    today = _utc_today()
-    mask = (
-        canonical["record_type"].eq("scheduled") & canonical["report_date"].notna() & (canonical["report_date"] < today)
-    )
-    return canonical.loc[mask].copy().reset_index(drop=True)
-
-
-def _has_due_scheduled_rows(*frames: Optional[pd.DataFrame]) -> bool:
-    today = _utc_today()
-    for frame in frames:
-        canonical = _canonicalize_earnings_frame(frame)
-        if canonical.empty:
-            continue
-        if (
-            canonical["record_type"].eq("scheduled")
-            & canonical["report_date"].notna()
-            & (canonical["report_date"] <= today)
-        ).any():
-            return True
-    return False
-
-
 def _dedupe_canonical_earnings_events(df: Optional[pd.DataFrame]) -> tuple[pd.DataFrame, int]:
     canonical = _canonicalize_earnings_frame(df)
     if canonical.empty:
@@ -386,7 +346,12 @@ def _dedupe_canonical_earnings_events(df: Optional[pd.DataFrame]) -> tuple[pd.Da
     filtered_scheduled = scheduled.loc[scheduled_mask].copy()
     replacements = int(len(scheduled) - len(filtered_scheduled))
 
-    out = pd.concat([actual, filtered_scheduled], ignore_index=True, sort=False)
+    merge_frames = [frame for frame in (actual, filtered_scheduled) if frame is not None and not frame.empty]
+    out = (
+        pd.concat(merge_frames, ignore_index=True, sort=False)
+        if merge_frames
+        else pd.DataFrame(columns=_BUCKET_COLUMNS)
+    )
     out = out.drop(columns=["_event_identity"], errors="ignore")
     out = out.sort_values(["symbol", "date", "record_type"]).reset_index(drop=True)
     return out[_BUCKET_COLUMNS], replacements
@@ -402,14 +367,6 @@ def _stamp_canonical_earnings_frame(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     canonical["ingested_at"] = now
     canonical["source_hash"] = source_hash
     return canonical[_BUCKET_COLUMNS].reset_index(drop=True)
-
-
-def _canonical_payload_bytes(df: Optional[pd.DataFrame]) -> bytes:
-    canonical = _canonicalize_earnings_frame(df)
-    if canonical.empty:
-        return b"[]"
-    canonical = canonical.sort_values(["symbol", "date", "record_type"]).reset_index(drop=True)
-    return canonical[_CANONICAL_EARNINGS_COLUMNS].to_json(orient="records", date_format="iso").encode("utf-8")
 
 
 def _parse_historical_earnings_records(
@@ -525,29 +482,6 @@ def _build_scheduled_earnings_rows(symbol: str, calendar_rows: Optional[pd.DataF
     return _canonicalize_earnings_frame(out, symbol=symbol)
 
 
-def _load_existing_earnings_df(blob_path: str) -> pd.DataFrame:
-    try:
-        raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
-    except Exception:
-        return pd.DataFrame()
-    if not raw:
-        return pd.DataFrame()
-    try:
-        df = pd.read_json(BytesIO(raw), orient="records")
-    except Exception:
-        return _empty_canonical_earnings_frame()
-    return _canonicalize_earnings_frame(df)
-
-
-def _extract_latest_earnings_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
-    if df.empty or "date" not in df.columns:
-        return None
-    parsed = pd.to_datetime(df["date"], errors="coerce", utc=True).dropna()
-    if parsed.empty:
-        return None
-    return parsed.max()
-
-
 def _normalize_bucket_df(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
     out = _canonicalize_earnings_frame(df, symbol=symbol)
     if out.empty:
@@ -557,7 +491,11 @@ def _normalize_bucket_df(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
     return out[_BUCKET_COLUMNS].reset_index(drop=True)
 
 
-def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
+def _write_alpha26_earnings_buckets(
+    symbol_frames: Dict[str, pd.DataFrame],
+    *,
+    run_id: str,
+) -> tuple[int, Optional[str]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     symbol_to_bucket: dict[str, str] = {}
     for symbol, frame in symbol_frames.items():
@@ -571,50 +509,31 @@ def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> t
         if bucket_frames[bucket].empty:
             bucket_frames[bucket] = normalized
         else:
-            bucket_frames[bucket] = pd.concat([bucket_frames[bucket], normalized], ignore_index=True)
-
-    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
-        frame = bucket_frames[bucket]
-        if frame.empty:
-            frame = pd.DataFrame(columns=_BUCKET_COLUMNS)
-        bronze_bucketing.write_bucket_parquet(
-            client=bronze_client,
-            prefix=str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")),
-            bucket=bucket,
-            df=frame,
-            codec=bronze_bucketing.alpha26_codec(),
-        )
-        try:
-            domain_artifacts.write_bucket_artifact(
-                layer="bronze",
-                domain="earnings",
-                bucket=bucket,
-                df=frame,
-                date_column="date",
-                client=bronze_client,
-                job_name="bronze-earnings-job",
+            bucket_frames[bucket] = pd.concat(
+                [frame for frame in (bucket_frames[bucket], normalized) if frame is not None and not frame.empty],
+                ignore_index=True,
             )
-        except Exception as exc:
-            mdc.write_warning(f"Bronze earnings metadata bucket artifact write failed bucket={bucket}: {exc}")
 
-    index_path = bronze_bucketing.write_symbol_index(
+    publish_result = publish_alpha26_bronze_domain(
         domain="earnings",
+        root_prefix=str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")),
+        bucket_frames=bucket_frames,
+        bucket_columns=_BUCKET_COLUMNS,
+        date_column="date",
         symbol_to_bucket=symbol_to_bucket,
+        storage_client=bronze_client,
+        job_name="bronze-earnings-job",
+        run_id=run_id,
     )
-    if index_path:
-        try:
-            domain_artifacts.write_domain_artifact(
-                layer="bronze",
-                domain="earnings",
-                date_column="date",
-                client=bronze_client,
-                symbol_count_override=len(symbol_to_bucket),
-                symbol_index_path=index_path,
-                job_name="bronze-earnings-job",
-            )
-        except Exception as exc:
-            mdc.write_warning(f"Bronze earnings metadata artifact write failed: {exc}")
-    return len(symbol_to_bucket), index_path
+    log_bronze_success(
+        domain="earnings",
+        operation="metadata_artifacts_written",
+        bucket_artifacts_written=publish_result.file_count,
+        domain_artifact_written=True,
+        symbol_index_path=publish_result.index_path or "n/a",
+        manifest_path=publish_result.manifest_path or "n/a",
+    )
+    return publish_result.written_symbols, publish_result.index_path
 
 
 def _safe_close_alpha_vantage_client(client: AlphaVantageGatewayClient | None) -> None:
@@ -696,150 +615,87 @@ def fetch_and_save_raw(
     coverage_summary: Optional[dict[str, int]] = None,
     event_summary: Optional[dict[str, int]] = None,
     calendar_rows: Optional[pd.DataFrame] = None,
-    write_symbol_file: bool = True,
     collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
     collected_lock: Optional[threading.Lock] = None,
-    alpha26_mode: bool = False,
 ) -> bool:
     """
-    Fetch earnings for a single symbol via the API-hosted Alpha Vantage gateway and store as Bronze JSON records.
+    Fetch earnings for a single symbol and stage canonical alpha26 Bronze rows for bucket publication.
 
-    Returns True when a Bronze write occurred, False when skipped/no-op.
+    Returns True when a symbol frame was staged, False when the symbol produced no rows after filtering.
     """
     coverage_summary = coverage_summary if coverage_summary is not None else _empty_coverage_summary()
     event_summary = event_summary if event_summary is not None else _empty_event_summary()
     if list_manager.is_blacklisted(symbol):
         return False
+    if collected_symbol_frames is None:
+        raise ValueError("collected_symbol_frames is required for bronze earnings alpha26 staging.")
 
-    blob_path = f"{cfg.EARNINGS_DATA_PREFIX}/{symbol}.json"
-    blob_exists: Optional[bool] = None
-    resolved_backfill_start = normalize_date(backfill_start)
-    existing_df = _empty_canonical_earnings_frame()
-    existing_actual_df = _empty_canonical_earnings_frame()
-    existing_min_date: Optional[date] = None
-    force_backfill = False
-    should_fetch_historical = True
-
+    resolved_backfill_start_raw = normalize_date(backfill_start)
+    resolved_backfill_start = (
+        pd.Timestamp(resolved_backfill_start_raw).date() if resolved_backfill_start_raw is not None else None
+    )
     scheduled_rows = _build_scheduled_earnings_rows(symbol, calendar_rows)
-
-    # Freshness gate only skips the per-symbol historical API fetch. Scheduled rows are still
-    # merged every run from the bulk earnings-calendar feed.
-    if not alpha26_mode:
-        try:
-            blob = bronze_client.get_blob_client(blob_path)
-            blob_exists = bool(blob.exists())
-            if blob_exists:
-                existing_df = _load_existing_earnings_df(blob_path)
-                existing_actual_df = _select_actual_rows(existing_df)
-                props = blob.get_blob_properties()
-                if resolved_backfill_start is not None:
-                    coverage_summary["coverage_checked"] += 1
-                    existing_min_date = extract_min_date_from_dataframe(existing_actual_df, date_col="date")
-                    marker = load_coverage_marker(
-                        common_client=common_client,
-                        domain=_COVERAGE_DOMAIN,
-                        symbol=symbol,
-                    )
-                    force_backfill, skipped_limited_marker = should_force_backfill(
-                        existing_min_date=existing_min_date,
-                        backfill_start=resolved_backfill_start,
-                        marker=marker,
-                    )
-                    if skipped_limited_marker:
-                        coverage_summary["coverage_skipped_limited_marker"] += 1
-                    if force_backfill:
-                        coverage_summary["coverage_forced_refetch"] += 1
-                    elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
-                        _mark_coverage(
-                            symbol=symbol,
-                            backfill_start=resolved_backfill_start,
-                            status="covered",
-                            earliest_available=existing_min_date,
-                            coverage_summary=coverage_summary,
-                        )
-                if (
-                    _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS)
-                    and not force_backfill
-                    and not existing_actual_df.empty
-                    and not _has_due_scheduled_rows(existing_df, scheduled_rows)
-                ):
-                    should_fetch_historical = False
-        except Exception:
-            pass
-    else:
-        blob_exists = False
 
     payload: Optional[dict[str, Any]] = None
     source_earliest: Optional[date] = None
-    has_source_records = False
-    if should_fetch_historical:
-        payload = av.get_earnings(symbol=symbol)
-        if not isinstance(payload, dict):
-            raise AlphaVantageGatewayError(
-                "Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol}
-            )
-
-        source_records = payload.get("quarterlyEarnings") or []
-        has_source_records = any(
-            isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
-            for item in source_records
+    payload = av.get_earnings(symbol=symbol)
+    if not isinstance(payload, dict):
+        raise AlphaVantageGatewayError(
+            "Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol}
         )
-        source_earliest = _extract_source_earliest_earnings_date(payload)
-        actual_rows = _parse_historical_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
-    else:
-        actual_rows = existing_actual_df.copy()
-        source_earliest = extract_min_date_from_dataframe(actual_rows, date_col="date")
-        has_source_records = not actual_rows.empty
 
-    carry_forward_scheduled = _select_past_scheduled_rows(existing_df)
+    source_records = payload.get("quarterlyEarnings") or []
+    has_source_records = any(
+        isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
+        for item in source_records
+    )
+    source_earliest_raw = _extract_source_earliest_earnings_date(payload)
+    source_earliest = pd.Timestamp(source_earliest_raw).date() if source_earliest_raw is not None else None
+    actual_rows = _parse_historical_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
+
     merge_parts = [
         frame
-        for frame in (actual_rows, carry_forward_scheduled, scheduled_rows)
-        if frame is not None and not frame.empty
+        for frame in (actual_rows, scheduled_rows)
+        if frame is not None and not frame.empty and not frame.dropna(how="all").empty
     ]
     if merge_parts:
-        merged = pd.concat(merge_parts, ignore_index=True, sort=False)
+        cleaned_merge_parts = [
+            frame.dropna(axis="columns", how="all")
+            for frame in merge_parts
+            if not frame.dropna(axis="columns", how="all").empty
+        ]
+        merged = pd.concat(cleaned_merge_parts, ignore_index=True, sort=False)
     else:
         merged = _empty_canonical_earnings_frame()
     merged, actual_replacements = _dedupe_canonical_earnings_events(merged)
     if resolved_backfill_start is not None:
         merged = filter_by_date(merged, "date", pd.Timestamp(resolved_backfill_start), None)
-    canonical_raw_json = _canonical_payload_bytes(merged)
     merged = _stamp_canonical_earnings_frame(merged)
 
     if merged is None or merged.empty:
-        if not has_source_records and scheduled_rows.empty and carry_forward_scheduled.empty:
-            raise AlphaVantageGatewayInvalidSymbolError(
-                "No quarterly or scheduled earnings records found.",
+        if not has_source_records and scheduled_rows.empty:
+            raise BronzeCoverageUnavailableError(
+                "no_earnings_records",
+                detail="No quarterly or scheduled earnings records found.",
                 payload=payload or {"symbol": symbol},
             )
         if resolved_backfill_start is not None:
-            if force_backfill:
+            if source_earliest is not None:
+                marker_status = "covered" if source_earliest <= resolved_backfill_start else "limited"
                 _mark_coverage(
                     symbol=symbol,
                     backfill_start=resolved_backfill_start,
-                    status="limited",
+                    status=marker_status,
                     earliest_available=source_earliest,
                     coverage_summary=coverage_summary,
                 )
-            if blob_exists is not False:
-                cutoff_iso = pd.Timestamp(resolved_backfill_start).date().isoformat()
-                bronze_client.delete_file(blob_path)
-                mdc.write_line(f"No earnings rows on/after {cutoff_iso} for {symbol}; " f"deleted bronze {blob_path}.")
-                list_manager.add_to_whitelist(symbol)
-                return True
             list_manager.add_to_whitelist(symbol)
             return False
-        raw_json = b"[]"
-    else:
-        raw_json = merged.to_json(orient="records").encode("utf-8")
-        event_summary["scheduled_rows_retained"] += int(merged["record_type"].eq("scheduled").sum())
-        event_summary["actual_over_scheduled_replacements"] += int(actual_replacements)
 
-    if resolved_backfill_start is not None and force_backfill:
-        marker_status = (
-            "covered" if source_earliest is not None and source_earliest <= resolved_backfill_start else "limited"
-        )
+    event_summary["scheduled_rows_retained"] += int(merged["record_type"].eq("scheduled").sum())
+    event_summary["actual_over_scheduled_replacements"] += int(actual_replacements)
+    if resolved_backfill_start is not None and source_earliest is not None:
+        marker_status = "covered" if source_earliest <= resolved_backfill_start else "limited"
         _mark_coverage(
             symbol=symbol,
             backfill_start=resolved_backfill_start,
@@ -848,22 +704,11 @@ def fetch_and_save_raw(
             coverage_summary=coverage_summary,
         )
 
-    if (not alpha26_mode) and blob_exists:
-        if _canonical_payload_bytes(existing_df) == canonical_raw_json:
-            list_manager.add_to_whitelist(symbol)
-            return False
-
-    if not write_symbol_file:
-        if merged is not None and not merged.empty and collected_symbol_frames is not None:
-            if collected_lock is not None:
-                with collected_lock:
-                    collected_symbol_frames[symbol] = merged.copy()
-            else:
-                collected_symbol_frames[symbol] = merged.copy()
-        list_manager.add_to_whitelist(symbol)
-        return bool(merged is not None and not merged.empty)
-
-    mdc.store_raw_bytes(raw_json, blob_path, client=bronze_client)
+    if collected_lock is not None:
+        with collected_lock:
+            collected_symbol_frames[symbol] = merged.copy()
+    else:
+        collected_symbol_frames[symbol] = merged.copy()
     list_manager.add_to_whitelist(symbol)
     return True
 
@@ -888,27 +733,59 @@ def _format_failure_reason(exc: BaseException) -> str:
     return " ".join(reason_parts)
 
 
+def _failure_bucket_key(exc: BaseException) -> str:
+    status_code = getattr(exc, "status_code", None)
+    key = f"type={type(exc).__name__} status={status_code if status_code is not None else 'n/a'}"
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = str(payload.get("path") or "").strip()
+        if path:
+            key += f" path={path[:80]}"
+    return key
+
+
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
 
     list_manager.load()
 
-    df_symbols = mdc.get_symbols().dropna(subset=["Symbol"]).copy()
+    sync_result = symbol_availability.sync_domain_availability("earnings")
+    mdc.write_line(
+        "Bronze earnings availability sync: "
+        f"provider={sync_result.provider} listed_count={sync_result.listed_count} "
+        f"inserted_count={sync_result.inserted_count} disabled_count={sync_result.disabled_count} "
+        f"duration_ms={sync_result.duration_ms} lock_wait_ms={sync_result.lock_wait_ms}"
+    )
+    df_symbols = symbol_availability.get_domain_symbols("earnings").dropna(subset=["Symbol"]).copy()
+    provider_available_count = int(len(df_symbols))
     symbols = []
+    blacklist_skipped = 0
     for sym in df_symbols["Symbol"].astype(str).tolist():
         if "." in sym:
             continue
         if list_manager.is_blacklisted(sym):
+            blacklist_skipped += 1
             continue
         symbols.append(sym)
     symbols = list(dict.fromkeys(symbols))
 
+    debug_filtered = 0
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        filtered_symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        debug_filtered = len(symbols) - len(filtered_symbols)
+        symbols = filtered_symbols
 
-    alpha26_mode = bronze_bucketing.is_alpha26_mode()
+    mdc.write_line(
+        "Bronze earnings symbol selection: "
+        f"provider_available_count={provider_available_count} "
+        f"blacklist_skipped={blacklist_skipped} "
+        f"debug_filtered={debug_filtered} "
+        f"final_scheduled={len(symbols)}"
+    )
+
+    bronze_bucketing.bronze_layout_mode()
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
 
     av = AlphaVantageGatewayClient.from_env()
@@ -935,14 +812,23 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(max_workers)
     client_manager = _ThreadLocalAlphaVantageClientManager()
 
-    progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    run_id = build_bronze_run_id(_COVERAGE_DOMAIN)
+    progress = {
+        "processed": 0,
+        "written": 0,
+        "skipped": 0,
+        "failed": 0,
+        "invalid_candidates": 0,
+        "unavailable": 0,
+        "blacklist_promotions": 0,
+    }
     coverage_progress = _empty_coverage_summary()
     event_progress = _empty_event_summary()
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
     collected_symbol_frames: Dict[str, pd.DataFrame] = {}
-    collected_lock: Optional[threading.Lock] = threading.Lock() if alpha26_mode else None
+    collected_lock: Optional[threading.Lock] = threading.Lock()
 
     def worker(symbol: str) -> tuple[bool, dict[str, int], dict[str, int]]:
         av = client_manager.get_client()
@@ -955,32 +841,30 @@ async def main_async() -> int:
             coverage_summary=coverage_summary,
             event_summary=event_summary,
             calendar_rows=calendar_rows_by_symbol.get(symbol),
-            write_symbol_file=not alpha26_mode,
-            collected_symbol_frames=collected_symbol_frames if alpha26_mode else None,
-            collected_lock=collected_lock if alpha26_mode else None,
-            alpha26_mode=alpha26_mode,
+            collected_symbol_frames=collected_symbol_frames,
+            collected_lock=collected_lock,
         )
         return wrote, coverage_summary, event_summary
 
     async def record_failure(symbol: str, exc: BaseException) -> None:
-        failure_type = type(exc).__name__
         failure_reason = _format_failure_reason(exc)
+        failure_key = _failure_bucket_key(exc)
         async with progress_lock:
             progress["failed"] += 1
-            failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
-            failure_examples.setdefault(failure_type, f"symbol={symbol} {failure_reason}")
+            failure_counts[failure_key] = failure_counts.get(failure_key, 0) + 1
+            failure_examples.setdefault(failure_key, f"symbol={symbol} {failure_reason}")
             failed_total = progress["failed"]
-            type_total = failure_counts[failure_type]
+            key_total = failure_counts[failure_key]
 
         # Sample detailed failures to avoid log flooding while still exposing root causes.
-        if type_total <= 3 or failed_total % 250 == 0:
+        if key_total <= 3 or failed_total % 250 == 0:
             mdc.write_warning(
                 "Bronze AV earnings failure: symbol={symbol} {reason} total_failed={failed_total} "
-                "type_failed={type_total}".format(
+                "key_failed={key_total}".format(
                     symbol=symbol,
                     reason=failure_reason,
                     failed_total=failed_total,
-                    type_total=type_total,
+                    key_total=key_total,
                 )
             )
 
@@ -988,6 +872,12 @@ async def main_async() -> int:
         async with semaphore:
             try:
                 wrote, coverage_summary, symbol_event_summary = await loop.run_in_executor(executor, worker, symbol)
+                try:
+                    clear_invalid_candidate_marker(common_client=common_client, domain=_COVERAGE_DOMAIN, symbol=symbol)
+                except Exception as exc:
+                    mdc.write_warning(f"Failed to clear earnings invalid-candidate marker for {symbol}: {exc}")
+                success_count = 0
+                disposition = "written" if wrote else "skipped"
                 async with progress_lock:
                     if wrote:
                         progress["written"] += 1
@@ -997,14 +887,50 @@ async def main_async() -> int:
                         coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
                     for key in event_progress:
                         event_progress[key] += int(symbol_event_summary.get(key, 0) or 0)
-            except AlphaVantageGatewayInvalidSymbolError as exc:
-                list_manager.add_to_blacklist(symbol)
+                    success_count = progress["written"] + progress["skipped"]
+                if should_log_bronze_success(success_count):
+                    log_bronze_success(
+                        domain="earnings",
+                        operation="symbol_processed",
+                        symbol=symbol,
+                        disposition=disposition,
+                        success_count=success_count,
+                        scheduled_rows_retained=symbol_event_summary.get("scheduled_rows_retained", 0),
+                        actual_replacements=symbol_event_summary.get("actual_over_scheduled_replacements", 0),
+                    )
+            except BronzeCoverageUnavailableError as exc:
                 should_log = False
                 async with progress_lock:
-                    progress["blacklisted"] += 1
-                    should_log = progress["blacklisted"] <= 20
+                    progress["unavailable"] += 1
+                    should_log = progress["unavailable"] <= 20
                 if should_log:
-                    mdc.write_warning(_format_invalid_payload_warning(symbol, exc))
+                    mdc.write_warning(
+                        f"Bronze earnings coverage unavailable: symbol={symbol} reason={exc.reason_code} detail={exc}"
+                    )
+            except AlphaVantageGatewayInvalidSymbolError as exc:
+                promotion = record_invalid_symbol_candidate(
+                    common_client=common_client,
+                    bronze_client=bronze_client,
+                    domain=_COVERAGE_DOMAIN,
+                    symbol=symbol,
+                    provider=_COVERAGE_PROVIDER,
+                    reason_code=_INVALID_CANDIDATE_REASON,
+                    run_id=run_id,
+                )
+                should_log = False
+                async with progress_lock:
+                    progress["invalid_candidates"] += 1
+                    if promotion.get("promoted"):
+                        progress["blacklist_promotions"] += 1
+                    should_log = progress["invalid_candidates"] <= 20
+                if should_log:
+                    mdc.write_warning(
+                        _format_invalid_candidate_warning(
+                            symbol,
+                            exc,
+                            promoted=bool(promotion.get("promoted")),
+                        )
+                    )
             except AlphaVantageGatewayThrottleError as exc:
                 await record_failure(symbol, exc)
             except AlphaVantageGatewayError as exc:
@@ -1017,7 +943,8 @@ async def main_async() -> int:
                     if progress["processed"] % 500 == 0:
                         mdc.write_line(
                             "Bronze AV earnings progress: processed={processed} written={written} skipped={skipped} "
-                            "blacklisted={blacklisted} failed={failed}".format(**progress)
+                            "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+                            "blacklist_promotions={blacklist_promotions} failed={failed}".format(**progress)
                         )
 
     try:
@@ -1031,22 +958,23 @@ async def main_async() -> int:
             client_manager.close_all()
         except Exception:
             pass
+
+    try:
+        written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames, run_id=run_id)
+        flat_deleted = _delete_flat_symbol_blobs()
+        mdc.write_line(
+            "Bronze earnings alpha26 buckets written: "
+            f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
+        )
         try:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
-
-    if alpha26_mode:
-        try:
-            written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames)
-            flat_deleted = _delete_flat_symbol_blobs()
-            mdc.write_line(
-                "Bronze earnings alpha26 buckets written: "
-                f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
-            )
-        except Exception as exc:
-            progress["failed"] += 1
-            mdc.write_error(f"Bronze earnings alpha26 bucket write failed: {exc}")
+        else:
+            log_bronze_success(domain="earnings", operation="list_flush")
+    except Exception as exc:
+        progress["failed"] += 1
+        mdc.write_error(f"Bronze earnings alpha26 bucket write failed: {exc}")
 
     if failure_counts:
         ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)
@@ -1059,11 +987,12 @@ async def main_async() -> int:
 
     job_status, exit_code = resolve_job_run_status(
         failed_count=progress["failed"],
-        warning_count=progress["blacklisted"],
+        warning_count=progress["invalid_candidates"],
     )
     mdc.write_line(
         "Bronze AV earnings ingest complete: processed={processed} written={written} skipped={skipped} "
-        "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
+        "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+        "blacklist_promotions={blacklist_promotions} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
         "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
         "scheduled_rows_retained={scheduled_rows_retained} actual_over_scheduled_replacements={actual_over_scheduled_replacements} "
@@ -1087,7 +1016,7 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-earnings-job"
-    with mdc.JobLock(job_name):
+    with mdc.JobLock(job_name, conflict_policy="fail"):
         ensure_api_awake_from_env(required=True)
         raise SystemExit(
             run_logged_job(

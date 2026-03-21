@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import os
 import hashlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
@@ -18,6 +20,7 @@ from core.massive_gateway_client import (
     MassiveGatewayNotFoundError,
     MassiveGatewayRateLimitError,
 )
+from core import symbol_availability
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common.bronze_backfill_coverage import (
@@ -27,10 +30,18 @@ from tasks.common.bronze_backfill_coverage import (
     should_force_backfill,
     write_coverage_marker,
 )
-from tasks.common.run_manifests import create_bronze_finance_manifest
+from tasks.common.bronze_observability import log_bronze_success, should_log_bronze_success
+from tasks.common.bronze_symbol_policy import (
+    BronzeCoverageUnavailableError,
+    build_bronze_run_id,
+    clear_invalid_candidate_marker,
+    is_explicit_invalid_candidate,
+    record_invalid_symbol_candidate,
+)
 from tasks.common import bronze_bucketing
-from tasks.common import domain_artifacts
+from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
 from tasks.common.job_status import resolve_job_run_status
+from tasks.common.silver_contracts import parse_wait_timeout_seconds
 from tasks.finance_data import config as cfg
 
 
@@ -69,10 +80,33 @@ _RECOVERY_SLEEP_SECONDS = 5.0
 _DEFAULT_SHARED_FINANCE_LOCK = "finance-pipeline-shared"
 _COVERAGE_DOMAIN = "finance"
 _COVERAGE_PROVIDER = "massive"
+_INVALID_CANDIDATE_REASON = "core_statements_provider_invalid"
 _FINANCE_SCHEMA_VERSION = 2
-_STATEMENT_TIMEFRAMES: tuple[str, ...] = ("quarterly", "annual")
-_STATEMENT_QUERY_LIMIT = 100
 _VALUATION_QUERY_LIMIT = 1
+_CORE_FINANCE_REPORTS = frozenset({"balance_sheet", "cash_flow", "income_statement"})
+_TRACE_FINANCE_ENABLED = (os.environ.get("MASSIVE_FINANCE_TRACE_ENABLED") or "").strip().lower() in {
+    "1",
+    "true",
+    "t",
+    "yes",
+    "y",
+    "on",
+}
+try:
+    _TRACE_FINANCE_SUCCESS_LIMIT = max(
+        0, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_SUCCESS_LIMIT") or "40").strip())
+    )
+except Exception:
+    _TRACE_FINANCE_SUCCESS_LIMIT = 40
+try:
+    _TRACE_FINANCE_ANOMALY_LIMIT = max(
+        1, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_ANOMALY_LIMIT") or "200").strip())
+    )
+except Exception:
+    _TRACE_FINANCE_ANOMALY_LIMIT = 200
+_TRACE_FINANCE_COUNTERS: collections.Counter[str] = collections.Counter()
+_TRACE_FINANCE_LOCK = threading.Lock()
+_RAW_FINANCE_VOLATILE_KEYS = frozenset({"request_id", "status", "next_url"})
 _BUCKET_COLUMNS = [
     "symbol",
     "report_type",
@@ -84,6 +118,17 @@ _BUCKET_COLUMNS = [
 ]
 
 
+@dataclass
+class _FinanceSymbolOutcome:
+    wrote: int
+    valid_symbol: bool
+    invalid_candidate: bool
+    coverage_unavailable: bool
+    invalid_evidence: list[tuple[str, BaseException]]
+    failures: list[tuple[str, BaseException]]
+    coverage_summary: dict[str, int]
+
+
 def _empty_coverage_summary() -> dict[str, int]:
     return {
         "coverage_checked": 0,
@@ -91,6 +136,17 @@ def _empty_coverage_summary() -> dict[str, int]:
         "coverage_marked_covered": 0,
         "coverage_marked_limited": 0,
         "coverage_skipped_limited_marker": 0,
+        "provider_statement_requests": 0,
+        "provider_statement_empty_raw_payloads": 0,
+        "provider_statement_nonempty_raw_payloads": 0,
+        "provider_statement_unexpected_raw_payloads": 0,
+        "provider_statement_canonical_rows": 0,
+        "provider_statement_canonical_empty_payloads": 0,
+        "provider_valuation_requests": 0,
+        "provider_valuation_empty_raw_payloads": 0,
+        "provider_valuation_nonempty_raw_payloads": 0,
+        "provider_valuation_errors": 0,
+        "provider_valuation_canonical_empty_payloads": 0,
     }
 
 
@@ -120,23 +176,115 @@ def _mark_coverage(
         mdc.write_warning(f"Failed to write finance coverage marker for {symbol}: {exc}")
 
 
+def _is_core_finance_report(report_name: object) -> bool:
+    return str(report_name or "").strip().lower() in _CORE_FINANCE_REPORTS
+
+
+def _is_valuation_finance_report(report_name: object) -> bool:
+    return str(report_name or "").strip().lower() == "valuation"
+
+
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
-def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | None:
-    if raw is None:
-        return default
-    value = str(raw).strip()
-    if not value:
-        return default
-    if value.lower() in {"none", "inf", "infinite", "forever"}:
-        return None
-    try:
-        parsed = float(value)
-    except Exception:
-        return default
-    return max(0.0, parsed)
+def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _summarize_massive_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return f"payload_type={type(payload).__name__}"
+
+    parts: list[str] = []
+    status = payload.get("status")
+    if status is not None:
+        parts.append(f"provider_status={_truncate_trace_text(status, limit=32)}")
+    request_id = payload.get("request_id")
+    if request_id:
+        parts.append(f"request_id={_truncate_trace_text(request_id, limit=48)}")
+    results = payload.get("results")
+    if isinstance(results, list):
+        parts.append(f"results_len={len(results)}")
+        if results and isinstance(results[0], dict):
+            first = results[0]
+            first_date = first.get("period_end") or first.get("date") or first.get("as_of")
+            if first_date:
+                parts.append(f"first_date={_truncate_trace_text(first_date, limit=32)}")
+    else:
+        parts.append(f"results_type={type(results).__name__ if results is not None else 'None'}")
+    parts.append(f"next_url={'present' if payload.get('next_url') else 'none'}")
+    if payload.get("error"):
+        parts.append(f"error={_truncate_trace_text(payload.get('error'))}")
+    return " ".join(parts) or "payload_summary=empty"
+
+
+def _summarize_exception(exc: BaseException) -> str:
+    parts = [f"type={type(exc).__name__}"]
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+    detail = getattr(exc, "detail", None)
+    if detail:
+        parts.append(f"detail={_truncate_trace_text(detail)}")
+    elif str(exc).strip():
+        parts.append(f"message={_truncate_trace_text(str(exc))}")
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = payload.get("path")
+        if path:
+            parts.append(f"path={_truncate_trace_text(path, limit=96)}")
+        payload_detail = payload.get("detail")
+        if payload_detail and payload_detail != detail:
+            parts.append(f"payload_detail={_truncate_trace_text(payload_detail)}")
+    return " ".join(parts)
+
+
+def _emit_bounded_trace(category: str, message: str, *, warning: bool = True, limit: Optional[int] = None) -> None:
+    max_logs = _TRACE_FINANCE_ANOMALY_LIMIT if limit is None else max(0, int(limit))
+    with _TRACE_FINANCE_LOCK:
+        seen = int(_TRACE_FINANCE_COUNTERS.get(category, 0))
+        if seen >= max_logs:
+            return
+        current = seen + 1
+        _TRACE_FINANCE_COUNTERS[category] = current
+    prefix = f"[finance-trace:{category}#{current}] "
+    if warning:
+        mdc.write_warning(prefix + message)
+    else:
+        mdc.write_line(prefix + message)
+    if current == max_logs:
+        mdc.write_line(f"[finance-trace:{category}] further logs suppressed after {max_logs} entries.")
+
+
+def _log_finance_payload_observation(
+    *,
+    symbol: str,
+    report_name: str,
+    timeframe: Optional[str],
+    payload: Any,
+    anomaly: bool,
+) -> None:
+    if anomaly:
+        _emit_bounded_trace(
+            "provider_response_anomaly",
+            f"Massive finance response symbol={symbol} report={report_name} "
+            f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload)}",
+            warning=True,
+        )
+        return
+    if not _TRACE_FINANCE_ENABLED:
+        return
+    _emit_bounded_trace(
+        "provider_response_success",
+        f"Massive finance response symbol={symbol} report={report_name} "
+        f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload)}",
+        warning=False,
+        limit=_TRACE_FINANCE_SUCCESS_LIMIT,
+    )
 
 
 def _validate_environment() -> None:
@@ -144,12 +292,8 @@ def _validate_environment() -> None:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
     if not os.environ.get("ASSET_ALLOCATION_API_BASE_URL"):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
-    if not (
-        os.environ.get("ASSET_ALLOCATION_API_KEY")
-        or os.environ.get("API_KEY")
-        or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
-    ):
-        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
+    if not os.environ.get("ASSET_ALLOCATION_API_SCOPE"):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_SCOPE' is strictly required.")
 
 
 def _is_fresh(blob_last_modified: Optional[datetime], *, fresh_days: int) -> bool:
@@ -295,7 +439,9 @@ def _remove_alpha26_finance_row(
 
 
 def _write_alpha26_finance_buckets(
-    alpha26_rows: dict[tuple[str, str], dict[str, Any]]
+    alpha26_rows: dict[tuple[str, str], dict[str, Any]],
+    *,
+    run_id: str,
 ) -> tuple[int, Optional[str], Optional[int]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     if alpha26_rows:
@@ -312,49 +458,34 @@ def _write_alpha26_finance_buckets(
         for bucket, part in bronze_bucketing.split_df_by_bucket(frame, symbol_column="symbol").items():
             bucket_frames[bucket] = part
 
-    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
-        part = bucket_frames[bucket]
-        if part is None or part.empty:
-            part = pd.DataFrame(columns=_BUCKET_COLUMNS)
-        bronze_bucketing.write_bucket_parquet(
-            client=bronze_client,
-            prefix="finance-data",
-            bucket=bucket,
-            df=part,
-            codec=bronze_bucketing.alpha26_codec(),
-        )
-        try:
-            domain_artifacts.write_bucket_artifact(
-                layer="bronze",
-                domain="finance",
-                bucket=bucket,
-                df=part,
-                date_column="date",
-                client=bronze_client,
-                job_name="bronze-finance-job",
-            )
-        except Exception as exc:
-            mdc.write_warning(f"Bronze finance metadata bucket artifact write failed bucket={bucket}: {exc}")
-
     symbols = sorted({str(key[0]).upper() for key in alpha26_rows.keys()})
     symbol_to_bucket = {symbol: bronze_bucketing.bucket_letter(symbol) for symbol in symbols}
-    index_path = bronze_bucketing.write_symbol_index(domain="finance", symbol_to_bucket=symbol_to_bucket)
+    publish_result = publish_alpha26_bronze_domain(
+        domain="finance",
+        root_prefix="finance-data",
+        bucket_frames=bucket_frames,
+        bucket_columns=_BUCKET_COLUMNS,
+        date_column="date",
+        symbol_to_bucket=symbol_to_bucket,
+        storage_client=bronze_client,
+        job_name="bronze-finance-job",
+        run_id=run_id,
+        metadata={
+            "provider": _COVERAGE_PROVIDER,
+            "schema_version": _FINANCE_SCHEMA_VERSION,
+            "column_count": len(_BUCKET_COLUMNS),
+        },
+    )
     column_count: Optional[int] = len(_BUCKET_COLUMNS)
-    if index_path:
-        try:
-            payload = domain_artifacts.write_domain_artifact(
-                layer="bronze",
-                domain="finance",
-                date_column="date",
-                client=bronze_client,
-                symbol_count_override=len(symbol_to_bucket),
-                symbol_index_path=index_path,
-                job_name="bronze-finance-job",
-            )
-            column_count = domain_artifacts.extract_column_count(payload)
-        except Exception as exc:
-            mdc.write_warning(f"Bronze finance metadata artifact write failed: {exc}")
-    return len(symbol_to_bucket), index_path, column_count
+    log_bronze_success(
+        domain="finance",
+        operation="metadata_artifacts_written",
+        bucket_artifacts_written=publish_result.file_count,
+        domain_artifact_written=True,
+        symbol_index_path=publish_result.index_path or "n/a",
+        manifest_path=publish_result.manifest_path or "n/a",
+    )
+    return publish_result.written_symbols, publish_result.index_path, column_count
 
 
 def _delete_flat_finance_symbol_blobs() -> int:
@@ -393,205 +524,111 @@ def _parse_iso_date(raw: Any) -> Optional[date]:
         return None
 
 
-def _coerce_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return float(value)
-    text = str(value).strip()
-    if not text or text.lower() in {"none", "null", "nan", "n/a", "na", "-", "not available"}:
-        return None
-    try:
-        return float(text.replace(",", ""))
-    except Exception:
-        return None
+def _normalize_report_name(report_name: Any) -> str:
+    return str(report_name or "").strip().lower()
 
 
-def _get_nested_dict(payload: Any, *keys: str) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {}
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, dict):
-            return value
-    return {}
+def _is_raw_finance_payload(payload: Any) -> bool:
+    return isinstance(payload, dict) and isinstance(payload.get("results"), list)
 
 
-def _get_first_float(payload: dict[str, Any], *keys: str) -> Optional[float]:
-    for key in keys:
-        if key not in payload:
-            continue
-        parsed = _coerce_float(payload.get(key))
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _empty_finance_payload(report_name: str) -> dict[str, Any]:
-    base = {
-        "schema_version": _FINANCE_SCHEMA_VERSION,
-        "provider": _COVERAGE_PROVIDER,
-        "report_type": str(report_name).strip().lower(),
-    }
-    if report_name == "valuation":
-        return {
-            **base,
-            "as_of": None,
-            "market_cap": None,
-            "pe_ratio": None,
-        }
-    return {
-        **base,
-        "rows": [],
-    }
-
-
-def _extract_statement_section(report_name: str, row: dict[str, Any]) -> dict[str, Any]:
-    financials = _get_nested_dict(row, "financials")
-    if report_name == "balance_sheet":
-        return _get_nested_dict(row, "balance_sheet", "balanceSheet") or _get_nested_dict(
-            financials,
-            "balance_sheet",
-            "balanceSheet",
-        )
-    if report_name == "income_statement":
-        return _get_nested_dict(row, "income_statement", "incomeStatement") or _get_nested_dict(
-            financials,
-            "income_statement",
-            "incomeStatement",
-        )
-    if report_name == "cash_flow":
-        return _get_nested_dict(row, "cash_flow_statement", "cash_flow", "cashFlowStatement") or _get_nested_dict(
-            financials,
-            "cash_flow_statement",
-            "cash_flow",
-            "cashFlowStatement",
-        )
-    return {}
-
-
-def _canonical_statement_row(report_name: str, row: dict[str, Any], *, timeframe: str) -> Optional[dict[str, Any]]:
-    report_date = _parse_iso_date(
-        row.get("period_end") or row.get("period_of_report_date") or row.get("date") or row.get("report_period")
+def _is_canonical_finance_payload(payload: dict[str, Any], *, report_name: str) -> bool:
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema_version") == _FINANCE_SCHEMA_VERSION
+        and str(payload.get("provider") or "").strip().lower() == _COVERAGE_PROVIDER
+        and str(payload.get("report_type") or "").strip().lower() == _normalize_report_name(report_name)
     )
-    if report_date is None:
-        return None
 
-    section = _extract_statement_section(report_name, row)
-    if not section:
-        return None
 
-    if report_name == "balance_sheet":
-        out = {
-            "date": report_date.isoformat(),
-            "timeframe": timeframe,
-            "long_term_debt": _get_first_float(
-                section,
-                "long_term_debt_and_capital_lease_obligations",
-                "long_term_debt",
-                "long_term_debt_noncurrent",
-            ),
-            "total_assets": _get_first_float(section, "total_assets"),
-            "current_assets": _get_first_float(section, "total_current_assets", "current_assets"),
-            "current_liabilities": _get_first_float(
-                section,
-                "total_current_liabilities",
-                "current_liabilities",
-            ),
-            "shares_outstanding": _get_first_float(
-                section,
-                "common_stock_shares_outstanding",
-                "common_shares_outstanding",
-                "ordinary_shares_number",
-                "share_issued",
-            ),
-        }
-    elif report_name == "income_statement":
-        out = {
-            "date": report_date.isoformat(),
-            "timeframe": timeframe,
-            "total_revenue": _get_first_float(section, "revenues", "revenue", "total_revenue"),
-            "gross_profit": _get_first_float(section, "gross_profit"),
-            "net_income": _get_first_float(
-                section,
-                "net_income_loss",
-                "consolidated_net_income_loss",
-                "net_income_loss_attributable_to_parent",
-            ),
-            "shares_outstanding": _get_first_float(
-                section,
-                "diluted_shares_outstanding",
-                "basic_shares_outstanding",
-                "weighted_average_shares",
-            ),
-        }
-    elif report_name == "cash_flow":
-        out = {
-            "date": report_date.isoformat(),
-            "timeframe": timeframe,
-            "operating_cash_flow": _get_first_float(
-                section,
-                "net_cash_flow_from_operating_activities",
-                "net_cash_from_operating_activities",
-                "net_cash_provided_by_operating_activities",
-            ),
-        }
-    else:
-        return None
+def _is_supported_finance_payload(payload: Any, *, report_name: str) -> bool:
+    return _is_raw_finance_payload(payload) or _is_canonical_finance_payload(payload or {}, report_name=report_name)
 
-    metric_values = [value for key, value in out.items() if key not in {"date", "timeframe"}]
-    if not any(value is not None for value in metric_values):
+
+def _is_reusable_finance_payload(payload: Any, *, report_name: str) -> bool:
+    del report_name
+    return _is_raw_finance_payload(payload)
+
+
+def _extract_report_date_from_row(report_name: str, row: dict[str, Any]) -> Optional[date]:
+    if not isinstance(row, dict):
         return None
+    if _normalize_report_name(report_name) == "valuation":
+        return _parse_iso_date(row.get("date") or row.get("as_of") or row.get("period_end") or row.get("report_period"))
+    return _parse_iso_date(
+        row.get("period_end")
+        or row.get("period_of_report_date")
+        or row.get("report_period")
+        or row.get("date")
+        or row.get("as_of")
+    )
+
+
+def _payload_row_items(payload: dict[str, Any], *, report_name: str) -> list[dict[str, Any]]:
+    normalized_report = _normalize_report_name(report_name or payload.get("report_type"))
+    if _is_canonical_finance_payload(payload, report_name=normalized_report):
+        if normalized_report == "valuation":
+            row = {
+                "as_of": payload.get("as_of"),
+                "market_cap": payload.get("market_cap"),
+                "pe_ratio": payload.get("pe_ratio"),
+            }
+            return [row] if row["as_of"] else []
+        rows = payload.get("rows")
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if _is_raw_finance_payload(payload):
+        results = payload.get("results")
+        return [row for row in results if isinstance(row, dict)] if isinstance(results, list) else []
+    return []
+
+
+def _payload_report_dates(payload: dict[str, Any], *, report_name: Optional[str] = None) -> list[date]:
+    normalized_report = _normalize_report_name(report_name or payload.get("report_type"))
+    out: list[date] = []
+    for row in _payload_row_items(payload, report_name=normalized_report):
+        row_date = _extract_report_date_from_row(normalized_report, row)
+        if row_date is not None:
+            out.append(row_date)
     return out
 
 
-def _build_statement_payload(report_name: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    deduped: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in rows:
-        row_date = str(row.get("date") or "").strip()
-        timeframe = str(row.get("timeframe") or "").strip().lower()
-        if not row_date or not timeframe:
-            continue
-        deduped[(row_date, timeframe)] = row
-    ordered_rows = [deduped[key] for key in sorted(deduped)]
-    return {
-        "schema_version": _FINANCE_SCHEMA_VERSION,
-        "provider": _COVERAGE_PROVIDER,
-        "report_type": str(report_name).strip().lower(),
-        "rows": ordered_rows,
-    }
+def _extract_latest_finance_report_date(payload: dict[str, Any], *, report_name: Optional[str] = None) -> Optional[date]:
+    dates = _payload_report_dates(payload, report_name=report_name)
+    if not dates:
+        return None
+    return max(dates)
 
 
-def _build_valuation_payload(payload: dict[str, Any], *, report_name: str) -> dict[str, Any]:
-    results = payload.get("results")
-    latest_row: dict[str, Any] | None = None
-    latest_date: Optional[date] = None
-    if isinstance(results, list):
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            item_date = _parse_iso_date(item.get("date") or item.get("as_of"))
-            if item_date is None:
-                continue
-            if latest_date is None or item_date > latest_date:
-                latest_date = item_date
-                latest_row = item
-    elif isinstance(payload, dict):
-        latest_row = payload
-        latest_date = _parse_iso_date(payload.get("date") or payload.get("as_of"))
+def _extract_source_earliest_finance_date(payload: dict[str, Any], *, report_name: Optional[str] = None) -> Optional[date]:
+    dates = _payload_report_dates(payload, report_name=report_name)
+    if not dates:
+        return None
+    return min(dates)
 
-    market_cap = _get_first_float(latest_row or {}, "market_cap")
-    pe_ratio = _get_first_float(latest_row or {}, "price_to_earnings", "pe_ratio")
-    if latest_date is None or (market_cap is None and pe_ratio is None):
-        return _empty_finance_payload(report_name)
-    return {
-        "schema_version": _FINANCE_SCHEMA_VERSION,
-        "provider": _COVERAGE_PROVIDER,
-        "report_type": report_name,
-        "as_of": latest_date.isoformat(),
-        "market_cap": market_cap,
-        "pe_ratio": pe_ratio,
-    }
+
+def _payload_has_dates_on_or_after(
+    payload: dict[str, Any],
+    *,
+    report_name: str,
+    cutoff: Optional[date],
+) -> bool:
+    if cutoff is None:
+        return True
+    return any(report_date >= cutoff for report_date in _payload_report_dates(payload, report_name=report_name))
+
+
+def _count_usable_payload_rows(payload: dict[str, Any], *, report_name: str) -> int:
+    return sum(
+        1
+        for row in _payload_row_items(payload, report_name=report_name)
+        if _extract_report_date_from_row(report_name, row) is not None
+    )
+
+
+def _stable_finance_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {key: value for key, value in payload.items() if key not in _RAW_FINANCE_VOLATILE_KEYS}
 
 
 def _fetch_massive_finance_payload(
@@ -599,109 +636,126 @@ def _fetch_massive_finance_payload(
     symbol: str,
     report_name: str,
     massive_client: MassiveGatewayClient,
+    coverage_summary: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     if report_name == "valuation":
-        payload = massive_client.get_finance_report(
-            symbol=symbol,
-            report="valuation",
-            sort="date.desc",
-            limit=_VALUATION_QUERY_LIMIT,
-            pagination=False,
-        )
+        if coverage_summary is not None:
+            coverage_summary["provider_valuation_requests"] += 1
+        try:
+            payload = massive_client.get_ratios(
+                symbol=symbol,
+                limit=_VALUATION_QUERY_LIMIT,
+                pagination=False,
+            )
+        except BaseException as exc:
+            if coverage_summary is not None:
+                coverage_summary["provider_valuation_errors"] += 1
+            _emit_bounded_trace(
+                "valuation_error",
+                f"Massive valuation fetch failed symbol={symbol} report={report_name} {_summarize_exception(exc)}",
+                warning=True,
+            )
+            raise
         if not isinstance(payload, dict):
             raise MassiveGatewayError(
                 "Unexpected Massive valuation response type.",
                 payload={"symbol": symbol, "report": report_name},
             )
-        return _build_valuation_payload(payload, report_name=report_name)
+        results = payload.get("results")
+        if isinstance(results, list):
+            if results:
+                if coverage_summary is not None:
+                    coverage_summary["provider_valuation_nonempty_raw_payloads"] += 1
+                _log_finance_payload_observation(
+                    symbol=symbol,
+                    report_name=report_name,
+                    timeframe=None,
+                    payload=payload,
+                    anomaly=False,
+                )
+            else:
+                if coverage_summary is not None:
+                    coverage_summary["provider_valuation_empty_raw_payloads"] += 1
+                _log_finance_payload_observation(
+                    symbol=symbol,
+                    report_name=report_name,
+                    timeframe=None,
+                    payload=payload,
+                    anomaly=True,
+                )
+        else:
+            _emit_bounded_trace(
+                "valuation_unexpected_payload",
+                f"Massive valuation payload missing results list symbol={symbol} report={report_name} "
+                f"{_summarize_massive_payload(payload)}",
+                warning=True,
+            )
+        return payload
 
-    rows: list[dict[str, Any]] = []
-    for timeframe in _STATEMENT_TIMEFRAMES:
+    if coverage_summary is not None:
+        coverage_summary["provider_statement_requests"] += 1
+    try:
         payload = massive_client.get_finance_report(
             symbol=symbol,
             report=report_name,
-            timeframe=timeframe,
-            sort="period_end.asc",
-            limit=_STATEMENT_QUERY_LIMIT,
             pagination=True,
         )
-        if not isinstance(payload, dict):
-            raise MassiveGatewayError(
-                "Unexpected Massive statement response type.",
-                payload={"symbol": symbol, "report": report_name, "timeframe": timeframe},
+    except BaseException as exc:
+        _emit_bounded_trace(
+            "statement_error",
+            f"Massive statement fetch failed symbol={symbol} report={report_name} {_summarize_exception(exc)}",
+            warning=True,
+        )
+        raise
+    if not isinstance(payload, dict):
+        if coverage_summary is not None:
+            coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
+        _emit_bounded_trace(
+            "statement_unexpected_payload",
+            f"Massive statement payload was not a dict symbol={symbol} report={report_name} "
+            f"payload_type={type(payload).__name__}",
+            warning=True,
+        )
+        raise MassiveGatewayError(
+            "Unexpected Massive statement response type.",
+            payload={"symbol": symbol, "report": report_name},
+        )
+    results = payload.get("results")
+    if isinstance(results, list):
+        if results:
+            if coverage_summary is not None:
+                coverage_summary["provider_statement_nonempty_raw_payloads"] += 1
+                coverage_summary["provider_statement_canonical_rows"] += _count_usable_payload_rows(
+                    payload,
+                    report_name=report_name,
+                )
+            _log_finance_payload_observation(
+                symbol=symbol,
+                report_name=report_name,
+                timeframe=None,
+                payload=payload,
+                anomaly=False,
             )
-        results = payload.get("results")
-        if not isinstance(results, list):
-            continue
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            canonical_row = _canonical_statement_row(report_name, item, timeframe=timeframe)
-            if canonical_row is not None:
-                rows.append(canonical_row)
-    return _build_statement_payload(report_name, rows)
-
-
-def _payload_report_dates(payload: dict[str, Any]) -> list[date]:
-    report_type = str(payload.get("report_type") or "").strip().lower()
-    if report_type == "valuation":
-        valuation_date = _parse_iso_date(payload.get("as_of"))
-        return [valuation_date] if valuation_date is not None else []
-
-    rows = payload.get("rows")
-    if not isinstance(rows, list):
-        return []
-    out: list[date] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        row_date = _parse_iso_date(row.get("date"))
-        if row_date is not None:
-            out.append(row_date)
-    return out
-
-
-def _apply_backfill_start_to_finance_payload(payload: dict[str, Any], *, backfill_start: Optional[date]) -> dict[str, Any]:
-    if backfill_start is None:
-        return payload
-
-    report_type = str(payload.get("report_type") or "").strip().lower()
-    if report_type == "valuation":
-        as_of = _parse_iso_date(payload.get("as_of"))
-        if as_of is not None and as_of < backfill_start:
-            return _empty_finance_payload(report_type)
-        return payload
-
-    rows = payload.get("rows")
-    if not isinstance(rows, list):
-        return payload
-
-    filtered_rows = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        row_date = _parse_iso_date(row.get("date"))
-        if row_date is not None and row_date < backfill_start:
-            continue
-        filtered_rows.append(row)
-
-    filtered_payload = dict(payload)
-    filtered_payload["rows"] = filtered_rows
-    return filtered_payload
-
-
-def _extract_latest_finance_report_date(payload: dict[str, Any]) -> Optional[date]:
-    dates = _payload_report_dates(payload)
-    if not dates:
-        return None
-    return max(dates)
-
-
-def _extract_source_earliest_finance_date(payload: dict[str, Any]) -> Optional[date]:
-    dates = _payload_report_dates(payload)
-    if not dates:
-        return None
-    return min(dates)
+        else:
+            if coverage_summary is not None:
+                coverage_summary["provider_statement_empty_raw_payloads"] += 1
+            _log_finance_payload_observation(
+                symbol=symbol,
+                report_name=report_name,
+                timeframe=None,
+                payload=payload,
+                anomaly=True,
+            )
+    else:
+        if coverage_summary is not None:
+            coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
+        _emit_bounded_trace(
+            "statement_unexpected_payload",
+            f"Massive statement payload missing results list symbol={symbol} report={report_name} "
+            f"{_summarize_massive_payload(payload)}",
+            warning=True,
+        )
+    return payload
 
 
 def _has_non_empty_value(value: Any) -> bool:
@@ -715,20 +769,21 @@ def _has_non_empty_value(value: Any) -> bool:
     return text.lower() not in {"none", "null", "nan", "n/a", "na", "-", "not available"}
 
 
-def _is_canonical_finance_payload(payload: dict[str, Any], *, report_name: str) -> bool:
-    return (
-        isinstance(payload, dict)
-        and payload.get("schema_version") == _FINANCE_SCHEMA_VERSION
-        and str(payload.get("provider") or "").strip().lower() == _COVERAGE_PROVIDER
-        and str(payload.get("report_type") or "").strip().lower() == str(report_name).strip().lower()
-    )
-
-
 def _is_empty_finance_payload(payload: dict[str, Any], *, report_name: str) -> bool:
     if not payload:
         return True
 
-    payload_report_type = str(payload.get("report_type") or report_name).strip().lower()
+    payload_report_type = _normalize_report_name(payload.get("report_type") or report_name)
+    if _is_raw_finance_payload(payload):
+        results = payload.get("results")
+        if not isinstance(results, list) or not results:
+            return True
+        return not any(
+            _extract_report_date_from_row(payload_report_type, row) is not None
+            for row in results
+            if isinstance(row, dict)
+        )
+
     if not _is_canonical_finance_payload(payload, report_name=payload_report_type):
         return True
 
@@ -747,8 +802,6 @@ def _is_empty_finance_payload(payload: dict[str, Any], *, report_name: str) -> b
             return False
     return True
 
-    return False
-
 
 def fetch_and_save_raw(
     symbol: str,
@@ -763,7 +816,7 @@ def fetch_and_save_raw(
     alpha26_lock: Optional[threading.Lock] = None,
 ) -> bool:
     """
-    Fetch a finance report via the API-hosted Massive gateway and store canonical v2 bytes in Bronze buckets.
+    Fetch a finance report via the API-hosted Massive gateway and store raw provider JSON in Bronze buckets.
 
     Returns True when a write occurred, False when skipped (fresh/no-op).
     """
@@ -779,20 +832,28 @@ def fetch_and_save_raw(
     resolved_backfill_start = normalize_date(backfill_start)
     existing_payload: Optional[dict[str, Any]] = None
     existing_min_date: Optional[date] = None
+    existing_payload_current = False
     force_backfill = False
     existing_row = dict(alpha26_existing_row or {})
 
     try:
         if existing_row:
             existing_payload = _decode_payload_json(existing_row.get("payload_json"))
-            existing_payload_current = isinstance(existing_payload, dict) and _is_canonical_finance_payload(
+            existing_payload_supported = isinstance(existing_payload, dict) and _is_supported_finance_payload(
+                existing_payload,
+                report_name=report_name,
+            )
+            existing_payload_current = isinstance(existing_payload, dict) and _is_reusable_finance_payload(
                 existing_payload,
                 report_name=report_name,
             )
             if resolved_backfill_start is not None:
                 coverage_summary["coverage_checked"] += 1
-                if existing_payload_current:
-                    existing_min_date = _extract_source_earliest_finance_date(existing_payload or {})
+                if existing_payload_supported:
+                    existing_min_date = _extract_source_earliest_finance_date(
+                        existing_payload or {},
+                        report_name=report_name,
+                    )
                 marker = load_coverage_marker(
                     common_client=common_client,
                     domain=_COVERAGE_DOMAIN,
@@ -816,7 +877,11 @@ def fetch_and_save_raw(
                         coverage_summary=coverage_summary,
                     )
             ingested_at = _parse_ingested_at(existing_row.get("ingested_at"))
-            if existing_payload_current and _is_fresh(ingested_at, fresh_days=FINANCE_REPORT_STALE_DAYS) and not force_backfill:
+            if (
+                existing_payload_current
+                and _is_fresh(ingested_at, fresh_days=FINANCE_REPORT_STALE_DAYS)
+                and not force_backfill
+            ):
                 list_manager.add_to_whitelist(symbol)
                 return False
     except Exception:
@@ -826,16 +891,33 @@ def fetch_and_save_raw(
         symbol=symbol,
         report_name=report_name,
         massive_client=massive_client,
+        coverage_summary=coverage_summary,
     )
     if _is_empty_finance_payload(payload, report_name=report_name):
-        list_manager.add_to_blacklist(symbol)
-        raise MassiveGatewayNotFoundError(
-            f"Massive returned empty finance payload for {symbol} report={report_name}; "
-            "automatic blacklist updates are disabled."
+        summary_key = (
+            "provider_valuation_canonical_empty_payloads"
+            if report_name == "valuation"
+            else "provider_statement_canonical_empty_payloads"
         )
-    source_earliest = _extract_source_earliest_finance_date(payload)
-    payload = _apply_backfill_start_to_finance_payload(payload, backfill_start=resolved_backfill_start)
-    if resolved_backfill_start is not None and _is_empty_finance_payload(payload, report_name=report_name):
+        coverage_summary[summary_key] += 1
+        _emit_bounded_trace(
+            "canonical_empty_payload",
+            f"Massive finance raw payload empty symbol={symbol} report={report_name} "
+            f"payload_dates={','.join(d.isoformat() for d in _payload_report_dates(payload, report_name=report_name)) or 'none'}",
+            warning=True,
+        )
+        raise BronzeCoverageUnavailableError(
+            "empty_finance_payload",
+            detail=f"Massive returned empty finance payload for {symbol} report={report_name}.",
+            payload={"symbol": symbol, "report": report_name},
+        )
+    source_earliest = _extract_source_earliest_finance_date(payload, report_name=report_name)
+    has_cutoff_coverage = _payload_has_dates_on_or_after(
+        payload,
+        report_name=report_name,
+        cutoff=resolved_backfill_start,
+    )
+    if resolved_backfill_start is not None and not has_cutoff_coverage:
         if force_backfill:
             _mark_coverage(
                 symbol=symbol,
@@ -861,9 +943,7 @@ def fetch_and_save_raw(
 
     if resolved_backfill_start is not None and force_backfill:
         marker_status = (
-            "covered"
-            if source_earliest is not None and source_earliest <= resolved_backfill_start
-            else "limited"
+            "covered" if source_earliest is not None and source_earliest <= resolved_backfill_start else "limited"
         )
         _mark_coverage(
             symbol=symbol,
@@ -874,22 +954,18 @@ def fetch_and_save_raw(
         )
 
     if existing_payload is not None:
-        if existing_payload == payload:
+        if _stable_finance_payload(existing_payload) == _stable_finance_payload(payload):
             list_manager.add_to_whitelist(symbol)
             return False
-        if resolved_backfill_start is None:
-            incoming_latest = _extract_latest_finance_report_date(payload)
-            existing_latest = _extract_latest_finance_report_date(existing_payload)
-            if (
-                incoming_latest is not None
-                and existing_latest is not None
-                and incoming_latest <= existing_latest
-            ):
+        if resolved_backfill_start is None and existing_payload_current:
+            incoming_latest = _extract_latest_finance_report_date(payload, report_name=report_name)
+            existing_latest = _extract_latest_finance_report_date(existing_payload, report_name=report_name)
+            if incoming_latest is not None and existing_latest is not None and incoming_latest <= existing_latest:
                 list_manager.add_to_whitelist(symbol)
                 return False
 
-    source_min = _extract_source_earliest_finance_date(payload)
-    source_max = _extract_latest_finance_report_date(payload)
+    source_min = _extract_source_earliest_finance_date(payload, report_name=report_name)
+    source_max = _extract_latest_finance_report_date(payload, report_name=report_name)
     bucket_row = _build_finance_bucket_row(
         symbol=symbol,
         report_type=report_name,
@@ -925,6 +1001,17 @@ def _format_failure_reason(exc: BaseException) -> str:
         if path:
             reason_parts.append(f"path={path}")
     return " ".join(reason_parts)
+
+
+def _failure_bucket_key(report_name: str, exc: BaseException) -> str:
+    status_code = getattr(exc, "status_code", None)
+    key = f"report={report_name} type={type(exc).__name__} status={status_code if status_code is not None else 'n/a'}"
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = str(payload.get("path") or "").strip()
+        if path:
+            key += f" path={_truncate_trace_text(path, limit=80)}"
+    return key
 
 
 def _safe_close_massive_client(client: MassiveGatewayClient | None) -> None:
@@ -980,21 +1067,33 @@ def _is_recoverable_massive_error(exc: BaseException) -> bool:
         status_code = getattr(exc, "status_code", None)
         if status_code in {408, 429, 500, 502, 503, 504}:
             return True
+    else:
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {408, 429, 500, 502, 503, 504}:
+            return True
 
-        message = str(exc).strip().lower()
-        transient_markers = (
-            "timeout",
-            "timed out",
-            "connection",
-            "server disconnected",
-            "remoteprotocolerror",
-            "readerror",
-            "connecterror",
-            "gateway unavailable",
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+
+    message = " ".join(
+        part
+        for part in (
+            str(exc).strip().lower(),
+            str(getattr(exc, "detail", "") or "").strip().lower(),
         )
-        return any(marker in message for marker in transient_markers)
-
-    return False
+        if part
+    )
+    transient_markers = (
+        "timeout",
+        "timed out",
+        "connection",
+        "server disconnected",
+        "remoteprotocolerror",
+        "readerror",
+        "connecterror",
+        "gateway unavailable",
+    )
+    return any(marker in message for marker in transient_markers)
 
 
 def _process_symbol_with_recovery(
@@ -1007,13 +1106,17 @@ def _process_symbol_with_recovery(
     alpha26_lock: Optional[threading.Lock] = None,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
-) -> tuple[int, bool, list[tuple[str, BaseException]], dict[str, int]]:
+) -> _FinanceSymbolOutcome:
     attempts = max(1, int(max_attempts))
     sleep_seconds = max(0.0, float(sleep_seconds))
     pending_reports = list(REPORTS)
     wrote = 0
     final_failures: list[tuple[str, BaseException]] = []
     coverage_summary = _empty_coverage_summary()
+    invalid_evidence: list[tuple[str, BaseException]] = []
+    core_successful_reports: set[str] = set()
+    core_invalid_reports: set[str] = set()
+    coverage_unavailable = False
 
     for attempt in range(1, attempts + 1):
         next_pending: list[dict[str, str]] = []
@@ -1046,31 +1149,114 @@ def _process_symbol_with_recovery(
                             "alpha26_lock": alpha26_lock,
                         }
                     )
-                if fetch_and_save_raw(symbol, report, massive_client, **call_kwargs):
+                report_wrote = fetch_and_save_raw(symbol, report, massive_client, **call_kwargs)
+                if report_wrote:
                     wrote += 1
+                if _is_core_finance_report(report_name):
+                    core_successful_reports.add(report_name)
+            except BronzeCoverageUnavailableError as exc:
+                coverage_unavailable = True
+                _emit_bounded_trace(
+                    "coverage_unavailable",
+                    f"Bronze finance coverage unavailable symbol={symbol} report={report_name} "
+                    f"{_summarize_exception(exc)}",
+                    warning=True,
+                )
             except MassiveGatewayNotFoundError as exc:
-                return wrote, True, [(report_name, exc)], coverage_summary
+                _emit_bounded_trace(
+                    "gateway_not_found",
+                    f"Bronze finance gateway not found symbol={symbol} report={report_name} "
+                    f"{_summarize_exception(exc)}",
+                    warning=True,
+                )
+                if report_name == "valuation":
+                    coverage_unavailable = True
+                    continue
+                if _is_core_finance_report(report_name) and is_explicit_invalid_candidate(exc):
+                    core_invalid_reports.add(report_name)
+                    invalid_evidence.append((report_name, exc))
+                    continue
+                final_failures.append((report_name, exc))
             except BaseException as exc:
                 if _is_recoverable_massive_error(exc) and attempt < attempts:
                     next_pending.append(report)
                     transient_failures.append((report_name, exc))
+                    _emit_bounded_trace(
+                        "transient_failure",
+                        f"Bronze finance transient provider failure symbol={symbol} report={report_name} "
+                        f"attempt={attempt}/{attempts} {_summarize_exception(exc)}",
+                        warning=True,
+                    )
                 else:
                     final_failures.append((report_name, exc))
+                    _emit_bounded_trace(
+                        "final_failure",
+                        f"Bronze finance final provider failure symbol={symbol} report={report_name} "
+                        f"attempt={attempt}/{attempts} {_summarize_exception(exc)}",
+                        warning=True,
+                    )
 
         if not next_pending:
-            return wrote, False, final_failures, coverage_summary
+            break
 
         report_labels = ",".join(sorted({name for name, _ in transient_failures})) or "unknown"
+        transient_details = " | ".join(
+            f"report={name} {_truncate_trace_text(_format_failure_reason(exc), limit=260)}"
+            for name, exc in transient_failures[:3]
+        )
         mdc.write_warning(
             f"Transient Massive error for {symbol}; attempt {attempt}/{attempts} failed for report(s) "
-            f"[{report_labels}]. Sleeping {sleep_seconds:.1f}s and retrying remaining reports."
+            f"[{report_labels}]. Sleeping {sleep_seconds:.1f}s and retrying remaining reports. "
+            f"details={transient_details or 'n/a'}"
         )
         client_manager.reset_current()
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
         pending_reports = next_pending
 
-    return wrote, False, final_failures, coverage_summary
+    nonfatal_valuation_failures: list[tuple[str, BaseException]] = []
+    retained_failures: list[tuple[str, BaseException]] = []
+    for report_name, exc in final_failures:
+        if core_successful_reports and _is_valuation_finance_report(report_name) and _is_recoverable_massive_error(exc):
+            nonfatal_valuation_failures.append((report_name, exc))
+            continue
+        retained_failures.append((report_name, exc))
+    final_failures = retained_failures
+    if nonfatal_valuation_failures:
+        coverage_unavailable = True
+        invalid_evidence.extend(nonfatal_valuation_failures)
+        detail_preview = " | ".join(
+            f"report={name} {_truncate_trace_text(_format_failure_reason(exc), limit=220)}"
+            for name, exc in nonfatal_valuation_failures[:3]
+        )
+        _emit_bounded_trace(
+            "valuation_nonfatal_failure",
+            f"Bronze finance valuation failures downgraded to coverage-unavailable symbol={symbol} "
+            f"core_reports={','.join(sorted(core_successful_reports)) or 'none'} details={detail_preview or 'n/a'}",
+            warning=True,
+        )
+
+    invalid_candidate = not core_successful_reports and core_invalid_reports == _CORE_FINANCE_REPORTS
+    if invalid_candidate:
+        return _FinanceSymbolOutcome(
+            wrote=wrote,
+            valid_symbol=False,
+            invalid_candidate=True,
+            coverage_unavailable=False,
+            invalid_evidence=invalid_evidence,
+            failures=final_failures,
+            coverage_summary=coverage_summary,
+        )
+
+    return _FinanceSymbolOutcome(
+        wrote=wrote,
+        valid_symbol=bool(core_successful_reports),
+        invalid_candidate=False,
+        coverage_unavailable=coverage_unavailable or bool(invalid_evidence),
+        invalid_evidence=invalid_evidence,
+        failures=final_failures,
+        coverage_summary=coverage_summary,
+    )
 
 
 async def main_async() -> int:
@@ -1079,21 +1265,42 @@ async def main_async() -> int:
 
     list_manager.load()
 
-    mdc.write_line("Fetching symbols...")
-    df_symbols = mdc.get_symbols().dropna(subset=["Symbol"]).copy()
+    sync_result = symbol_availability.sync_domain_availability("finance")
+    mdc.write_line(
+        "Bronze finance availability sync: "
+        f"provider={sync_result.provider} listed_count={sync_result.listed_count} "
+        f"inserted_count={sync_result.inserted_count} disabled_count={sync_result.disabled_count} "
+        f"duration_ms={sync_result.duration_ms} lock_wait_ms={sync_result.lock_wait_ms}"
+    )
+    df_symbols = symbol_availability.get_domain_symbols("finance").dropna(subset=["Symbol"]).copy()
+    provider_available_count = int(len(df_symbols))
 
     symbols: list[str] = []
+    blacklist_skipped = 0
     for sym in df_symbols["Symbol"].astype(str).tolist():
         if "." in sym:
             continue
         if list_manager.is_blacklisted(sym):
+            blacklist_skipped += 1
             continue
         symbols.append(sym)
     symbols = list(dict.fromkeys(symbols))
 
+    debug_filtered = 0
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        filtered_symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        debug_filtered = len(symbols) - len(filtered_symbols)
+        symbols = filtered_symbols
+
+    mdc.write_line(
+        "Bronze finance symbol selection: "
+        f"provider_available_count={provider_available_count} "
+        f"blacklist_skipped={blacklist_skipped} "
+        f"debug_filtered={debug_filtered} "
+        f"final_scheduled={len(symbols)}"
+    )
+    run_id = build_bronze_run_id(_COVERAGE_DOMAIN)
 
     alpha26_mode = bronze_bucketing.is_alpha26_mode()
     if not alpha26_mode:
@@ -1102,9 +1309,7 @@ async def main_async() -> int:
     symbol_set = {str(s).strip().upper() for s in symbols}
     alpha26_rows: dict[tuple[str, str], dict[str, Any]] = _load_alpha26_finance_row_map(symbols=symbol_set)
     alpha26_lock: Optional[threading.Lock] = threading.Lock()
-    mdc.write_line(
-        f"Loaded existing finance alpha26 seed rows: reports={len(alpha26_rows)} symbols={len(symbol_set)}."
-    )
+    mdc.write_line(f"Loaded existing finance alpha26 seed rows: reports={len(alpha26_rows)} symbols={len(symbol_set)}.")
 
     mdc.write_line(f"Starting Massive Bronze Finance Ingestion for {len(symbols)} symbols...")
 
@@ -1127,14 +1332,22 @@ async def main_async() -> int:
     loop = asyncio.get_running_loop()
     semaphore = asyncio.Semaphore(max_workers)
 
-    progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    progress = {
+        "processed": 0,
+        "written": 0,
+        "skipped": 0,
+        "failed": 0,
+        "invalid_candidates": 0,
+        "unavailable": 0,
+        "blacklist_promotions": 0,
+    }
     coverage_progress = _empty_coverage_summary()
     retry_next_run: set[str] = set()
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
 
-    def worker(symbol: str) -> tuple[int, bool, list[tuple[str, BaseException]], dict[str, int]]:
+    def worker(symbol: str) -> _FinanceSymbolOutcome:
         return _process_symbol_with_recovery(
             symbol,
             client_manager,
@@ -1150,12 +1363,12 @@ async def main_async() -> int:
             progress["failed"] += 1
             retry_next_run.add(symbol)
             for report_name, exc in failures:
-                failure_type = type(exc).__name__
                 failure_reason = _format_failure_reason(exc)
                 failure_reasons.append(f"report={report_name} {failure_reason}")
-                failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
+                failure_key = _failure_bucket_key(report_name, exc)
+                failure_counts[failure_key] = failure_counts.get(failure_key, 0) + 1
                 failure_examples.setdefault(
-                    failure_type,
+                    failure_key,
                     f"symbol={symbol} report={report_name} {failure_reason}",
                 )
             failed_total = progress["failed"]
@@ -1174,34 +1387,83 @@ async def main_async() -> int:
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
             try:
-                wrote, blacklisted, failures, coverage_summary = await loop.run_in_executor(executor, worker, symbol)
-                if blacklisted:
-                    list_manager.add_to_blacklist(symbol)
-                    should_log = False
-                    async with progress_lock:
-                        progress["blacklisted"] += 1
-                        should_log = progress["blacklisted"] <= 20
-                        for key in coverage_progress:
-                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
-                    if should_log:
-                        report_name = failures[0][0] if failures else "unknown"
-                        mdc.write_warning(
-                            "Invalid finance payload for {symbol} report={report}; automatic blacklist updates "
-                            "are disabled for job runs.".format(symbol=symbol, report=report_name)
+                result = await loop.run_in_executor(executor, worker, symbol)
+                if result.valid_symbol:
+                    try:
+                        clear_invalid_candidate_marker(
+                            common_client=common_client,
+                            domain=_COVERAGE_DOMAIN,
+                            symbol=symbol,
                         )
-                elif failures:
+                    except Exception as exc:
+                        mdc.write_warning(f"Failed to clear finance invalid-candidate marker for {symbol}: {exc}")
+
+                should_log = False
+                async with progress_lock:
+                    if result.coverage_unavailable and not result.invalid_candidate:
+                        progress["unavailable"] += 1
+                    for key in coverage_progress:
+                        coverage_progress[key] += int(result.coverage_summary.get(key, 0) or 0)
+
+                if result.invalid_candidate:
+                    promotion = record_invalid_symbol_candidate(
+                        common_client=common_client,
+                        bronze_client=bronze_client,
+                        domain=_COVERAGE_DOMAIN,
+                        symbol=symbol,
+                        provider=_COVERAGE_PROVIDER,
+                        reason_code=_INVALID_CANDIDATE_REASON,
+                        run_id=run_id,
+                    )
                     async with progress_lock:
-                        for key in coverage_progress:
-                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
-                    await record_failures(symbol, failures)
+                        progress["invalid_candidates"] += 1
+                        if promotion.get("promoted"):
+                            progress["blacklist_promotions"] += 1
+                        should_log = progress["invalid_candidates"] <= 20
+                    if should_log:
+                        reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
+                        evidence = (
+                            _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
+                        )
+                        message = (
+                            f"Bronze finance invalid symbol candidate: symbol={symbol} reports={reports} "
+                            f"observed_runs={promotion.get('observedRunCount', 1)} evidence={evidence}"
+                        )
+                        if promotion.get("promoted"):
+                            message += " promoted_to_domain_blacklist_after_2_runs=true"
+                        mdc.write_warning(message)
+                elif result.failures:
+                    await record_failures(symbol, result.failures)
                 else:
+                    success_count = 0
+                    disposition = "written" if result.wrote else "skipped"
                     async with progress_lock:
-                        if wrote:
+                        if result.wrote:
                             progress["written"] += 1
                         else:
                             progress["skipped"] += 1
-                        for key in coverage_progress:
-                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
+                        success_count = progress["written"] + progress["skipped"]
+                    if should_log_bronze_success(success_count):
+                        log_bronze_success(
+                            domain="finance",
+                            operation="symbol_processed",
+                            symbol=symbol,
+                            disposition=disposition,
+                            reports_written=result.wrote,
+                            success_count=success_count,
+                            coverage_unavailable=result.coverage_unavailable,
+                        )
+                    if result.coverage_unavailable:
+                        async with progress_lock:
+                            should_log = progress["unavailable"] <= 20
+                    if should_log:
+                        reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
+                        evidence = (
+                            _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
+                        )
+                        mdc.write_warning(
+                            f"Bronze finance coverage unavailable: symbol={symbol} reports={reports} evidence={evidence}"
+                        )
             except Exception as exc:
                 await record_failures(symbol, [("unknown", exc)])
             finally:
@@ -1210,7 +1472,8 @@ async def main_async() -> int:
                     if progress["processed"] % 250 == 0:
                         mdc.write_line(
                             "Bronze finance progress: processed={processed} written={written} skipped={skipped} "
-                            "blacklisted={blacklisted} failed={failed}".format(**progress)
+                            "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+                            "blacklist_promotions={blacklist_promotions} failed={failed}".format(**progress)
                         )
 
     try:
@@ -1224,19 +1487,24 @@ async def main_async() -> int:
             client_manager.close_all()
         except Exception:
             pass
-        try:
-            list_manager.flush()
-        except Exception as exc:
-            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
 
     alpha26_column_count: Optional[int] = len(_BUCKET_COLUMNS)
     try:
-        written_symbols, index_path, alpha26_column_count = _write_alpha26_finance_buckets(alpha26_rows)
+        written_symbols, index_path, alpha26_column_count = _write_alpha26_finance_buckets(
+            alpha26_rows,
+            run_id=run_id,
+        )
         flat_deleted = _delete_flat_finance_symbol_blobs()
         mdc.write_line(
             "Bronze finance alpha26 buckets written: "
             f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
         )
+        try:
+            list_manager.flush()
+        except Exception as exc:
+            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        else:
+            log_bronze_success(domain="finance", operation="list_flush")
     except Exception as exc:
         progress["failed"] += 1
         mdc.write_error(f"Bronze finance alpha26 bucket write failed: {exc}")
@@ -1253,51 +1521,36 @@ async def main_async() -> int:
         preview = ", ".join(sorted(retry_next_run)[:50])
         suffix = " ..." if len(retry_next_run) > 50 else ""
         mdc.write_line(
-            f"Retry-on-next-run candidates (not blacklisted): count={len(retry_next_run)} symbols={preview}{suffix}"
+            f"Retry-on-next-run candidates (not promoted): count={len(retry_next_run)} symbols={preview}{suffix}"
         )
 
     job_status, exit_code = resolve_job_run_status(
         failed_count=progress["failed"],
-        warning_count=progress["blacklisted"],
+        warning_count=progress["invalid_candidates"],
     )
     mdc.write_line(
         "Bronze Massive finance ingest complete: processed={processed} written={written} skipped={skipped} "
-        "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
+        "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+        "blacklist_promotions={blacklist_promotions} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
         "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
+        "provider_statement_requests={provider_statement_requests} "
+        "provider_statement_empty_raw_payloads={provider_statement_empty_raw_payloads} "
+        "provider_statement_nonempty_raw_payloads={provider_statement_nonempty_raw_payloads} "
+        "provider_statement_unexpected_raw_payloads={provider_statement_unexpected_raw_payloads} "
+        "provider_statement_canonical_rows={provider_statement_canonical_rows} "
+        "provider_statement_canonical_empty_payloads={provider_statement_canonical_empty_payloads} "
+        "provider_valuation_requests={provider_valuation_requests} "
+        "provider_valuation_empty_raw_payloads={provider_valuation_empty_raw_payloads} "
+        "provider_valuation_nonempty_raw_payloads={provider_valuation_nonempty_raw_payloads} "
+        "provider_valuation_errors={provider_valuation_errors} "
+        "provider_valuation_canonical_empty_payloads={provider_valuation_canonical_empty_payloads} "
         "job_status={job_status}".format(
             **progress,
             **coverage_progress,
             job_status=job_status,
         )
     )
-    try:
-        listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
-        manifest = create_bronze_finance_manifest(
-            producer_job_name="bronze-finance-job",
-            listed_blobs=listed_blobs,
-            metadata={
-                "jobStatus": job_status,
-                "processed": int(progress["processed"]),
-                "written": int(progress["written"]),
-                "skipped": int(progress["skipped"]),
-                "blacklisted": int(progress["blacklisted"]),
-                "failed": int(progress["failed"]),
-                "column_count": alpha26_column_count,
-                "provider": _COVERAGE_PROVIDER,
-                "schema_version": _FINANCE_SCHEMA_VERSION,
-            },
-        )
-        if manifest:
-            mdc.write_line(
-                "Bronze finance manifest published: runId={run_id} blobCount={blob_count} path={path}".format(
-                    run_id=manifest.get("runId"),
-                    blob_count=manifest.get("blobCount"),
-                    path=manifest.get("manifestPath"),
-                )
-            )
-    except Exception as exc:
-        mdc.write_warning(f"Failed to publish bronze finance manifest: {exc}")
     return exit_code
 
 
@@ -1312,12 +1565,12 @@ if __name__ == "__main__":
 
     job_name = "bronze-finance-job"
     shared_lock_name = (os.environ.get("FINANCE_PIPELINE_SHARED_LOCK_NAME") or _DEFAULT_SHARED_FINANCE_LOCK).strip()
-    shared_wait_timeout = _parse_wait_timeout_seconds(
+    shared_wait_timeout = parse_wait_timeout_seconds(
         os.environ.get("BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS"),
         default=0.0,
     )
-    with mdc.JobLock(shared_lock_name, wait_timeout_seconds=shared_wait_timeout):
-        with mdc.JobLock(job_name):
+    with mdc.JobLock(shared_lock_name, conflict_policy="wait_then_fail", wait_timeout_seconds=shared_wait_timeout):
+        with mdc.JobLock(job_name, conflict_policy="fail"):
             ensure_api_awake_from_env(required=True)
             raise SystemExit(
                 run_logged_job(

@@ -106,6 +106,7 @@ $Config += "SYMBOLS_REFRESH_INTERVAL_HOURS=" + (Prompt-Var "SYMBOLS_REFRESH_INTE
 $Config += "FEATURE_ENGINEERING_MAX_WORKERS=" + (Prompt-Var "FEATURE_ENGINEERING_MAX_WORKERS" "" "Optional: max workers for feature engineering fan-out.")
 $Config += "DOMAIN_METADATA_MAX_SCANNED_BLOBS=" + (Prompt-Var "DOMAIN_METADATA_MAX_SCANNED_BLOBS" "200000" "Optional: upper bound for domain metadata scans (monitoring).")
 $Config += "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE=" + (Prompt-Var "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE" "" "Optional: set true to require Azure storage config at startup.")
+$Config += "ALPHA_VANTAGE_BASE_URL=" + (Prompt-Var "ALPHA_VANTAGE_BASE_URL" "https://www.alphavantage.co" "Optional: local override for the upstream Alpha Vantage API base URL.")
 
 # -------------------------------------------------------------------------
 # Azure Identity (GitHub deploy + optional local auth)
@@ -114,9 +115,10 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# Azure Identity (GitHub deploy + optional local auth)"
 $Config += "# =========================================="
-$Config += "AZURE_CLIENT_ID=" + (Prompt-Var "AZURE_CLIENT_ID" "" "GitHub Actions OIDC client/app ID (required for deploy)." -Secret)
-$Config += "AZURE_TENANT_ID=" + (Prompt-Var "AZURE_TENANT_ID" "" "Azure tenant ID (required for deploy)." -Secret)
-$Config += "AZURE_SUBSCRIPTION_ID=" + (Prompt-Var "AZURE_SUBSCRIPTION_ID" "" "Azure subscription ID (required for deploy)." -Secret)
+$Config += "AZURE_CLIENT_ID=" + (Prompt-Var "AZURE_CLIENT_ID" "" "GitHub Actions OIDC client/app ID (required for deploy).")
+$Config += "AZURE_TENANT_ID=" + (Prompt-Var "AZURE_TENANT_ID" "" "Azure tenant ID (required for deploy).")
+$Config += "AZURE_SUBSCRIPTION_ID=" + (Prompt-Var "AZURE_SUBSCRIPTION_ID" "" "Azure subscription ID (required for deploy).")
+$Config += "ENTRA_OPERATOR_USER_OBJECT_ID=" + (Prompt-Var "ENTRA_OPERATOR_USER_OBJECT_ID" "" "Provisioning only: Entra user object ID to assign the AssetAllocation.Access app role.")
 $Config += "AZURE_CLIENT_SECRET=" + (Prompt-Var "AZURE_CLIENT_SECRET" "" "Optional: Service Principal client secret (not required for GitHub OIDC)." -Secret)
 
 # -------------------------------------------------------------------------
@@ -126,7 +128,7 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# Azure Storage (required for pipelines)"
 $Config += "# =========================================="
-$Config += "AZURE_STORAGE_ACCOUNT_NAME=" + (Prompt-Var "AZURE_STORAGE_ACCOUNT_NAME" "" "Storage account name (also used by CI)." -Secret)
+$Config += "AZURE_STORAGE_ACCOUNT_NAME=" + (Prompt-Var "AZURE_STORAGE_ACCOUNT_NAME" "" "Storage account name (also used by CI).")
 $Config += "AZURE_STORAGE_CONNECTION_STRING=" + (Prompt-Var "AZURE_STORAGE_CONNECTION_STRING" "" "Storage connection string (recommended for local dev; required by CI)." -Secret)
 $Config += "AZURE_STORAGE_ACCOUNT_KEY=" + (Prompt-Var "AZURE_STORAGE_ACCOUNT_KEY" "" "Optional: storage account key (alternative to connection string)." -Secret)
 $Config += "AZURE_STORAGE_ACCESS_KEY=" + (Prompt-Var "AZURE_STORAGE_ACCESS_KEY" "" "Optional: storage access key (alias of account key)." -Secret)
@@ -174,12 +176,8 @@ $Config += "# ETL -> API Gateway (Alpha Vantage via API)"
 $Config += "# =========================================="
 $Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" $DefaultAssetAllocationApiBaseUrl "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
 $Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
-$Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
-$Config += "ASSET_ALLOCATION_API_KEY_HEADER=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY_HEADER" "X-API-Key" "Header name for API gateway keys.")
+$Config += "ASSET_ALLOCATION_API_SCOPE=" + (Prompt-Var "ASSET_ALLOCATION_API_SCOPE" "" "Managed-identity scope for ETL -> API calls (for example api://<api-app-client-id>/.default). Required for production bronze jobs.")
 $Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATION_API_TIMEOUT_SECONDS" "120" "HTTP timeout for ETL -> API requests (seconds).")
-$Config += "ASSET_ALLOCATION_API_ALLOW_NO_AUTH=" + (Prompt-Var "ASSET_ALLOCATION_API_ALLOW_NO_AUTH" "false" "Optional (local only): allow ETL calls without ASSET_ALLOCATION_API_KEY (true/false).")
-$Config += "JOB_STARTUP_API_WAKE_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_WAKE_ENABLED" "true" "Optional: attempt ARM start for API container app when startup health probe fails.")
-$Config += "JOB_STARTUP_API_ARM_START_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_ARM_START_ENABLED" "true" "Optional: enable/disable ARM start calls during startup preflight.")
 $Config += "JOB_STARTUP_API_CONTAINER_APPS=" + (Prompt-Var "JOB_STARTUP_API_CONTAINER_APPS" $DefaultJobStartupApiContainerApps "Optional: comma-separated container apps to start; defaults to API_CONTAINER_APP_NAME/base-url host.")
 $Config += "JOB_STARTUP_API_HEALTH_PATH=" + (Prompt-Var "JOB_STARTUP_API_HEALTH_PATH" "/healthz" "Optional: health endpoint path used by startup preflight.")
 $Config += "JOB_STARTUP_API_PROBE_ATTEMPTS=" + (Prompt-Var "JOB_STARTUP_API_PROBE_ATTEMPTS" "6" "Optional: startup health probe attempts.")
@@ -204,29 +202,23 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# API Service"
 $Config += "# =========================================="
-$Config += "API_AUTH_MODE=" + (Prompt-Var "API_AUTH_MODE" "none" "Options: none | api_key | oidc | api_key_or_oidc")
-$Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "API key (required if API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
-$Config += "API_KEY_HEADER=" + (Prompt-Var "API_KEY_HEADER" "X-API-Key" "Header name for API keys.")
 $Config += "API_ROOT_PREFIX=" + (Prompt-Var "API_ROOT_PREFIX" "" "Optional: mount API under /{API_ROOT_PREFIX}/api/* (e.g. asset-allocation).")
-$Config += "API_INGRESS_EXTERNAL=" + (Prompt-Var "API_INGRESS_EXTERNAL" "true" "Deploy only: true for external ingress, false for internal only.")
 $Config += "API_PORT=" + (Prompt-Var "API_PORT" "9000" "Local API port (used by core/config.py).")
 $Config += "API_CSP=" + (Prompt-Var "API_CSP" "" "Optional: Content-Security-Policy header value.")
 $Config += "API_CORS_ALLOW_ORIGINS=" + (Prompt-Var "API_CORS_ALLOW_ORIGINS" "" "Optional: comma-separated or JSON list of allowed origins.")
 
 # OIDC (optional)
-$Config += "API_OIDC_ISSUER=" + (Prompt-Var "API_OIDC_ISSUER" "" "Optional: OIDC issuer URL (required for API_AUTH_MODE=oidc).")
-$Config += "API_OIDC_AUDIENCE=" + (Prompt-Var "API_OIDC_AUDIENCE" "" "Optional: comma-separated audiences (required for API_AUTH_MODE=oidc).")
+$Config += "API_OIDC_ISSUER=" + (Prompt-Var "API_OIDC_ISSUER" "" "Optional: OIDC issuer URL (required together with API_OIDC_AUDIENCE).")
+$Config += "API_OIDC_AUDIENCE=" + (Prompt-Var "API_OIDC_AUDIENCE" "" "Optional: comma-separated audiences (required together with API_OIDC_ISSUER).")
 $Config += "API_OIDC_JWKS_URL=" + (Prompt-Var "API_OIDC_JWKS_URL" "" "Optional: JWKS URL (if not discoverable).")
-$Config += "API_OIDC_REQUIRED_SCOPES=" + (Prompt-Var "API_OIDC_REQUIRED_SCOPES" "" "Optional: comma-separated required scopes.")
-$Config += "API_OIDC_REQUIRED_ROLES=" + (Prompt-Var "API_OIDC_REQUIRED_ROLES" "" "Optional: comma-separated required roles.")
+$Config += "API_OIDC_REQUIRED_SCOPES=" + (Prompt-Var "API_OIDC_REQUIRED_SCOPES" "" "Optional: comma-separated required scopes. Leave blank for role-based production auth.")
+$Config += "API_OIDC_REQUIRED_ROLES=" + (Prompt-Var "API_OIDC_REQUIRED_ROLES" "" "Optional: comma-separated required roles (for example AssetAllocation.Access).")
 
-# UI auth config served by API (optional)
-$Config += "UI_AUTH_MODE=" + (Prompt-Var "UI_AUTH_MODE" "" "Optional: UI auth mode (none|api_key|oidc).")
+# UI auth config served by API (optional locally, required for browser OIDC)
 $Config += "UI_OIDC_CLIENT_ID=" + (Prompt-Var "UI_OIDC_CLIENT_ID" "" "Optional: UI OIDC client ID.")
 $Config += "UI_OIDC_AUTHORITY=" + (Prompt-Var "UI_OIDC_AUTHORITY" "" "Optional: UI OIDC authority (defaults to API_OIDC_ISSUER).")
-$Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OIDC scopes.")
-$Config += "UI_OIDC_REDIRECT_URI=" + (Prompt-Var "UI_OIDC_REDIRECT_URI" "" "Optional: UI redirect URI.")
-$Config += "UI_API_BASE_URL=" + (Prompt-Var "UI_API_BASE_URL" "/api" "Base URL where the UI reaches this API (recommended: /api).")
+$Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OIDC scopes (for example api://<api-app-client-id>/user_impersonation openid profile offline_access).")
+$Config += "UI_OIDC_REDIRECT_URI=" + (Prompt-Var "UI_OIDC_REDIRECT_URI" "" "Required absolute callback URI when browser OIDC is enabled.")
 $Config += "UI_DIST_DIR=" + (Prompt-Var "UI_DIST_DIR" "" "Optional: local path to UI dist for serving static UI.")
 
 # -------------------------------------------------------------------------
@@ -239,7 +231,8 @@ $Config += "# =========================================="
 $Config += "SYSTEM_HEALTH_TTL_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_TTL_SECONDS" "10" "Cache TTL for /api/system/health.")
 $Config += "SYSTEM_HEALTH_MAX_AGE_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_MAX_AGE_SECONDS" "129600" "Max staleness before reporting stale.")
 $Config += "SYSTEM_HEALTH_VERBOSE_IDS=" + (Prompt-Var "SYSTEM_HEALTH_VERBOSE_IDS" "" "Optional: include Azure resource IDs in response.")
-$Config += "SYSTEM_HEALTH_LINK_TOKEN_SECRET=" + (Prompt-Var "SYSTEM_HEALTH_LINK_TOKEN_SECRET" "" "Secret used to sign system health links." -Secret)
+$Config += "SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON=" + (Prompt-Var "SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON" "" "Optional: JSON object mapping logical names to extra health probe URLs.")
+$Config += "SYSTEM_HEALTH_CONTAINERAPP_PING_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_CONTAINERAPP_PING_TIMEOUT_SECONDS" "5" "Optional: timeout in seconds for extra container-app health probes.")
 
 # Optional: Azure control-plane probes (ARM) for Container Apps + Jobs
 $Config += "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID=" + (Prompt-Var "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID" "" "Optional: ARM subscription ID for probes / job start allowlist.")
@@ -253,11 +246,9 @@ $Config += "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_ARM
 $Config += "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB=" + (Prompt-Var "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB" "3" "Optional: how many executions to return per job.")
 
 # Optional: Azure Resource Health (runtime availability)
-$Config += "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED" "false" "Optional: enable Azure Resource Health probes (true/false).")
 $Config += "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION" "" "Optional: Resource Health API version.")
 
 # Optional: Azure Monitor Metrics (runtime telemetry)
-$Config += "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED" "false" "Optional: enable metrics probes (true/false).")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION" "" "Optional: Metrics API version.")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES" "" "Optional: timespan minutes (e.g., 15).")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL" "" "Optional: interval (e.g., PT1M).")
@@ -267,7 +258,6 @@ $Config += "SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS=" + (Prompt-Var "SYSTEM_HE
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON" "" "Optional: JSON thresholds object.")
 
 # Optional: Azure Log Analytics (KQL aggregates + job execution log tails)
-$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED" "false" "Optional: enable Log Analytics probes (true/false).")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID" "" "Optional: Log Analytics workspace ID.")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS" "5" "Optional: Log Analytics timeout seconds.")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES" "15" "Optional: timespan minutes (e.g., 15).")
@@ -282,14 +272,8 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# Pipeline Controls"
 $Config += "# =========================================="
-$Config += "SILVER_LATEST_ONLY=" + (Prompt-Var "SILVER_LATEST_ONLY" "" "Optional: default latest-only flag for silver pipelines.")
-$Config += "SILVER_MARKET_LATEST_ONLY=" + (Prompt-Var "SILVER_MARKET_LATEST_ONLY" "" "Optional: override latest-only for market.")
-$Config += "SILVER_FINANCE_LATEST_ONLY=" + (Prompt-Var "SILVER_FINANCE_LATEST_ONLY" "" "Optional: override latest-only for finance.")
-$Config += "SILVER_EARNINGS_LATEST_ONLY=" + (Prompt-Var "SILVER_EARNINGS_LATEST_ONLY" "" "Optional: override latest-only for earnings.")
-$Config += "SILVER_PRICE_TARGET_LATEST_ONLY=" + (Prompt-Var "SILVER_PRICE_TARGET_LATEST_ONLY" "" "Optional: override latest-only for price targets.")
 $Config += "BACKFILL_START_DATE=" + (Prompt-Var "BACKFILL_START_DATE" "2016-01-01" "Global minimum date retained by reconciliation sweeps (YYYY-MM-DD).")
 $Config += "TRIGGER_NEXT_JOB_NAME=" + (Prompt-Var "TRIGGER_NEXT_JOB_NAME" "" "Optional: if set, trigger next job when current finishes.")
-$Config += "TRIGGER_NEXT_JOB_REQUIRED=" + (Prompt-Var "TRIGGER_NEXT_JOB_REQUIRED" "" "Optional: whether triggering the next job is required (true/false).")
 $Config += "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS=" + (Prompt-Var "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS" "" "Optional: retries when triggering next job (default 3).")
 $Config += "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS=" + (Prompt-Var "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS" "" "Optional: base backoff seconds (default 1.0).")
 
@@ -298,14 +282,15 @@ $Config += "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS=" + (Prompt-Var "TRIGGER_NEXT_JO
 # -------------------------------------------------------------------------
 $Config += ""
 $Config += "# =========================================="
-$Config += "# UI / CI Variables (GitHub Variables)"
+$Config += "# Local UI Build Fallbacks"
 $Config += "# =========================================="
-$Config += "VITE_PORT=" + (Prompt-Var "VITE_PORT" "5174" "Vite dev server port (required by CI UI build).")
+$Config += "VITE_PORT=" + (Prompt-Var "VITE_PORT" "5174" "Vite dev server port.")
 $Config += "VITE_PROXY_CONFIG_JS=" + (Prompt-Var "VITE_PROXY_CONFIG_JS" "false" "UI dev only: when true, proxy /config.js to the API.")
 $Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget "UI dev only: Vite proxy target for /api (do not include /api).")
-$Config += "SERVICE_ACCOUNT_NAME=" + (Prompt-Var "SERVICE_ACCOUNT_NAME" "asset-allocation-sa" "Service account name (used by deploy manifests).")
-$Config += "KUBERNETES_NAMESPACE=" + (Prompt-Var "KUBERNETES_NAMESPACE" "" "Optional: Kubernetes namespace (used by provision_azure.ps1 when AKS is enabled).")
-$Config += "AKS_CLUSTER_NAME=" + (Prompt-Var "AKS_CLUSTER_NAME" "" "Optional: AKS cluster name (used by provision_azure.ps1 when AKS is enabled).")
+$Config += "VITE_API_BASE_URL=" + (Prompt-Var "VITE_API_BASE_URL" "/api" "UI build-time fallback for the API base URL.")
+$Config += "VITE_OIDC_AUTHORITY=" + (Prompt-Var "VITE_OIDC_AUTHORITY" "" "UI build-time fallback OIDC authority.")
+$Config += "VITE_OIDC_CLIENT_ID=" + (Prompt-Var "VITE_OIDC_CLIENT_ID" "" "UI build-time fallback OIDC client ID.")
+$Config += "VITE_OIDC_SCOPES=" + (Prompt-Var "VITE_OIDC_SCOPES" "" "UI build-time fallback OIDC scopes.")
 
 if ($DryRun) {
     Write-Host "`n[DRY RUN] Would write the following to ${EnvFilePath}:" -ForegroundColor Yellow

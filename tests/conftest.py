@@ -16,19 +16,19 @@ os.environ["TEST_MODE"] = "true"
 # Keep tests hermetic even when local shell has production-like env values.
 os.environ.pop("POSTGRES_DSN", None)
 os.environ.pop("BACKFILL_START_DATE", None)
-os.environ["BACKGROUND_WORKERS_ENABLED"] = "false"
+os.environ.pop("CONTAINER_APP_ENV_DNS_SUFFIX", None)
+os.environ.pop("CONTAINER_APP_JOB_EXECUTION_NAME", None)
+os.environ.pop("CONTAINER_APP_REPLICA_NAME", None)
+os.environ.pop("KUBERNETES_SERVICE_HOST", None)
 os.environ.setdefault("SYSTEM_HEALTH_TTL_SECONDS", "10")
 os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")
 os.environ.setdefault("SYSTEM_HEALTH_ARM_API_VERSION", "2023-05-01")
 os.environ.setdefault("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "5.0")
-os.environ["SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION", "2022-10-01")
-os.environ["SYSTEM_HEALTH_MONITOR_METRICS_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION", "2018-01-01")
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", "15")
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL", "PT1M")
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION", "Average")
-os.environ["SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", "5.0")
 os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", "15")
 os.environ.setdefault("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", "3")
@@ -36,7 +36,6 @@ os.environ.setdefault("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", "3")
 os.environ.setdefault("BACKTEST_OUTPUT_DIR", "/tmp/backtest_results")
 os.environ.setdefault("BACKTEST_DB_PATH", "/tmp/backtest_results/runs.sqlite3")
 os.environ.setdefault("BACKTEST_MAX_CONCURRENT", "1")
-os.environ.setdefault("BACKTEST_API_KEY_HEADER", "X-API-Key")
 os.environ.setdefault("BACKTEST_ALLOW_LOCAL_DATA", "false")
 os.environ.setdefault(
     "BACKTEST_ADLS_CONTAINER_ALLOWLIST",

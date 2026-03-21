@@ -87,10 +87,11 @@ export function CandlestickChart({ data, height = 300 }: CandlestickChartProps) 
             if (active && payload && payload.length) {
               const d = payload[0].payload as PricePoint;
               const isUp = d.close > d.open;
+              const labelValue = label ?? d.date;
               return (
                 <div className="bg-white/95 border border-slate-200 p-3 rounded-lg shadow-xl text-xs font-mono backdrop-blur-sm ring-1 ring-slate-200">
                   <div className="font-bold mb-2 text-slate-700 border-b border-slate-100 pb-1">
-                    {new Date(label).toLocaleDateString(undefined, {
+                    {new Date(labelValue).toLocaleDateString(undefined, {
                       weekday: 'short',
                       year: 'numeric',
                       month: 'short',
