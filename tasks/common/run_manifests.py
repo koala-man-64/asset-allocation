@@ -99,6 +99,51 @@ def _normalize_bucket_paths(items: Iterable[Any]) -> List[Dict[str, Any]]:
     return normalized
 
 
+def _finance_manifest_payload(
+    *,
+    producer_job_name: str,
+    listed_blobs: Iterable[Any],
+    metadata: Optional[Dict[str, Any]],
+    run_id: Optional[str] = None,
+) -> tuple[Dict[str, Any], Dict[str, Any], str, str]:
+    normalized_blobs = _normalize_bucket_paths(listed_blobs)
+    manifest_run_id = str(run_id or _run_id("bronze-finance")).strip()
+    produced_at = datetime.now(timezone.utc)
+    manifest_root = _manifest_root_for_domain("finance")
+    manifest_path = f"{manifest_root}/{manifest_run_id}.json"
+    latest_path = f"{manifest_root}/latest.json"
+    manifest = {
+        "version": _MANIFEST_VERSION,
+        "manifestType": "bronze-finance",
+        "domain": "finance",
+        "runId": manifest_run_id,
+        "producerJobName": str(producer_job_name or "").strip(),
+        "producedAt": _iso(produced_at),
+        "blobPrefix": "finance-data/",
+        "blobCount": len(normalized_blobs),
+        "blobs": normalized_blobs,
+        # Keep the alpha26 aliases so newer consumers can read a consistent shape.
+        "dataPrefix": "finance-data",
+        "bucketCount": len(normalized_blobs),
+        "bucketPaths": normalized_blobs,
+        "indexPath": None,
+        "metadata": dict(metadata or {}),
+    }
+    latest_payload = {
+        "version": _MANIFEST_VERSION,
+        "manifestType": "bronze-finance-latest",
+        "domain": "finance",
+        "runId": manifest_run_id,
+        "manifestPath": manifest_path,
+        "updatedAt": _iso(produced_at),
+        "blobCount": len(normalized_blobs),
+        "dataPrefix": manifest["dataPrefix"],
+        "bucketCount": len(normalized_blobs),
+        "indexPath": None,
+    }
+    return manifest, latest_payload, manifest_path, latest_path
+
+
 def create_bronze_alpha26_manifest(
     *,
     domain: str,
@@ -216,18 +261,43 @@ def create_bronze_finance_manifest(
     listed_blobs: List[Dict[str, Any]],
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    return create_bronze_alpha26_manifest(
-        domain="finance",
+    if not _require_common_storage("bronze finance manifest write"):
+        return None
+
+    manifest, latest_payload, manifest_path, latest_path = _finance_manifest_payload(
         producer_job_name=producer_job_name,
-        data_prefix="finance-data",
-        bucket_paths=listed_blobs,
-        index_path=None,
+        listed_blobs=listed_blobs,
         metadata=metadata,
     )
+    try:
+        mdc.save_common_json_content(manifest, manifest_path)
+        mdc.save_common_json_content(latest_payload, latest_path)
+    except Exception as exc:
+        mdc.write_warning(f"Failed to persist bronze finance manifest: {exc}")
+        return None
+    return {
+        "runId": manifest["runId"],
+        "manifestPath": manifest_path,
+        "blobCount": manifest["blobCount"],
+        "dataPrefix": manifest["dataPrefix"],
+    }
 
 
 def load_latest_bronze_finance_manifest() -> Optional[Dict[str, Any]]:
-    return load_latest_bronze_alpha26_manifest("finance")
+    manifest = load_latest_bronze_alpha26_manifest("finance")
+    if not isinstance(manifest, dict):
+        return None
+
+    out = dict(manifest)
+    normalized_blobs = manifest_blobs(out)
+    if normalized_blobs:
+        out.setdefault("blobs", [dict(item) for item in normalized_blobs])
+        out.setdefault("bucketPaths", [dict(item) for item in normalized_blobs])
+        out.setdefault("blobCount", len(normalized_blobs))
+        out.setdefault("bucketCount", len(normalized_blobs))
+    out.setdefault("blobPrefix", "finance-data/")
+    out.setdefault("dataPrefix", "finance-data")
+    return out
 
 
 def silver_finance_ack_exists(run_id: str) -> bool:

@@ -139,6 +139,40 @@ def test_process_blob_applies_price_target_precision_policy(monkeypatch):
     assert row["tp_cnt_est"] == pytest.approx(10.125)
 
 
+def test_process_blob_persists_watermark_signature_on_success(monkeypatch):
+    blob_name = "price-target-data/AAPL.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": "2026-03-04T01:00:00Z",
+    }
+    source = pd.DataFrame(
+        {
+            "obs_date": [pd.Timestamp("2026-03-04")],
+            "tp_mean_est": [100.0],
+            "tp_std_dev_est": [1.0],
+            "tp_high_est": [110.0],
+            "tp_low_est": [90.0],
+            "tp_cnt_est": [10.0],
+            "tp_cnt_est_rev_up": [2.0],
+            "tp_cnt_est_rev_down": [1.0],
+        }
+    )
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: source.copy())
+    monkeypatch.setattr(silver.delta_core, "load_delta", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver.delta_core, "store_delta", lambda *_args, **_kwargs: None)
+
+    status = silver.process_blob(blob, watermarks=watermarks)
+
+    assert status == "ok"
+    assert watermarks[blob_name]["etag"] == "etag-a"
+    assert watermarks[blob_name]["last_modified"] == "2026-03-04T01:00:00+00:00"
+    assert "updated_at" in watermarks[blob_name]
+
+
 def test_write_alpha26_price_target_buckets_skips_empty_bucket_without_existing_schema(monkeypatch):
     target_path = DataPaths.get_silver_price_target_bucket_path("A")
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
