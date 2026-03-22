@@ -226,6 +226,47 @@ describe('JobLogStreamPanel', () => {
     expect(screen.queryByText('SUCCESS')).not.toBeInTheDocument();
   });
 
+  it('anchors the console tail to an older active execution when one is still running', async () => {
+    const subscribeTopics: string[][] = [];
+    const captureSubscribe = (event: Event) => {
+      subscribeTopics.push(
+        ((event as CustomEvent<{ topics: string[] }>).detail?.topics || []).slice()
+      );
+    };
+    window.addEventListener(REALTIME_SUBSCRIBE_EVENT, captureSubscribe);
+
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 2,
+      runsReturned: 2,
+      tailLines: 10,
+      runs: [
+        {
+          executionName: 'beta-exec-002',
+          status: 'Succeeded',
+          startTime: '2026-03-11T12:00:00Z',
+          tail: ['latest finished snapshot']
+        },
+        {
+          executionName: 'beta-exec-001',
+          status: 'Running',
+          startTime: '2026-03-10T12:00:00Z',
+          tail: ['older active snapshot']
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[JOBS[1]]} />);
+
+    expect(await screen.findByText('older active snapshot')).toBeInTheDocument();
+    expect(screen.queryByText('latest finished snapshot')).not.toBeInTheDocument();
+    expect(subscribeTopics).toEqual(
+      expect.arrayContaining([['job-logs:beta-job/executions/beta-exec-001']])
+    );
+
+    window.removeEventListener(REALTIME_SUBSCRIBE_EVENT, captureSubscribe);
+  });
+
   it('shows cpu and memory usage when resource signals are available', async () => {
     const job: JobLogStreamTarget = {
       ...JOBS[1],

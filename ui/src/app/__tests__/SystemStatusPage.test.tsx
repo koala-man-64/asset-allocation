@@ -168,7 +168,7 @@ function buildSystemStatusView(
         {
           jobName: 'aca-job-market',
           jobType: 'data-ingest',
-          status: 'failed',
+          status: 'running',
           startTime: MOCK_RUN_TIMESTAMPS.older,
           triggeredBy: 'azure'
         },
@@ -313,7 +313,7 @@ describe('SystemStatusPage', () => {
     expect(coverageOrder).toEqual(['alpha', 'market', 'zeta']);
   });
 
-  it('passes the latest job run status and start time to the job console stream panel', async () => {
+  it('passes the anchored active job run status and start time to the job console stream panel', async () => {
     renderWithProviders(<SystemStatusPage />);
 
     await waitFor(() => {
@@ -334,8 +334,8 @@ describe('SystemStatusPage', () => {
         expect.objectContaining({
           name: 'aca-job-market',
           runningState: 'Running',
-          recentStatus: 'success',
-          startTime: MOCK_RUN_TIMESTAMPS.latest,
+          recentStatus: 'running',
+          startTime: MOCK_RUN_TIMESTAMPS.older,
           signals: expect.arrayContaining([
             expect.objectContaining({
               name: 'CpuUsage',

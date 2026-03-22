@@ -23,6 +23,10 @@ interface StatusConfig {
 }
 
 export type NormalizedJobStatus = 'success' | 'warning' | 'failed' | 'running' | 'pending';
+type AnchoredJobRunLike = {
+  status?: string | null;
+  startTime?: string | null;
+};
 
 const ACTIVE_JOB_RUNNING_STATE_TOKENS = [
   'running',
@@ -363,7 +367,34 @@ export const resolveManagedJobName = ({
   return deriveManagedJobName(layerName, domainName);
 };
 
-export const buildLatestJobRunIndex = (recentJobs: JobRun[] = []): Map<string, JobRun> => {
+export const selectAnchoredJobRun = <T extends AnchoredJobRunLike>(runs: T[] = []): T | null => {
+  let selected: T | null = null;
+
+  for (const run of runs) {
+    if (!selected) {
+      selected = run;
+      continue;
+    }
+
+    const candidateIsActive = normalizeJobStatus(run?.status) === 'running';
+    const selectedIsActive = normalizeJobStatus(selected?.status) === 'running';
+
+    if (candidateIsActive !== selectedIsActive) {
+      if (candidateIsActive) {
+        selected = run;
+      }
+      continue;
+    }
+
+    if (runStartEpoch(run.startTime) > runStartEpoch(selected.startTime)) {
+      selected = run;
+    }
+  }
+
+  return selected;
+};
+
+export const buildAnchoredJobRunIndex = (recentJobs: JobRun[] = []): Map<string, JobRun> => {
   const index = new Map<string, JobRun>();
 
   for (const job of recentJobs) {
@@ -371,12 +402,18 @@ export const buildLatestJobRunIndex = (recentJobs: JobRun[] = []): Map<string, J
     if (!key) continue;
 
     const existing = index.get(key);
-    if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
-      index.set(key, job);
+    const selected = selectAnchoredJobRun(existing ? [existing, job] : [job]);
+    if (selected) {
+      index.set(key, selected);
     }
   }
 
   return index;
+};
+
+// Backward-compatible alias for older imports. The selection is active-aware now.
+export const buildLatestJobRunIndex = (recentJobs: JobRun[] = []): Map<string, JobRun> => {
+  return buildAnchoredJobRunIndex(recentJobs);
 };
 
 export const normalizeJobStatus = (value?: string | null): NormalizedJobStatus => {

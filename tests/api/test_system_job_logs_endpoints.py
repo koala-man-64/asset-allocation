@@ -80,6 +80,94 @@ class _FakeJobLogAnalyticsClient:
         }
 
 
+class _AnchoredJobArmClient:
+    def __init__(self, _cfg) -> None:
+        return None
+
+    def __enter__(self) -> "_AnchoredJobArmClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+        return f"/subscriptions/sub/resourceGroups/rg/providers/{provider}/{resource_type}/{name}"
+
+    def get_json(self, url: str):
+        if url.endswith("/jobs/bronze-market-job/executions"):
+            return {
+                "value": [
+                    {
+                        "name": "bronze-market-job-exec-003",
+                        "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/bronze-market-job/executions/bronze-market-job-exec-003",
+                        "properties": {
+                            "status": "Succeeded",
+                            "startTime": "2026-02-12T00:00:00Z",
+                            "endTime": "2026-02-12T00:01:00Z",
+                        },
+                    },
+                    {
+                        "name": "bronze-market-job-exec-002",
+                        "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/bronze-market-job/executions/bronze-market-job-exec-002",
+                        "properties": {
+                            "status": "Succeeded",
+                            "startTime": "2026-02-11T00:00:00Z",
+                            "endTime": "2026-02-11T00:01:00Z",
+                        },
+                    },
+                    {
+                        "name": "bronze-market-job-exec-001",
+                        "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/bronze-market-job/executions/bronze-market-job-exec-001",
+                        "properties": {
+                            "status": "Running",
+                            "startTime": "2026-02-10T00:00:00Z",
+                        },
+                    },
+                ]
+            }
+        raise ValueError(f"Unexpected ARM URL: {url}")
+
+
+class _AnchoredJobLogAnalyticsClient:
+    def __init__(self, *, timeout_seconds: float = 5.0) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.queries: list[tuple[str, str, str | None]] = []
+
+    def __enter__(self) -> "_AnchoredJobLogAnalyticsClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def query(self, *, workspace_id: str, query: str, timespan: str | None = None):
+        self.queries.append((workspace_id, query, timespan))
+        execution_name = (
+            "bronze-market-job-exec-001"
+            if "bronze-market-job-exec-001" in query
+            else "bronze-market-job-exec-003"
+        )
+        return {
+            "tables": [
+                {
+                    "columns": [
+                        {"name": "TimeGenerated", "type": "datetime"},
+                        {"name": "executionName", "type": "string"},
+                        {"name": "stream_s", "type": "string"},
+                        {"name": "msg", "type": "string"},
+                    ],
+                    "rows": [
+                        [
+                            "2026-02-10T00:00:01Z",
+                            execution_name,
+                            "stdout",
+                            f"logs for {execution_name}",
+                        ]
+                    ],
+                }
+            ]
+        }
+
+
 def _set_job_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
@@ -130,3 +218,25 @@ async def test_get_job_logs_returns_console_log_metadata(monkeypatch: pytest.Mon
     assert workspace_id == "workspace-id"
     assert "stream_s" in query
     assert timespan is not None
+
+
+@pytest.mark.asyncio
+async def test_get_job_logs_anchors_to_an_older_active_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_job_env(monkeypatch)
+
+    fake_logs = _AnchoredJobLogAnalyticsClient()
+    with patch("api.endpoints.system.AzureArmClient", _AnchoredJobArmClient), patch(
+        "api.endpoints.system.AzureLogAnalyticsClient", return_value=fake_logs
+    ):
+        app = create_app()
+        async with get_test_client(app) as client:
+            resp = await client.get("/api/system/jobs/bronze-market-job/logs?runs=1")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["runsReturned"] == 1
+    assert payload["runs"][0]["executionName"] == "bronze-market-job-exec-001"
+    assert payload["runs"][0]["status"] == "Running"
+    assert payload["runs"][0]["tail"] == ["logs for bronze-market-job-exec-001"]
+    assert len(fake_logs.queries) == 1
+    assert "bronze-market-job-exec-001" in fake_logs.queries[0][1]

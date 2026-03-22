@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow
 } from '@/app/components/ui/table';
-import type { JobLogsResponse } from '@/services/apiService';
+import type { JobLogRunResponse, JobLogsResponse } from '@/services/apiService';
 import { DataService } from '@/services/DataService';
 import {
   addConsoleLogStreamListener,
@@ -40,7 +40,8 @@ import {
   getAzureJobExecutionsUrl,
   getStatusBadge,
   getStatusIcon,
-  normalizeAzurePortalUrl
+  normalizeAzurePortalUrl,
+  selectAnchoredJobRun
 } from './SystemStatusHelpers';
 import { getLogStreamFeedback } from './logStreamFeedback';
 import { formatSystemStatusText } from './systemStatusText';
@@ -238,46 +239,52 @@ function mergeLogLines(
   return next.slice(-limit);
 }
 
-function extractJobLogLines(response: JobLogsResponse): ConsoleTailLine[] {
-  const combined = (response?.runs ?? []).flatMap((run) => {
-    if (Array.isArray(run?.consoleLogs) && run.consoleLogs.length > 0) {
-      return run.consoleLogs
-        .map((line) => normalizeLogLine(line))
-        .filter((line): line is ConsoleTailLine => line !== null);
-    }
-
-    return (run?.tail ?? [])
-      .map((line) =>
-        normalizeLogLine({
-          message: String(line || ''),
-          executionName: run?.executionName,
-          timestamp: run?.startTime ?? null
-        })
-      )
-      .filter((line): line is ConsoleTailLine => line !== null);
-  });
-
-  return combined.slice(-LOG_LINE_LIMIT);
+function extractAnchoredJobLogRun(response: JobLogsResponse): JobLogRunResponse | null {
+  return selectAnchoredJobRun(response?.runs ?? []);
 }
 
-function extractLatestExecutionName(response: JobLogsResponse): string | null {
-  const runs = Array.isArray(response?.runs) ? response.runs : [];
-  for (const run of runs) {
-    const executionName = typeof run?.executionName === 'string' ? run.executionName.trim() : '';
-    if (executionName) {
-      return executionName;
-    }
+function extractJobLogLines(response: JobLogsResponse): ConsoleTailLine[] {
+  const run = extractAnchoredJobLogRun(response);
+  if (!run) {
+    return [];
+  }
 
-    if (Array.isArray(run?.consoleLogs)) {
-      for (const entry of run.consoleLogs) {
-        const lineExecutionName =
-          typeof entry?.executionName === 'string' ? entry.executionName.trim() : '';
-        if (lineExecutionName) {
-          return lineExecutionName;
-        }
+  if (Array.isArray(run.consoleLogs) && run.consoleLogs.length > 0) {
+    return run.consoleLogs
+      .map((line) => normalizeLogLine(line))
+      .filter((line): line is ConsoleTailLine => line !== null)
+      .slice(-LOG_LINE_LIMIT);
+  }
+
+  return (run.tail ?? [])
+    .map((line) =>
+      normalizeLogLine({
+        message: String(line || ''),
+        executionName: run.executionName,
+        timestamp: run.startTime ?? null
+      })
+    )
+    .filter((line): line is ConsoleTailLine => line !== null)
+    .slice(-LOG_LINE_LIMIT);
+}
+
+function extractAnchoredExecutionName(response: JobLogsResponse): string | null {
+  const run = extractAnchoredJobLogRun(response);
+  const executionName = typeof run?.executionName === 'string' ? run.executionName.trim() : '';
+  if (executionName) {
+    return executionName;
+  }
+
+  if (Array.isArray(run?.consoleLogs)) {
+    for (const entry of run.consoleLogs) {
+      const lineExecutionName =
+        typeof entry?.executionName === 'string' ? entry.executionName.trim() : '';
+      if (lineExecutionName) {
+        return lineExecutionName;
       }
     }
   }
+
   return null;
 }
 
@@ -372,7 +379,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     setLogState({ lines: [], loading: true, error: null });
     DataService.getJobLogs(selectedJobName, { runs: 1 }, controller.signal)
       .then((response) => {
-        setSelectedExecutionName(extractLatestExecutionName(response));
+        setSelectedExecutionName(extractAnchoredExecutionName(response));
         setLogState({
           lines: extractJobLogLines(response),
           loading: false,
@@ -535,7 +542,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
             </div>
             <div className="rounded-md border bg-muted/20 p-3">
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                Last Start
+                Run Start
               </div>
               <div className="mt-2 text-sm">
                 {selectedJob?.startTime ? `${formatTimeAgo(selectedJob.startTime)} ago` : '-'}

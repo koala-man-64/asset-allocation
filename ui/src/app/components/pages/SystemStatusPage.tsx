@@ -28,7 +28,7 @@ const JobLogStreamPanel = lazy(() =>
 );
 
 import {
-  buildLatestJobRunIndex,
+  buildAnchoredJobRunIndex,
   normalizeAzureJobName,
   resolveManagedJobName
 } from './system-status/SystemStatusHelpers';
@@ -103,8 +103,8 @@ export function SystemStatusPage() {
     return items;
   }, [jobResourcesByKey]);
 
-  const latestJobRuns = useMemo(
-    () => buildLatestJobRunIndex(systemHealth?.recentJobs || []),
+  const anchoredJobRuns = useMemo(
+    () => buildAnchoredJobRunIndex(systemHealth?.recentJobs || []),
     [systemHealth?.recentJobs]
   );
 
@@ -154,7 +154,7 @@ export function SystemStatusPage() {
       });
     }
 
-    for (const run of latestJobRuns.values()) {
+    for (const run of anchoredJobRuns.values()) {
       const rawJobName = String(run.jobName || '').trim();
       if (!rawJobName) continue;
       const key = normalizeAzureJobName(rawJobName) || rawJobName.toLowerCase();
@@ -171,7 +171,7 @@ export function SystemStatusPage() {
 
     return Array.from(items.entries())
       .map(([key, item]) => {
-        const latestRun = latestJobRuns.get(key);
+        const latestRun = anchoredJobRuns.get(key);
         const jobResource = jobResourcesByKey.get(key);
         return {
           ...item,
@@ -203,7 +203,7 @@ export function SystemStatusPage() {
         return left.label.localeCompare(right.label);
       })
       .map(({ sortLayerName: _sortLayerName, ...item }) => item);
-  }, [displayDataLayers, jobResourcesByKey, jobStates, latestJobRuns]);
+  }, [anchoredJobRuns, displayDataLayers, jobResourcesByKey, jobStates]);
 
   const handleMetadataSnapshotChange = useCallback(
     (

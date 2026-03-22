@@ -141,6 +141,9 @@ REALTIME_TOPIC_JOBS = "jobs"
 REALTIME_TOPIC_CONTAINER_APPS = "container-apps"
 REALTIME_TOPIC_RUNTIME_CONFIG = "runtime-config"
 REALTIME_TOPIC_DEBUG_SYMBOLS = "debug-symbols"
+_ACTIVE_JOB_EXECUTION_STATUS_TOKENS = frozenset(
+    {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}
+)
 
 _PURGE_OPERATIONS: Dict[str, Dict[str, Any]] = {}
 _PURGE_OPERATIONS_LOCK = threading.Lock()
@@ -6029,6 +6032,40 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _normalize_job_execution_status_token(value: Optional[str]) -> str:
+    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
+
+def _is_active_job_execution_status(value: Optional[str]) -> bool:
+    return _normalize_job_execution_status_token(value) in _ACTIVE_JOB_EXECUTION_STATUS_TOKENS
+
+
+def _is_active_job_execution(execution: Dict[str, Any]) -> bool:
+    return _is_active_job_execution_status(execution.get("status")) and not str(
+        execution.get("endTime") or ""
+    ).strip()
+
+
+def _select_anchored_job_executions(
+    executions: Sequence[Dict[str, Any]], *, limit: int
+) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    selected = list(executions[:limit])
+    if not selected:
+        return selected
+
+    active_execution = next(
+        (execution for execution in executions if _is_active_job_execution(execution)),
+        None,
+    )
+    if active_execution is None or active_execution in selected:
+        return selected
+
+    return [active_execution, *selected[: max(0, limit - 1)]]
+
+
 def _coalesce_log_row_string(row: Dict[str, Any], *keys: str) -> str:
     lowered = {str(key).lower(): value for key, value in row.items()}
     for key in keys:
@@ -6080,7 +6117,8 @@ def get_job_logs(
     runs: int = Query(1, ge=1, le=10),
 ) -> JSONResponse:
     """
-    Returns the tail of console logs for the last N Container App Job executions (default: 1).
+    Returns the tail of console logs for the requested Container App Job executions (default: 1),
+    anchored to an actively running execution when one exists.
 
     Requires:
     - SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID / SYSTEM_HEALTH_ARM_RESOURCE_GROUP / SYSTEM_HEALTH_ARM_JOBS (allowlist)
@@ -6165,7 +6203,7 @@ def get_job_logs(
         )
 
     executions.sort(key=lambda e: float(e.get("_start_ts") or 0.0), reverse=True)
-    selected = executions[: max(0, int(runs))]
+    selected = _select_anchored_job_executions(executions, limit=max(0, int(runs)))
 
     tail_lines = 10
 
