@@ -363,6 +363,24 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.getByText(/AAPL, MSFT/)).toBeInTheDocument();
   });
 
+  it('stops a running medallion-domain job from the selected subpanel', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      recentJobs: makeJobs('running')
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+
+    await waitFor(() => {
+      expect(setJobSuspendedMock).toHaveBeenCalledWith('aca-job-market', true, [
+        ['systemStatusView'],
+        ['systemHealth']
+      ]);
+    });
+  });
+
   it('uses an explicit disclosure button for inline domain details', async () => {
     const user = userEvent.setup();
 

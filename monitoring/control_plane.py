@@ -42,6 +42,48 @@ def _is_active_execution_status(raw: str) -> bool:
     return _normalize_job_status_token(raw) in _ACTIVE_EXECUTION_STATUS_TOKENS
 
 
+def _include_anchored_active_execution(
+    executions: Sequence[Dict[str, Any]], *, limit: int
+) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    selected = list(executions[:limit])
+    if not selected:
+        return selected
+
+    active_execution = next(
+        (
+            item
+            for item in executions
+            if _map_job_execution_status(
+                str(
+                    (
+                        item.get("properties")
+                        if isinstance(item.get("properties"), dict)
+                        else {}
+                    ).get("status")
+                    or ""
+                ),
+                end_time=str(
+                    (
+                        item.get("properties")
+                        if isinstance(item.get("properties"), dict)
+                        else {}
+                    ).get("endTime")
+                    or ""
+                ),
+            )
+            == "running"
+        ),
+        None,
+    )
+    if active_execution is None or active_execution in selected:
+        return selected
+
+    return [active_execution, *selected[: max(0, limit - 1)]]
+
+
 def _map_job_execution_status(raw: str, *, end_time: Optional[str] = None) -> str:
     status = _normalize_job_status_token(raw)
     has_end_time = bool((end_time or "").strip())
@@ -275,7 +317,9 @@ def collect_jobs_and_executions(
 
             # Ensure we sample the most recent executions for each job regardless of API ordering.
             executions.sort(key=_execution_start_ts, reverse=True)
-            sampled = executions[:max_executions_per_job]
+            sampled = _include_anchored_active_execution(
+                executions, limit=max_executions_per_job
+            )
             logger.info(
                 "Job execution listing: job=%s total=%s sampled=%s",
                 name,

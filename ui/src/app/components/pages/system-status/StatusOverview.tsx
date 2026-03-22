@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { DataDomain, DataLayer, JobRun } from '@/types/strategy';
 import {
+  buildAnchoredJobRunIndex,
   formatTimeAgo,
   getStatusConfig,
   normalizeJobStatus,
@@ -32,11 +33,6 @@ import {
 import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 import { Button } from '@/app/components/ui/button';
 import { normalizeDomainKey } from './SystemPurgeControls';
-
-const runStartEpoch = (raw?: string | null): number => {
-  const value = raw ? Date.parse(raw) : NaN;
-  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
-};
 
 interface StatusOverviewProps {
   overall: string;
@@ -103,17 +99,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
   }, [dataLayers]);
 
   const jobIndex = useMemo(() => {
-    const index = new Map<string, JobRun>();
-    for (const job of recentJobs) {
-      if (!job?.jobName) continue;
-      const key = normalizeAzureJobName(job.jobName);
-      if (!key) continue;
-      const existing = index.get(key);
-      if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
-        index.set(key, job);
-      }
-    }
-    return index;
+    return buildAnchoredJobRunIndex(recentJobs);
   }, [recentJobs]);
 
   const domainsByLayer = useMemo(() => {

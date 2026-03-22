@@ -18,6 +18,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { ExternalLink, Loader2, Play, PlayCircle, ScrollText, Square } from 'lucide-react';
 import {
+  buildAnchoredJobRunIndex,
   formatDuration,
   formatRecordCount,
   formatTimeAgo,
@@ -38,11 +39,6 @@ interface JobMonitorProps {
   jobLinks?: Record<string, string>;
 }
 
-const runStartEpoch = (raw?: string | null): number => {
-  const value = raw ? Date.parse(raw) : NaN;
-  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
-};
-
 export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
   const { jobControl, setJobSuspended } = useJobSuspend();
@@ -51,19 +47,7 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
   const runningJobs = recentJobs.filter((j) => normalizeJobStatus(j.status) === 'running').length;
   const failedJobs = recentJobs.filter((j) => normalizeJobStatus(j.status) === 'failed').length;
 
-  const latestRunByJob = useMemo(() => {
-    const index = new Map<string, JobRun>();
-    for (const job of recentJobs) {
-      if (!job?.jobName) continue;
-      const key = normalizeAzureJobName(job.jobName);
-      if (!key) continue;
-      const existing = index.get(key);
-      if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
-        index.set(key, job);
-      }
-    }
-    return index;
-  }, [recentJobs]);
+  const anchoredRunByJob = useMemo(() => buildAnchoredJobRunIndex(recentJobs), [recentJobs]);
 
   const getJobPortalLink = (jobName: string) => {
     const normalizedName = normalizeAzureJobName(jobName);
@@ -118,17 +102,14 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                 const portalLink = getJobPortalLink(job.jobName);
                 const executionsUrl = getAzureJobExecutionsUrl(portalLink);
                 const jobKey = normalizeAzureJobName(job.jobName);
-                const latestRun = jobKey ? latestRunByJob.get(jobKey) : undefined;
-                const runStatus = latestRun?.status
-                  ? String(latestRun.status).toUpperCase()
+                const anchoredRun = jobKey ? anchoredRunByJob.get(jobKey) : undefined;
+                const runStatus = anchoredRun?.status
+                  ? String(anchoredRun.status).toUpperCase()
                   : 'UNKNOWN';
-                const runTimeAgo = latestRun?.startTime
-                  ? `${formatTimeAgo(latestRun.startTime)} ago`
+                const runTimeAgo = anchoredRun?.startTime
+                  ? `${formatTimeAgo(anchoredRun.startTime)} ago`
                   : 'UNKNOWN';
-                const isRunning =
-                  String(job.status || '')
-                    .trim()
-                    .toLowerCase() === 'running';
+                const isRunning = normalizeJobStatus(anchoredRun?.status) === 'running';
                 const isTriggering = Boolean(job.jobName) && triggeringJob === job.jobName;
                 const isStopping =
                   Boolean(job.jobName) &&
@@ -157,8 +138,8 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                 </a>
                               </TooltipTrigger>
                               <TooltipContent side="right">
-                                {latestRun
-                                  ? `Last run: ${runStatus} • ${runTimeAgo}`
+                                {anchoredRun
+                                  ? `Selected run: ${runStatus} - ${runTimeAgo}`
                                   : 'No recent run info'}
                               </TooltipContent>
                             </Tooltip>

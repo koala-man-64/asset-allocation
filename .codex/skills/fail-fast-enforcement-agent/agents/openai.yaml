@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fail-Fast Enforcement Agent"
+  short_description: "Expose hidden failures and remove false-success paths."
+  default_prompt: "Use $fail-fast-enforcement-agent to audit this system for silent degradation, false success, misleading health/readiness, and hidden failure paths. Recommend or implement fail-fast fixes with negative tests."

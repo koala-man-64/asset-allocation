@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/hooks/useDataQueries';
 import { useSystemStatusViewQuery } from '@/hooks/useSystemStatusView';
-import { DataService } from '@/services/DataService';
 import type {
   DomainMetadataSnapshotResponse,
   SystemStatusViewResponse
@@ -28,7 +27,7 @@ const JobLogStreamPanel = lazy(() =>
 );
 
 import {
-  buildLatestJobRunIndex,
+  buildAnchoredJobRunIndex,
   normalizeAzureJobName,
   resolveManagedJobName
 } from './system-status/SystemStatusHelpers';
@@ -43,7 +42,13 @@ type JobResourceSummary = {
 };
 
 export function SystemStatusPage() {
-  const { data, isLoading, error, isFetching } = useSystemStatusViewQuery({
+  const {
+    data,
+    isLoading,
+    error,
+    isFetching,
+    refresh: refreshSystemStatusView
+  } = useSystemStatusViewQuery({
     autoRefresh: true
   });
   const queryClient = useQueryClient();
@@ -103,8 +108,8 @@ export function SystemStatusPage() {
     return items;
   }, [jobResourcesByKey]);
 
-  const latestJobRuns = useMemo(
-    () => buildLatestJobRunIndex(systemHealth?.recentJobs || []),
+  const anchoredJobRuns = useMemo(
+    () => buildAnchoredJobRunIndex(systemHealth?.recentJobs || []),
     [systemHealth?.recentJobs]
   );
 
@@ -154,7 +159,7 @@ export function SystemStatusPage() {
       });
     }
 
-    for (const run of latestJobRuns.values()) {
+    for (const run of anchoredJobRuns.values()) {
       const rawJobName = String(run.jobName || '').trim();
       if (!rawJobName) continue;
       const key = normalizeAzureJobName(rawJobName) || rawJobName.toLowerCase();
@@ -171,7 +176,7 @@ export function SystemStatusPage() {
 
     return Array.from(items.entries())
       .map(([key, item]) => {
-        const latestRun = latestJobRuns.get(key);
+        const latestRun = anchoredJobRuns.get(key);
         const jobResource = jobResourcesByKey.get(key);
         return {
           ...item,
@@ -203,7 +208,7 @@ export function SystemStatusPage() {
         return left.label.localeCompare(right.label);
       })
       .map(({ sortLayerName: _sortLayerName, ...item }) => item);
-  }, [displayDataLayers, jobResourcesByKey, jobStates, latestJobRuns]);
+  }, [anchoredJobRuns, displayDataLayers, jobResourcesByKey, jobStates]);
 
   const handleMetadataSnapshotChange = useCallback(
     (
@@ -231,13 +236,7 @@ export function SystemStatusPage() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const fresh = await DataService.getSystemStatusView({ refresh: true });
-      queryClient.setQueryData(queryKeys.systemStatusView(), fresh);
-      queryClient.setQueryData(queryKeys.systemHealth(), fresh.systemHealth);
-      queryClient.setQueryData(
-        queryKeys.domainMetadataSnapshot('all', 'all'),
-        fresh.metadataSnapshot
-      );
+      await refreshSystemStatusView();
     } catch (err) {
       console.error('[SystemStatusPage] refresh failed', err);
     } finally {

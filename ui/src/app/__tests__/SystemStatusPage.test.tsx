@@ -7,6 +7,7 @@ import { renderWithProviders } from '@/test/utils';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
 import { getDomainOrderEntries } from '@/app/components/pages/system-status/domainOrdering';
 import { queryKeys } from '@/hooks/useDataQueries';
+import { upsertRunningJobOverride } from '@/hooks/useSystemHealthJobOverrides';
 import { DataService } from '@/services/DataService';
 import type { SystemStatusViewResponse } from '@/services/apiService';
 import type { DataLayer } from '@/types/strategy';
@@ -168,7 +169,7 @@ function buildSystemStatusView(
         {
           jobName: 'aca-job-market',
           jobType: 'data-ingest',
-          status: 'failed',
+          status: 'running',
           startTime: MOCK_RUN_TIMESTAMPS.older,
           triggeredBy: 'azure'
         },
@@ -224,10 +225,12 @@ function buildSystemStatusView(
 
 describe('SystemStatusPage', () => {
   beforeEach(() => {
+    window.sessionStorage.clear();
     vi.mocked(DataService.getSystemStatusView).mockResolvedValue(buildSystemStatusView());
   });
 
   afterEach(() => {
+    window.sessionStorage.clear();
     vi.useRealTimers();
     vi.restoreAllMocks();
     domainLayerCoverageSpy.mockClear();
@@ -313,7 +316,7 @@ describe('SystemStatusPage', () => {
     expect(coverageOrder).toEqual(['alpha', 'market', 'zeta']);
   });
 
-  it('passes the latest job run status and start time to the job console stream panel', async () => {
+  it('passes the anchored active job run status and start time to the job console stream panel', async () => {
     renderWithProviders(<SystemStatusPage />);
 
     await waitFor(() => {
@@ -334,8 +337,8 @@ describe('SystemStatusPage', () => {
         expect.objectContaining({
           name: 'aca-job-market',
           runningState: 'Running',
-          recentStatus: 'success',
-          startTime: MOCK_RUN_TIMESTAMPS.latest,
+          recentStatus: 'running',
+          startTime: MOCK_RUN_TIMESTAMPS.older,
           signals: expect.arrayContaining([
             expect.objectContaining({
               name: 'CpuUsage',
@@ -408,7 +411,140 @@ describe('SystemStatusPage', () => {
     );
   });
 
-  it('refreshes the unified status view immediately and then every 10 seconds', async () => {
+  it('restores optimistic running overrides after a hard reload before server telemetry catches up', async () => {
+    const now = new Date().toISOString();
+    const seededClient = createQueryClient();
+
+    upsertRunningJobOverride(seededClient, {
+      jobName: 'aca-job-zeta',
+      startTime: now,
+      triggeredBy: 'manual',
+      response: {
+        executionId: 'exec-zeta',
+        executionName: 'exec-zeta'
+      }
+    });
+
+    const payload = buildSystemStatusView();
+    vi.mocked(DataService.getSystemStatusView).mockResolvedValue({
+      ...payload,
+      systemHealth: {
+        ...payload.systemHealth,
+        recentJobs: payload.systemHealth.recentJobs.filter((job) => job.jobName !== 'aca-job-zeta'),
+        resources: (payload.systemHealth.resources || []).map((resource) =>
+          resource.name === 'aca-job-zeta'
+            ? {
+                ...resource,
+                runningState: undefined,
+                lastModifiedAt: MOCK_RUN_TIMESTAMPS.older
+              }
+            : resource
+        )
+      }
+    });
+
+    const reloadedClient = createQueryClient();
+
+    render(
+      <QueryClientProvider client={reloadedClient}>
+        <BrowserRouter>
+          <SystemStatusPage />
+        </BrowserRouter>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(domainLayerCoverageSpy).toHaveBeenCalled();
+    });
+
+    const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
+      jobStates: Record<string, string>;
+      recentJobs: Array<{ jobName: string; status: string; triggeredBy?: string }>;
+      managedContainerJobs: Array<{ name: string; runningState?: string | null }>;
+    };
+
+    expect(coverageProps.jobStates['aca-job-zeta']).toBe('Running');
+    expect(coverageProps.recentJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobName: 'aca-job-zeta',
+          status: 'running',
+          triggeredBy: 'manual'
+        })
+      ])
+    );
+    expect(coverageProps.managedContainerJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'aca-job-zeta',
+          runningState: 'Running'
+        })
+      ])
+    );
+  });
+
+  it('forces a live refresh when the coverage panel refresh handler is invoked', async () => {
+    const now = new Date().toISOString();
+
+    vi.mocked(DataService.getSystemStatusView)
+      .mockResolvedValueOnce(buildSystemStatusView())
+      .mockResolvedValueOnce(
+        buildSystemStatusView({
+          systemHealth: {
+            overall: 'degraded',
+            dataLayers: [],
+            recentJobs: [
+              {
+                jobName: 'aca-job-zeta',
+                jobType: 'data-ingest',
+                status: 'running',
+                startTime: now,
+                triggeredBy: 'azure'
+              }
+            ],
+            alerts: [],
+            resources: [
+              {
+                name: 'aca-job-zeta',
+                resourceType: 'Microsoft.App/jobs',
+                status: 'warning',
+                lastChecked: now,
+                runningState: 'Running',
+                lastModifiedAt: now
+              }
+            ]
+          }
+        })
+      );
+
+    renderWithProviders(<SystemStatusPage />);
+
+    await waitFor(() => {
+      expect(domainLayerCoverageSpy).toHaveBeenCalled();
+    });
+
+    const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
+      onRefresh?: () => Promise<void>;
+      overall: string;
+    };
+
+    expect(coverageProps.overall).toBe('healthy');
+
+    await act(async () => {
+      await coverageProps.onRefresh?.();
+    });
+
+    expect(vi.mocked(DataService.getSystemStatusView).mock.calls.at(-1)).toEqual([
+      { refresh: true }
+    ]);
+
+    await waitFor(() => {
+      const latestProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as { overall: string };
+      expect(latestProps.overall).toBe('degraded');
+    });
+  });
+
+  it('loads the unified status view from cache and forces a refresh every 10 seconds', async () => {
     vi.useFakeTimers();
     const now = new Date().toISOString();
 
@@ -453,7 +589,7 @@ describe('SystemStatusPage', () => {
     });
 
     expect(domainLayerCoverageSpy).toHaveBeenCalled();
-    expect(DataService.getSystemStatusView).toHaveBeenCalledWith({ refresh: true });
+    expect(vi.mocked(DataService.getSystemStatusView).mock.calls[0]).toEqual([]);
     const initialCallCount = vi.mocked(DataService.getSystemStatusView).mock.calls.length;
     expect(initialCallCount).toBeGreaterThan(0);
 
@@ -465,6 +601,9 @@ describe('SystemStatusPage', () => {
     expect(vi.mocked(DataService.getSystemStatusView).mock.calls.length).toBeGreaterThan(
       initialCallCount
     );
+    expect(vi.mocked(DataService.getSystemStatusView).mock.calls.at(-1)).toEqual([
+      { refresh: true }
+    ]);
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
       overall: string;

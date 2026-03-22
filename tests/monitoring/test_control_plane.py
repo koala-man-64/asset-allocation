@@ -191,3 +191,52 @@ def test_collect_jobs_and_executions_prioritizes_active_runs_without_start_time(
     assert runs[0]["statusCode"] == "In Progress"
     assert runs[0]["startTime"] == "2024-01-10T00:00:00+00:00"
 
+
+def test_collect_jobs_and_executions_includes_older_active_run_outside_latest_sample() -> None:
+    arm = FakeArmClient(
+        responses={
+            "https://example.test/Microsoft.App/jobs/bronze-market-job": {
+                "properties": {"provisioningState": "Succeeded"}
+            },
+            "https://example.test/Microsoft.App/jobs/bronze-market-job/executions": {
+                "value": [
+                    {
+                        "properties": {
+                            "status": "Succeeded",
+                            "startTime": "2024-01-05T00:00:00Z",
+                            "endTime": "2024-01-05T00:01:00Z",
+                        }
+                    },
+                    {
+                        "properties": {
+                            "status": "Succeeded",
+                            "startTime": "2024-01-04T00:00:00Z",
+                            "endTime": "2024-01-04T00:01:00Z",
+                        }
+                    },
+                    {
+                        "properties": {
+                            "status": "Running",
+                            "startTime": "2024-01-01T00:00:00Z",
+                        }
+                    },
+                ]
+            },
+        }
+    )
+
+    _, runs = collect_jobs_and_executions(
+        arm,
+        job_names=["bronze-market-job"],
+        last_checked_iso="2024-01-10T00:00:00+00:00",
+        include_ids=False,
+        max_executions_per_job=2,
+    )
+
+    assert len(runs) == 2
+    assert [r["status"] for r in runs] == ["success", "running"]
+    assert [r["startTime"] for r in runs] == [
+        "2024-01-05T00:00:00+00:00",
+        "2024-01-01T00:00:00+00:00",
+    ]
+

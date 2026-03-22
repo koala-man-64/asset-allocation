@@ -10,6 +10,7 @@ import type { JobTriggerResponse } from '@/services/backtestApi';
 import type { JobRun, ResourceHealth, SystemHealth } from '@/types/strategy';
 
 const SYSTEM_HEALTH_JOB_OVERRIDE_TTL_MS = 2 * 60 * 1000;
+const SYSTEM_HEALTH_JOB_OVERRIDE_STORAGE_KEY = 'asset-allocation.systemHealthJobOverrides';
 const RUNNING_JOB_STATUS: JobRun['status'] = 'running';
 const RUNNING_RESOURCE_STATE = 'Running';
 const MANUAL_TRIGGER_SOURCE = 'manual';
@@ -37,6 +38,55 @@ export interface SystemHealthJobOverride {
 }
 
 export type SystemHealthJobOverrideMap = Record<string, SystemHealthJobOverride>;
+
+function readStoredJobOverrides(): SystemHealthJobOverrideMap {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(SYSTEM_HEALTH_JOB_OVERRIDE_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      window.sessionStorage.removeItem(SYSTEM_HEALTH_JOB_OVERRIDE_STORAGE_KEY);
+      return {};
+    }
+
+    return parsed as SystemHealthJobOverrideMap;
+  } catch {
+    try {
+      window.sessionStorage.removeItem(SYSTEM_HEALTH_JOB_OVERRIDE_STORAGE_KEY);
+    } catch {
+      // Ignore storage cleanup failures and fall back to the in-memory query state.
+    }
+    return {};
+  }
+}
+
+function writeStoredJobOverrides(overrides?: SystemHealthJobOverrideMap): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const activeOverrides = activeOverrideMap(overrides);
+  try {
+    if (Object.keys(activeOverrides).length === 0) {
+      window.sessionStorage.removeItem(SYSTEM_HEALTH_JOB_OVERRIDE_STORAGE_KEY);
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      SYSTEM_HEALTH_JOB_OVERRIDE_STORAGE_KEY,
+      JSON.stringify(activeOverrides)
+    );
+  } catch {
+    // Ignore storage failures and keep the query cache as the source of truth.
+  }
+}
 
 function runStartEpoch(raw?: string | null): number {
   const value = raw ? Date.parse(raw) : NaN;
@@ -68,6 +118,15 @@ function activeOverrideMap(
     next[override.jobKey] = override;
   }
   return next;
+}
+
+function resolveActiveOverrideSnapshot(
+  current?: SystemHealthJobOverrideMap
+): SystemHealthJobOverrideMap {
+  return activeOverrideMap({
+    ...readStoredJobOverrides(),
+    ...(current || {})
+  });
 }
 
 function nextExpirationDelayMs(overrides?: SystemHealthJobOverrideMap): number | null {
@@ -216,10 +275,14 @@ export function upsertRunningJobOverride(
 
   queryClient.setQueryData<SystemHealthJobOverrideMap>(
     queryKeys.systemHealthJobOverrides(),
-    (current) => ({
-      ...activeOverrideMap(current),
-      [jobKey]: override
-    })
+    (current) => {
+      const next = {
+        ...resolveActiveOverrideSnapshot(current),
+        [jobKey]: override
+      };
+      writeStoredJobOverrides(next);
+      return next;
+    }
   );
 
   return override;
@@ -232,11 +295,13 @@ export function clearJobOverride(queryClient: QueryClient, jobName: string): voi
   queryClient.setQueryData<SystemHealthJobOverrideMap>(
     queryKeys.systemHealthJobOverrides(),
     (current) => {
-      const next = activeOverrideMap(current);
+      const next = resolveActiveOverrideSnapshot(current);
       if (!(jobKey in next)) {
+        writeStoredJobOverrides(next);
         return next;
       }
       delete next[jobKey];
+      writeStoredJobOverrides(next);
       return next;
     }
   );
@@ -247,11 +312,11 @@ export function useSystemHealthJobOverrides() {
   const query = useQuery<SystemHealthJobOverrideMap>({
     queryKey: queryKeys.systemHealthJobOverrides(),
     queryFn: async () =>
-      activeOverrideMap(
+      resolveActiveOverrideSnapshot(
         queryClient.getQueryData<SystemHealthJobOverrideMap>(queryKeys.systemHealthJobOverrides())
       ),
     initialData: () =>
-      activeOverrideMap(
+      resolveActiveOverrideSnapshot(
         queryClient.getQueryData<SystemHealthJobOverrideMap>(queryKeys.systemHealthJobOverrides())
       ),
     staleTime: Infinity,
@@ -270,7 +335,11 @@ export function useSystemHealthJobOverrides() {
     const handle = window.setTimeout(() => {
       queryClient.setQueryData<SystemHealthJobOverrideMap>(
         queryKeys.systemHealthJobOverrides(),
-        (current) => activeOverrideMap(current)
+        (current) => {
+          const next = activeOverrideMap(current);
+          writeStoredJobOverrides(next);
+          return next;
+        }
       );
     }, timeoutMs + 25);
 
@@ -278,6 +347,10 @@ export function useSystemHealthJobOverrides() {
       window.clearTimeout(handle);
     };
   }, [query.data, queryClient]);
+
+  useEffect(() => {
+    writeStoredJobOverrides(query.data);
+  }, [query.data]);
 
   const data = useMemo(() => activeOverrideMap(query.data), [query.data]);
   return {

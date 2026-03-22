@@ -226,6 +226,47 @@ describe('JobLogStreamPanel', () => {
     expect(screen.queryByText('SUCCESS')).not.toBeInTheDocument();
   });
 
+  it('anchors the console tail to an older active execution when one is still running', async () => {
+    const subscribeTopics: string[][] = [];
+    const captureSubscribe = (event: Event) => {
+      subscribeTopics.push(
+        ((event as CustomEvent<{ topics: string[] }>).detail?.topics || []).slice()
+      );
+    };
+    window.addEventListener(REALTIME_SUBSCRIBE_EVENT, captureSubscribe);
+
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 2,
+      runsReturned: 2,
+      tailLines: 10,
+      runs: [
+        {
+          executionName: 'beta-exec-002',
+          status: 'Succeeded',
+          startTime: '2026-03-11T12:00:00Z',
+          tail: ['latest finished snapshot']
+        },
+        {
+          executionName: 'beta-exec-001',
+          status: 'Running',
+          startTime: '2026-03-10T12:00:00Z',
+          tail: ['older active snapshot']
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[JOBS[1]]} />);
+
+    expect(await screen.findByText('older active snapshot')).toBeInTheDocument();
+    expect(screen.queryByText('latest finished snapshot')).not.toBeInTheDocument();
+    expect(subscribeTopics).toEqual(
+      expect.arrayContaining([['job-logs:beta-job/executions/beta-exec-001']])
+    );
+
+    window.removeEventListener(REALTIME_SUBSCRIBE_EVENT, captureSubscribe);
+  });
+
   it('shows cpu and memory usage when resource signals are available', async () => {
     const job: JobLogStreamTarget = {
       ...JOBS[1],
@@ -268,6 +309,50 @@ describe('JobLogStreamPanel', () => {
     expect(screen.getByText('68%')).toBeInTheDocument();
     expect(screen.getByText('Memory Usage')).toBeInTheDocument();
     expect(screen.getByText(/1\.5 GiB/)).toBeInTheDocument();
+  });
+
+  it('formats Azure Monitor job usage metrics using current Azure metric names', async () => {
+    const job: JobLogStreamTarget = {
+      ...JOBS[1],
+      signals: [
+        {
+          name: 'UsageNanoCores',
+          value: 750000000,
+          unit: 'NanoCores',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        },
+        {
+          name: 'UsageBytes',
+          value: 2147483648,
+          unit: 'Bytes',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        }
+      ]
+    };
+
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          tail: ['beta snapshot']
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[job]} />);
+
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    expect(screen.getByText('CPU Usage')).toBeInTheDocument();
+    expect(screen.getByText('0.75 cores')).toBeInTheDocument();
+    expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+    expect(screen.getByText('2 GiB')).toBeInTheDocument();
   });
 
   it('keeps streaming without refetching when job metadata refreshes for the same run', async () => {

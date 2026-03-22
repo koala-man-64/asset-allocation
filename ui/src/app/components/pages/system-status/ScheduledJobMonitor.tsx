@@ -23,6 +23,7 @@ import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import type { DataLayer, JobRun } from '@/types/strategy';
 import {
+  buildAnchoredJobRunIndex,
   formatDuration,
   formatRecordCount,
   formatSchedule,
@@ -31,9 +32,11 @@ import {
   getAzureJobExecutionsUrl,
   getStatusBadge,
   getStatusIcon,
+  normalizeJobStatus,
   normalizeAzureJobName,
   normalizeAzurePortalUrl,
-  resolveManagedJobName
+  resolveManagedJobName,
+  selectAnchoredJobRun
 } from './SystemStatusHelpers';
 import { getDomainOrderIndex } from './domainOrdering';
 import { getLogStreamFeedback } from './logStreamFeedback';
@@ -58,11 +61,6 @@ import {
 } from 'lucide-react';
 
 const LIVE_LOG_LINE_LIMIT = 200;
-
-const runStartEpoch = (raw?: string | null): number => {
-  const value = raw ? Date.parse(raw) : NaN;
-  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
-};
 
 function mergeLogLines(
   existing: string[],
@@ -118,21 +116,22 @@ type LogResponseLike = {
   consoleLogs?: Array<string | number>;
   runs?: Array<{
     executionName?: string | null;
+    status?: string | null;
+    startTime?: string | null;
     tail?: Array<string | number>;
     consoleLogs?: Array<string | number>;
     error?: string | null;
   }>;
 };
 
+function selectAnchoredLogRun(payload: LogResponseLike) {
+  return selectAnchoredJobRun(Array.isArray(payload?.runs) ? payload.runs : []);
+}
+
 function extractExecutionName(payload: LogResponseLike): string | null {
-  const runs = Array.isArray(payload?.runs) ? payload.runs : [];
-  for (const run of runs) {
-    const executionName = typeof run?.executionName === 'string' ? run.executionName.trim() : '';
-    if (executionName) {
-      return executionName;
-    }
-  }
-  return null;
+  const run = selectAnchoredLogRun(payload);
+  const executionName = typeof run?.executionName === 'string' ? run.executionName.trim() : '';
+  return executionName || null;
 }
 
 export function ScheduledJobMonitor({
@@ -205,19 +204,7 @@ export function ScheduledJobMonitor({
   };
 
   const jobIndex = useMemo(() => {
-    const index = new Map<string, JobRun>();
-    for (const job of recentJobs || []) {
-      if (!job?.jobName) continue;
-      const key = normalizeAzureJobName(job.jobName);
-      if (!key) continue;
-      const existing = index.get(key);
-      const jobStart = runStartEpoch(job.startTime);
-      const existingStart = runStartEpoch(existing?.startTime);
-      if (!existing || jobStart > existingStart) {
-        index.set(key, job);
-      }
-    }
-    return index;
+    return buildAnchoredJobRunIndex(recentJobs || []);
   }, [recentJobs]);
 
   const domainOrderIndex = useMemo(() => getDomainOrderIndex(dataLayers), [dataLayers]);
@@ -336,19 +323,18 @@ export function ScheduledJobMonitor({
       .getJobLogs(jobName, { runs: 1 }, controller.signal)
       .then((response) => {
         const payload = response as LogResponseLike;
+        const anchoredRun = selectAnchoredLogRun(payload);
         const combined = [
           ...(payload?.logs ?? []),
           ...(payload?.consoleLogs ?? []),
-          ...(payload?.runs ?? []).flatMap((run) => [
-            ...(run?.tail ?? []),
-            ...(run?.consoleLogs ?? [])
-          ])
+          ...(anchoredRun?.tail ?? []),
+          ...(anchoredRun?.consoleLogs ?? [])
         ]
           .filter((line) => line !== undefined && line !== null)
           .map((line) => formatSystemStatusText(line))
           .filter((line) => line.length > 0);
 
-        const firstError = (payload?.runs ?? []).find((run) => Boolean(run?.error))?.error ?? null;
+        const firstError = anchoredRun?.error ?? null;
         const formattedFirstError = formatSystemStatusText(firstError);
         const logs = combined.slice(-LIVE_LOG_LINE_LIMIT);
         const executionName = extractExecutionName(payload);
@@ -448,7 +434,7 @@ export function ScheduledJobMonitor({
                 <TableRow>
                   <TableHead>Job</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Last Start</TableHead>
+                  <TableHead>Run Start</TableHead>
                   <TableHead>Schedule</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -659,25 +645,19 @@ export function ScheduledJobMonitor({
                                       className="h-7 w-7"
                                       disabled={Boolean(triggeringJob) || Boolean(jobControl)}
                                       onClick={() =>
-                                        String(job.jobRun?.status || '')
-                                          .trim()
-                                          .toLowerCase() === 'running'
+                                        normalizeJobStatus(job.jobRun?.status) === 'running'
                                           ? void setJobSuspended(job.jobName, true)
                                           : void triggerJob(job.jobName)
                                       }
                                       aria-label={
-                                        String(job.jobRun?.status || '')
-                                          .trim()
-                                          .toLowerCase() === 'running'
+                                        normalizeJobStatus(job.jobRun?.status) === 'running'
                                           ? `Stop ${job.jobName}`
                                           : `Run ${job.jobName}`
                                       }
                                     >
                                       {triggeringJob === job.jobName ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : String(job.jobRun?.status || '')
-                                          .trim()
-                                          .toLowerCase() === 'running' ? (
+                                      ) : normalizeJobStatus(job.jobRun?.status) === 'running' ? (
                                         <Square className="h-4 w-4" />
                                       ) : (
                                         <Play className="h-4 w-4" />
@@ -685,9 +665,7 @@ export function ScheduledJobMonitor({
                                     </Button>
                                   </TooltipTrigger>
                                   <TooltipContent side="left">
-                                    {String(job.jobRun?.status || '')
-                                      .trim()
-                                      .toLowerCase() === 'running'
+                                    {normalizeJobStatus(job.jobRun?.status) === 'running'
                                       ? 'Stop job'
                                       : 'Trigger job'}
                                   </TooltipContent>
@@ -707,7 +685,9 @@ export function ScheduledJobMonitor({
                               >
                                 <div className="space-y-4 p-4">
                                   <div className="flex items-center justify-between">
-                                    <div className="text-sm font-semibold">Latest Run Details</div>
+                                    <div className="text-sm font-semibold">
+                                      Selected Run Details
+                                    </div>
                                     {job.jobRun?.startTime && (
                                       <span className="text-xs text-muted-foreground">
                                         {formatTimeAgo(job.jobRun.startTime)} ago
