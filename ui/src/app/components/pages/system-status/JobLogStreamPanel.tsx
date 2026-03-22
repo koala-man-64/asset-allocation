@@ -40,6 +40,7 @@ import {
   getAzureJobExecutionsUrl,
   getStatusBadge,
   getStatusIcon,
+  normalizeAzureJobName,
   normalizeAzurePortalUrl,
   selectAnchoredJobRun
 } from './SystemStatusHelpers';
@@ -48,6 +49,7 @@ import { formatSystemStatusText } from './systemStatusText';
 
 const LOG_LINE_LIMIT = 200;
 const LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 16;
+const JOB_USAGE_REFRESH_INTERVAL_MS = 5_000;
 const CPU_SIGNAL_NAMES = ['cpuusage', 'cpupercentage', 'cpupercent', 'usagenanocores'];
 const MEMORY_SIGNAL_NAMES = [
   'memoryworkingsetbytes',
@@ -90,7 +92,64 @@ function isFiniteNumber(value: unknown): value is number {
 function normalizeSignalName(value?: string | null): string {
   return String(value || '')
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function latestSignalTimestamp(signals: ResourceSignal[] | null | undefined): number {
+  if (!Array.isArray(signals) || signals.length === 0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  return signals.reduce((latest, signal) => {
+    const timestamp = Date.parse(String(signal?.timestamp || '').trim());
+    return Number.isFinite(timestamp) ? Math.max(latest, timestamp) : latest;
+  }, Number.NEGATIVE_INFINITY);
+}
+
+function preferNewerSignals(
+  current: ResourceSignal[] | null | undefined,
+  incoming: ResourceSignal[] | null | undefined
+): ResourceSignal[] | null {
+  const normalizedCurrent = Array.isArray(current) && current.length > 0 ? current : null;
+  const normalizedIncoming = Array.isArray(incoming) && incoming.length > 0 ? incoming : null;
+
+  if (!normalizedIncoming) {
+    return normalizedCurrent;
+  }
+  if (!normalizedCurrent) {
+    return normalizedIncoming;
+  }
+
+  return latestSignalTimestamp(normalizedIncoming) >= latestSignalTimestamp(normalizedCurrent)
+    ? normalizedIncoming
+    : normalizedCurrent;
+}
+
+function findJobResourceSignals(
+  jobName: string,
+  signals:
+    | {
+        name?: string | null;
+        resourceType?: string | null;
+        signals?: ResourceSignal[] | null;
+      }[]
+    | null
+    | undefined
+): ResourceSignal[] | null {
+  const jobKey = normalizeAzureJobName(jobName);
+  if (!jobKey || !Array.isArray(signals) || signals.length === 0) {
+    return null;
+  }
+
+  const resource = signals.find((item) => {
+    if (String(item?.resourceType || '').trim() !== 'Microsoft.App/jobs') {
+      return false;
+    }
+    return normalizeAzureJobName(item?.name) === jobKey;
+  });
+
+  return Array.isArray(resource?.signals) && resource.signals.length > 0 ? resource.signals : null;
 }
 
 function findUsageSignal(
@@ -101,8 +160,9 @@ function findUsageSignal(
     return null;
   }
 
+  const normalizedPreferredNames = preferredNames.map((name) => normalizeSignalName(name));
   const exactMatch = signals.find((signal) =>
-    preferredNames.includes(normalizeSignalName(signal?.name))
+    normalizedPreferredNames.includes(normalizeSignalName(signal?.name))
   );
   if (exactMatch) {
     return exactMatch;
@@ -110,7 +170,9 @@ function findUsageSignal(
 
   const broadMatch = signals.find((signal) => {
     const signalName = normalizeSignalName(signal?.name);
-    return preferredNames.some((candidate) => signalName.includes(candidate.replace('usage', '')));
+    return normalizedPreferredNames.some(
+      (candidate) => signalName.includes(candidate) || candidate.includes(signalName)
+    );
   });
   return broadMatch ?? null;
 }
@@ -318,12 +380,14 @@ function isNearBottom(
 export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   const [selectedJobName, setSelectedJobName] = useState('');
   const [selectedExecutionName, setSelectedExecutionName] = useState<string | null>(null);
+  const [liveSignals, setLiveSignals] = useState<ResourceSignal[] | null>(null);
   const [logState, setLogState] = useState<LogState>({
     lines: [],
     loading: false,
     error: null
   });
   const requestControllerRef = useRef<AbortController | null>(null);
+  const usageRequestControllerRef = useRef<AbortController | null>(null);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const sortedJobs = useMemo(() => sortJobsForDisplay(jobs), [jobs]);
@@ -358,13 +422,19 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   useEffect(() => {
     return () => {
       requestControllerRef.current?.abort();
+      usageRequestControllerRef.current?.abort();
     };
   }, []);
 
   useEffect(() => {
     shouldAutoScrollRef.current = true;
     setSelectedExecutionName(null);
+    setLiveSignals(null);
   }, [selectedJobName, selectedJobStartTime]);
+
+  useEffect(() => {
+    setLiveSignals((current) => preferNewerSignals(current, selectedJob?.signals ?? null));
+  }, [selectedJob?.signals, selectedJobName]);
 
   useEffect(() => {
     if (!selectedJobName) {
@@ -446,6 +516,46 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     viewport.scrollTop = viewport.scrollHeight;
   }, [logState.lines, logState.loading, logState.error, selectedJobName]);
 
+  useEffect(() => {
+    if (!selectedJobName) {
+      setLiveSignals(null);
+      return;
+    }
+
+    let isDisposed = false;
+
+    const refreshSignals = async () => {
+      usageRequestControllerRef.current?.abort();
+      const controller = new AbortController();
+      usageRequestControllerRef.current = controller;
+
+      try {
+        const systemHealth = await DataService.getSystemHealth({ refresh: true });
+        if (isDisposed || controller.signal.aborted) {
+          return;
+        }
+
+        const nextSignals = findJobResourceSignals(selectedJobName, systemHealth.resources);
+        setLiveSignals((current) => preferNewerSignals(current, nextSignals));
+      } catch (error: unknown) {
+        if (!controller.signal.aborted) {
+          console.debug('[JobLogStreamPanel] live usage refresh failed', error);
+        }
+      }
+    };
+
+    void refreshSignals();
+    const intervalHandle = window.setInterval(() => {
+      void refreshSignals();
+    }, JOB_USAGE_REFRESH_INTERVAL_MS);
+
+    return () => {
+      isDisposed = true;
+      window.clearInterval(intervalHandle);
+      usageRequestControllerRef.current?.abort();
+    };
+  }, [selectedJobName]);
+
   if (!sortedJobs.length) {
     return (
       <Card>
@@ -463,8 +573,9 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   const executionUrl = getAzureJobExecutionsUrl(selectedJob?.jobUrl);
   const portalUrl = normalizeAzurePortalUrl(selectedJob?.jobUrl);
   const status = effectiveJobStatus(selectedJob?.recentStatus, selectedJob?.runningState);
-  const cpuSignal = findUsageSignal(selectedJob?.signals, CPU_SIGNAL_NAMES);
-  const memorySignal = findUsageSignal(selectedJob?.signals, MEMORY_SIGNAL_NAMES);
+  const usageSignals = preferNewerSignals(selectedJob?.signals, liveSignals);
+  const cpuSignal = findUsageSignal(usageSignals, CPU_SIGNAL_NAMES);
+  const memorySignal = findUsageSignal(usageSignals, MEMORY_SIGNAL_NAMES);
 
   return (
     <Card className="h-full flex flex-col">

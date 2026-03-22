@@ -16,7 +16,8 @@ import {
 
 vi.mock('@/services/DataService', () => ({
   DataService: {
-    getJobLogs: vi.fn()
+    getJobLogs: vi.fn(),
+    getSystemHealth: vi.fn()
   }
 }));
 
@@ -43,6 +44,14 @@ const JOBS: JobLogStreamTarget[] = [
 describe('JobLogStreamPanel', () => {
   beforeEach(() => {
     vi.mocked(DataService.getJobLogs).mockReset();
+    vi.mocked(DataService.getSystemHealth).mockReset();
+    vi.mocked(DataService.getSystemHealth).mockResolvedValue({
+      overall: 'healthy',
+      dataLayers: [],
+      recentJobs: [],
+      alerts: [],
+      resources: []
+    });
     if (!Element.prototype.hasPointerCapture) {
       Object.defineProperty(Element.prototype, 'hasPointerCapture', {
         configurable: true,
@@ -353,6 +362,104 @@ describe('JobLogStreamPanel', () => {
     expect(screen.getByText('0.75 cores')).toBeInTheDocument();
     expect(screen.getByText('Memory Usage')).toBeInTheDocument();
     expect(screen.getByText('2 GiB')).toBeInTheDocument();
+  });
+
+  it('hydrates job usage from live system health refreshes when the initial snapshot has no signals', async () => {
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          tail: ['beta snapshot']
+        }
+      ]
+    });
+    vi.mocked(DataService.getSystemHealth).mockResolvedValueOnce({
+      overall: 'healthy',
+      dataLayers: [],
+      recentJobs: [],
+      alerts: [],
+      resources: [
+        {
+          name: 'beta-job',
+          resourceType: 'Microsoft.App/jobs',
+          status: 'healthy',
+          lastChecked: '2026-03-11T12:00:00Z',
+          details: 'live metrics',
+          signals: [
+            {
+              name: 'Usage Nano Cores',
+              value: 500000000,
+              unit: 'NanoCores',
+              timestamp: '2026-03-11T12:00:05Z',
+              status: 'healthy',
+              source: 'metrics'
+            },
+            {
+              name: 'Usage Bytes',
+              value: 1073741824,
+              unit: 'Bytes',
+              timestamp: '2026-03-11T12:00:05Z',
+              status: 'healthy',
+              source: 'metrics'
+            }
+          ]
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[JOBS[1]]} />);
+
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(DataService.getSystemHealth).toHaveBeenCalledWith({ refresh: true });
+    });
+    expect(await screen.findByText('0.5 cores')).toBeInTheDocument();
+    expect(screen.getByText('1 GiB')).toBeInTheDocument();
+  });
+
+  it('matches Azure metric names even when they include spaces', async () => {
+    const job: JobLogStreamTarget = {
+      ...JOBS[1],
+      signals: [
+        {
+          name: 'Usage Nano Cores',
+          value: 250000000,
+          unit: 'NanoCores',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        },
+        {
+          name: 'Working Set Bytes',
+          value: 536870912,
+          unit: 'Bytes',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        }
+      ]
+    };
+
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          tail: ['beta snapshot']
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[job]} />);
+
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    expect(screen.getByText('0.25 cores')).toBeInTheDocument();
+    expect(screen.getByText('512 MiB')).toBeInTheDocument();
   });
 
   it('keeps streaming without refetching when job metadata refreshes for the same run', async () => {
