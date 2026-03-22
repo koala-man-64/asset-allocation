@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/hooks/useDataQueries';
 import { useSystemStatusViewQuery } from '@/hooks/useSystemStatusView';
-import { DataService } from '@/services/DataService';
 import type {
   DomainMetadataSnapshotResponse,
   SystemStatusViewResponse
@@ -43,7 +42,8 @@ type JobResourceSummary = {
 };
 
 export function SystemStatusPage() {
-  const { data, isLoading, error, isFetching } = useSystemStatusViewQuery({
+  const { data, isLoading, error, isFetching, refresh: refreshSystemStatusView } =
+    useSystemStatusViewQuery({
     autoRefresh: true
   });
   const queryClient = useQueryClient();
@@ -231,13 +231,7 @@ export function SystemStatusPage() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const fresh = await DataService.getSystemStatusView({ refresh: true });
-      queryClient.setQueryData(queryKeys.systemStatusView(), fresh);
-      queryClient.setQueryData(queryKeys.systemHealth(), fresh.systemHealth);
-      queryClient.setQueryData(
-        queryKeys.domainMetadataSnapshot('all', 'all'),
-        fresh.metadataSnapshot
-      );
+      await refreshSystemStatusView();
     } catch (err) {
       console.error('[SystemStatusPage] refresh failed', err);
     } finally {
