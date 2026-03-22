@@ -118,7 +118,7 @@ async def test_massive_ratios_returns_json(monkeypatch):
         assert symbol == "AAPL"
         assert report == "valuation"
         assert timeframe is None
-        assert sort == "date.desc"
+        assert sort == "market_cap.desc"
         assert limit == 1
         assert pagination is False
         return {"results": [{"ticker": symbol}]}
@@ -128,7 +128,7 @@ async def test_massive_ratios_returns_json(monkeypatch):
     app = create_app()
     async with get_test_client(app) as client:
         resp = await client.get(
-            "/api/providers/massive/fundamentals/ratios?symbol=AAPL&sort=date.desc&limit=1&pagination=false"
+            "/api/providers/massive/fundamentals/ratios?symbol=AAPL&sort=market_cap.desc&limit=1&pagination=false"
         )
 
     assert resp.status_code == 200

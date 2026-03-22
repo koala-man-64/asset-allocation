@@ -249,7 +249,7 @@ def test_finance_valuation_uses_ratios_route() -> None:
         client.get_finance_report(
             symbol="AAPL",
             report="valuation",
-            sort="date.desc",
+            sort="market_cap.desc",
             limit=1,
             pagination=False,
         )
@@ -258,6 +258,6 @@ def test_finance_valuation_uses_ratios_route() -> None:
 
     assert seen[0][0] == "/api/providers/massive/fundamentals/ratios"
     assert seen[0][1].get("symbol") == "AAPL"
-    assert seen[0][1].get("sort") == "date.desc"
+    assert seen[0][1].get("sort") == "market_cap.desc"
     assert seen[0][1].get("limit") == "1"
     assert seen[0][1].get("pagination") == "false"

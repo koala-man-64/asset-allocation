@@ -109,7 +109,7 @@ def test_fetch_and_save_raw_marks_empty_valuation_payload_as_coverage_unavailabl
         assert exc_info.value.reason_code == "empty_finance_payload"
         assert exc_info.value.payload == {"symbol": symbol, "report": "valuation"}
         mock_list_manager.add_to_blacklist.assert_not_called()
-        mock_massive.get_ratios.assert_called_once_with(symbol=symbol, sort="date.asc", pagination=True)
+        mock_massive.get_ratios.assert_called_once_with(symbol=symbol, pagination=True)
 
 
 def test_fetch_and_save_raw_writes_full_history_valuation_payload(unique_ticker):
@@ -154,7 +154,7 @@ def test_fetch_and_save_raw_writes_full_history_valuation_payload(unique_ticker)
     assert coverage_summary["provider_valuation_requests"] == 1
     assert coverage_summary["provider_valuation_nonempty_raw_payloads"] == 1
     assert coverage_summary["provider_valuation_canonical_rows"] == 2
-    mock_massive.get_ratios.assert_called_once_with(symbol=symbol, sort="date.asc", pagination=True)
+    mock_massive.get_ratios.assert_called_once_with(symbol=symbol, pagination=True)
 
 
 def test_fetch_and_save_raw_tracks_empty_statement_payload_diagnostics(unique_ticker):

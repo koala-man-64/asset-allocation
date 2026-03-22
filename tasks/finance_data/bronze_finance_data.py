@@ -82,7 +82,6 @@ _COVERAGE_DOMAIN = "finance"
 _COVERAGE_PROVIDER = "massive"
 _INVALID_CANDIDATE_REASON = "core_statements_provider_invalid"
 _FINANCE_SCHEMA_VERSION = 2
-_VALUATION_QUERY_SORT = "date.asc"
 _CORE_FINANCE_REPORTS = frozenset({"balance_sheet", "cash_flow", "income_statement"})
 _TRACE_FINANCE_ENABLED = (os.environ.get("MASSIVE_FINANCE_TRACE_ENABLED") or "").strip().lower() in {
     "1",
@@ -653,7 +652,6 @@ def _fetch_massive_finance_payload(
         try:
             payload = massive_client.get_ratios(
                 symbol=symbol,
-                sort=_VALUATION_QUERY_SORT,
                 pagination=True,
             )
         except BaseException as exc:

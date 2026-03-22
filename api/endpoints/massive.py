@@ -252,7 +252,10 @@ def get_float(
 def get_ratios(
     request: Request,
     symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
-    sort: Optional[str] = Query(default=None, description="Optional Massive sort key (for example date.desc)."),
+    sort: Optional[str] = Query(
+        default=None,
+        description="Optional Massive ratios sort key (for example market_cap.desc).",
+    ),
     limit: Optional[int] = Query(default=None, ge=1, description="Optional page size."),
     pagination: bool = Query(default=True, description="Follow Massive next_url pagination when true."),
     gateway: MassiveGateway = Depends(_get_gateway),

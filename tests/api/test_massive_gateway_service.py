@@ -263,10 +263,10 @@ def test_gateway_finance_report_maps_valuation_to_ratios() -> None:
     gateway = MassiveGateway()
     gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
 
-    gateway.get_finance_report(symbol="AAPL", report="valuation", sort="date.desc", limit=1, pagination=False)
+    gateway.get_finance_report(symbol="AAPL", report="valuation", sort="market_cap.desc", limit=1, pagination=False)
 
     assert captured["ticker"] == "AAPL"
-    assert captured["params"] == {"sort": "date.desc", "limit": 1}
+    assert captured["params"] == {"sort": "market_cap.desc", "limit": 1}
     assert captured["pagination"] is False
 
 
