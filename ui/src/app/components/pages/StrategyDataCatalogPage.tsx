@@ -140,8 +140,7 @@ const LAYER_VISUALS: Record<MedallionKey, LayerVisual> = {
   gold: {
     shellClassName: 'border-mcm-mustard/40 bg-mcm-mustard/10',
     chipClassName: 'border-mcm-mustard/50 bg-mcm-mustard/15 text-mcm-walnut',
-    activeClassName:
-      'border-mcm-mustard bg-mcm-mustard/15 shadow-[0_0_0_2px_rgba(225,173,1,0.16)]',
+    activeClassName: 'border-mcm-mustard bg-mcm-mustard/15 shadow-[0_0_0_2px_rgba(225,173,1,0.16)]',
     glowClassName: 'bg-mcm-mustard/14'
   },
   platinum: {
@@ -169,9 +168,7 @@ function normalizeDomainKey(value: string): string {
 
 function toMedallionKey(value: string): MedallionKey | null {
   const normalized = normalizeKey(value);
-  return MEDALLION_ORDER.includes(normalized as MedallionKey)
-    ? (normalized as MedallionKey)
-    : null;
+  return MEDALLION_ORDER.includes(normalized as MedallionKey) ? (normalized as MedallionKey) : null;
 }
 
 function titleCase(value: string): string {
@@ -335,7 +332,8 @@ async function loadMedallionTableCatalog(): Promise<TableCatalogResponse> {
   });
 
   sections.sort(
-    (left, right) => MEDALLION_ORDER.indexOf(left.layerKey) - MEDALLION_ORDER.indexOf(right.layerKey)
+    (left, right) =>
+      MEDALLION_ORDER.indexOf(left.layerKey) - MEDALLION_ORDER.indexOf(right.layerKey)
   );
 
   if (sections.length === 0) {
@@ -345,15 +343,7 @@ async function loadMedallionTableCatalog(): Promise<TableCatalogResponse> {
   return { sections, warnings };
 }
 
-function SummaryTile({
-  label,
-  value,
-  note
-}: {
-  label: string;
-  value: string;
-  note: string;
-}) {
+function SummaryTile({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <div className="rounded-[1.4rem] border border-mcm-walnut/15 bg-mcm-paper/75 px-4 py-4 shadow-[0_12px_32px_rgba(119,63,26,0.08)]">
       <div className="text-[10px] font-black uppercase tracking-[0.22em] text-mcm-walnut/55">
@@ -560,7 +550,13 @@ export const StrategyDataCatalogPage: React.FC = () => {
 
       return haystack.includes(query.replace(/-/g, ' ')) || haystack.includes(query);
     });
-  }, [deferredNavigatorSearch, selectedDomain, selectedLayer, tableCatalogItems, tableDetailsByKey]);
+  }, [
+    deferredNavigatorSearch,
+    selectedDomain,
+    selectedLayer,
+    tableCatalogItems,
+    tableDetailsByKey
+  ]);
 
   const selectedTable = useMemo(
     () => filteredTables.find((item) => item.key === selectedTableKey) ?? filteredTables[0] ?? null,
@@ -799,10 +795,14 @@ export const StrategyDataCatalogPage: React.FC = () => {
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Badge variant="secondary">
-                    {isStatusLoading || isStatusFetching ? 'Refreshing system snapshot' : 'System snapshot loaded'}
+                    {isStatusLoading || isStatusFetching
+                      ? 'Refreshing system snapshot'
+                      : 'System snapshot loaded'}
                   </Badge>
                   <Badge variant="secondary">
-                    {tableCatalogQuery.isLoading ? 'Loading Postgres catalog' : 'Postgres catalog loaded'}
+                    {tableCatalogQuery.isLoading
+                      ? 'Loading Postgres catalog'
+                      : 'Postgres catalog loaded'}
                   </Badge>
                 </div>
               </div>
@@ -879,7 +879,9 @@ export const StrategyDataCatalogPage: React.FC = () => {
                   key={layer.key}
                   className={`relative overflow-hidden rounded-[1.8rem] border px-4 py-4 shadow-[0_18px_38px_rgba(119,63,26,0.08)] ${visual.shellClassName}`}
                 >
-                  <div className={`absolute right-4 top-4 h-16 w-16 rounded-full blur-2xl ${visual.glowClassName}`} />
+                  <div
+                    className={`absolute right-4 top-4 h-16 w-16 rounded-full blur-2xl ${visual.glowClassName}`}
+                  />
                   <div className="relative space-y-4">
                     <div className="space-y-2">
                       <Badge variant="outline" className={visual.chipClassName}>
@@ -926,7 +928,9 @@ export const StrategyDataCatalogPage: React.FC = () => {
                                     {domain.label}
                                   </div>
                                   <div className="mt-1 text-xs text-mcm-walnut/60">
-                                    {(domain.description || 'No domain description published.').trim()}
+                                    {(
+                                      domain.description || 'No domain description published.'
+                                    ).trim()}
                                   </div>
                                 </div>
                                 {domain.metadata?.type ? (
@@ -948,7 +952,10 @@ export const StrategyDataCatalogPage: React.FC = () => {
                                     Columns
                                   </div>
                                   <div className="mt-1 font-mono font-bold text-foreground">
-                                    {formatInt(domain.metadata?.columnCount ?? domain.metadata?.columns?.length)}
+                                    {formatInt(
+                                      domain.metadata?.columnCount ??
+                                        domain.metadata?.columns?.length
+                                    )}
                                   </div>
                                 </div>
                                 <div className="rounded-[1rem] bg-mcm-cream/65 px-3 py-2">
@@ -1056,12 +1063,15 @@ export const StrategyDataCatalogPage: React.FC = () => {
                 Active Focus
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Badge variant="secondary">{selectedLayer === 'all' ? 'All medallions' : titleCase(selectedLayer)}</Badge>
+                <Badge variant="secondary">
+                  {selectedLayer === 'all' ? 'All medallions' : titleCase(selectedLayer)}
+                </Badge>
                 <Badge variant="secondary">
                   {selectedDomain
                     ? atlasLayers
                         .flatMap((layer) => layer.domains)
-                        .find((domain) => domain.key === selectedDomain)?.label || titleCase(selectedDomain)
+                        .find((domain) => domain.key === selectedDomain)?.label ||
+                      titleCase(selectedDomain)
                     : 'All domains'}
                 </Badge>
                 <Badge variant="secondary">{formatInt(filteredTables.length)} visible tables</Badge>
@@ -1119,7 +1129,9 @@ export const StrategyDataCatalogPage: React.FC = () => {
                             </div>
                             <div className="flex flex-wrap gap-2">
                               <Badge variant="outline">{table.layerLabel}</Badge>
-                              {table.domainLabel ? <Badge variant="secondary">{table.domainLabel}</Badge> : null}
+                              {table.domainLabel ? (
+                                <Badge variant="secondary">{table.domainLabel}</Badge>
+                              ) : null}
                             </div>
                           </div>
                           {detailState?.isLoading ? (
@@ -1128,7 +1140,10 @@ export const StrategyDataCatalogPage: React.FC = () => {
                         </div>
 
                         <div className="mt-3 text-xs text-mcm-walnut/65">
-                          {(table.domainDescription || 'Serving-table contract for this medallion slice.').trim()}
+                          {(
+                            table.domainDescription ||
+                            'Serving-table contract for this medallion slice.'
+                          ).trim()}
                         </div>
 
                         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
@@ -1145,7 +1160,11 @@ export const StrategyDataCatalogPage: React.FC = () => {
                               Columns
                             </div>
                             <div className="mt-1 font-mono font-bold text-foreground">
-                              {columnCount ? formatInt(columnCount) : detailState?.isLoading ? '...' : 'Open'}
+                              {columnCount
+                                ? formatInt(columnCount)
+                                : detailState?.isLoading
+                                  ? '...'
+                                  : 'Open'}
                             </div>
                           </div>
                         </div>
@@ -1197,8 +1216,10 @@ export const StrategyDataCatalogPage: React.FC = () => {
                           {selectedTable.tableName}
                         </h2>
                         <p className="mt-3 max-w-[72ch] text-sm text-mcm-walnut/70">
-                          {(selectedTable.domainDescription ||
-                            'Postgres contract for this medallion slice. Descriptions come from published column comments and gold lookup annotations when present.').trim()}
+                          {(
+                            selectedTable.domainDescription ||
+                            'Postgres contract for this medallion slice. Descriptions come from published column comments and gold lookup annotations when present.'
+                          ).trim()}
                         </p>
                       </div>
                     </div>
@@ -1208,7 +1229,10 @@ export const StrategyDataCatalogPage: React.FC = () => {
                         Domain telemetry
                       </div>
                       <div className="mt-2 space-y-1">
-                        <div>Columns in snapshot: {formatInt(selectedTable.domainMetadata?.columnCount)}</div>
+                        <div>
+                          Columns in snapshot:{' '}
+                          {formatInt(selectedTable.domainMetadata?.columnCount)}
+                        </div>
                         <div>Symbols: {formatInt(selectedTable.domainMetadata?.symbolCount)}</div>
                         <div>Storage: {formatBytes(selectedTable.domainMetadata?.totalBytes)}</div>
                         <div>Range: {formatDateRangeLabel(selectedTable.domainMetadata)}</div>
@@ -1252,7 +1276,10 @@ export const StrategyDataCatalogPage: React.FC = () => {
                           note={
                             selectedTableState.data.can_edit
                               ? 'Rows can be edited from the explorer.'
-                              : (selectedTableState.data.edit_reason || 'Editing is disabled for this contract.').trim()
+                              : (
+                                  selectedTableState.data.edit_reason ||
+                                  'Editing is disabled for this contract.'
+                                ).trim()
                           }
                         />
                       </div>
@@ -1294,7 +1321,10 @@ export const StrategyDataCatalogPage: React.FC = () => {
                             <TableBody>
                               {selectedColumns.length === 0 ? (
                                 <TableRow>
-                                  <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                                  <TableCell
+                                    colSpan={4}
+                                    className="py-10 text-center text-sm text-muted-foreground"
+                                  >
                                     No columns matched the current column filter.
                                   </TableCell>
                                 </TableRow>
@@ -1307,7 +1337,9 @@ export const StrategyDataCatalogPage: React.FC = () => {
                                           {column.name}
                                         </div>
                                         <div className="flex flex-wrap gap-2">
-                                          {column.primary_key ? <Badge variant="default">PK</Badge> : null}
+                                          {column.primary_key ? (
+                                            <Badge variant="default">PK</Badge>
+                                          ) : null}
                                           {column.nullable ? (
                                             <Badge variant="outline">Nullable</Badge>
                                           ) : (
@@ -1398,9 +1430,18 @@ export const StrategyDataCatalogPage: React.FC = () => {
                     </div>
                   </div>
                   <ul className="mt-4 space-y-2 text-sm text-mcm-walnut/70">
-                    <li>System-status snapshot provides domain health, column counts, symbols, and storage rollups.</li>
-                    <li>Postgres table metadata provides authoritative table columns, types, keys, and editability.</li>
-                    <li>Gold lookup annotations backfill authored descriptions when the Postgres comment is empty.</li>
+                    <li>
+                      System-status snapshot provides domain health, column counts, symbols, and
+                      storage rollups.
+                    </li>
+                    <li>
+                      Postgres table metadata provides authoritative table columns, types, keys, and
+                      editability.
+                    </li>
+                    <li>
+                      Gold lookup annotations backfill authored descriptions when the Postgres
+                      comment is empty.
+                    </li>
                   </ul>
                 </div>
               </section>
