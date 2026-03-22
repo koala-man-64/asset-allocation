@@ -685,7 +685,9 @@ export function ScheduledJobMonitor({
                               >
                                 <div className="space-y-4 p-4">
                                   <div className="flex items-center justify-between">
-                                    <div className="text-sm font-semibold">Selected Run Details</div>
+                                    <div className="text-sm font-semibold">
+                                      Selected Run Details
+                                    </div>
                                     {job.jobRun?.startTime && (
                                       <span className="text-xs text-muted-foreground">
                                         {formatTimeAgo(job.jobRun.startTime)} ago
