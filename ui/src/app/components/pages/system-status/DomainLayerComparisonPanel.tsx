@@ -302,6 +302,56 @@ function summarizeBlacklistCount(metadata: DomainMetadata): { text: string; clas
   };
 }
 
+function summarizeRetrySymbols(
+  run?: JobRun | null
+): {
+  text: string;
+  title?: string;
+} | null {
+  const metadata = run?.metadata;
+  if (!metadata) return null;
+
+  const previewSymbols = Array.isArray(metadata.retrySymbols)
+    ? metadata.retrySymbols
+        .map((value) => String(value || '').trim())
+        .filter((value): value is string => Boolean(value))
+    : [];
+  const totalCount = hasFiniteNumber(metadata.retrySymbolCount)
+    ? metadata.retrySymbolCount
+    : previewSymbols.length;
+  if (totalCount <= 0 && previewSymbols.length === 0) {
+    return null;
+  }
+
+  const preview = previewSymbols.join(', ');
+  const isTruncated = Boolean(metadata.retrySymbolsTruncated);
+  const hiddenCount = Math.max(totalCount - previewSymbols.length, 0);
+
+  if (preview && hiddenCount === 0 && !isTruncated) {
+    return {
+      text: preview,
+      title: preview
+    };
+  }
+
+  const fragments = [`${numberFormatter.format(totalCount)} total`];
+  if (preview) {
+    fragments.push(preview);
+  }
+  if (hiddenCount > 0) {
+    fragments.push(`+${numberFormatter.format(hiddenCount)} more`);
+  }
+
+  const titleFragments = [preview || null, isTruncated ? 'job log preview truncated' : null].filter(
+    (value): value is string => Boolean(value)
+  );
+
+  return {
+    text: fragments.join(' â€¢ '),
+    title: titleFragments.join(' â€¢ ') || undefined
+  };
+}
+
 function toDataStatusLabel(statusKey: string): string {
   const key = String(statusKey || '')
     .trim()
@@ -1642,6 +1692,7 @@ export function DomainLayerComparisonPanel({
                       const blacklistSummary = metadata
                         ? summarizeBlacklistCount(metadata)
                         : { text: 'blacklist n/a', className: 'text-mcm-walnut/70' };
+                      const retrySymbolsSummary = summarizeRetrySymbols(run);
                       const columnCount = resolveColumnCount(metadata);
                       const storageBytes = metadata?.totalBytes;
                       const dateRangeDisplay = formatMetadataDateRange(metadata);
@@ -1717,6 +1768,7 @@ export function DomainLayerComparisonPanel({
                         dateRangeTooltip,
                         previousLabel,
                         blacklistSummary,
+                        retrySymbolsSummary,
                         financeSubfolderCounts,
                         showFinanceSubfolders,
                         layerVisual,
@@ -1977,6 +2029,19 @@ export function DomainLayerComparisonPanel({
                                       >
                                         {model.averageRuntimeDetail}
                                       </dd>
+                                      {model.retrySymbolsSummary ? (
+                                        <>
+                                          <dt className="self-start text-mcm-walnut/70">
+                                            symbols to retry:
+                                          </dt>
+                                          <dd
+                                            className="min-w-0 break-words text-right text-mcm-walnut/90"
+                                            title={model.retrySymbolsSummary.title}
+                                          >
+                                            {model.retrySymbolsSummary.text}
+                                          </dd>
+                                        </>
+                                      ) : null}
                                       <dt className="text-mcm-walnut/70">job updated:</dt>
                                       <dd
                                         className="min-w-0 truncate text-right text-mcm-walnut/90"

@@ -337,6 +337,32 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.getByText('3m (2 runs)')).toBeInTheDocument();
   });
 
+  it('shows symbols to retry in the expanded job metadata subpanel', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      recentJobs: [
+        {
+          jobName: 'aca-job-market',
+          jobType: 'data-ingest',
+          status: 'failed',
+          startTime: NOW,
+          triggeredBy: 'test',
+          metadata: {
+            retrySymbols: ['AAPL', 'MSFT'],
+            retrySymbolCount: 3
+          }
+        }
+      ]
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+
+    expect(screen.getByText('symbols to retry:')).toBeInTheDocument();
+    expect(screen.getByText(/3 total/)).toBeInTheDocument();
+    expect(screen.getByText(/AAPL, MSFT/)).toBeInTheDocument();
+  });
+
   it('uses an explicit disclosure button for inline domain details', async () => {
     const user = userEvent.setup();
 

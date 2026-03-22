@@ -133,10 +133,7 @@ function formatBinaryBytes(value: number): string {
   return `${formatMetricNumber(sign * scaled, maximumFractionDigits)} ${units[unitIndex]}`;
 }
 
-function formatUsageValue(
-  signal: ResourceSignal | null,
-  metric: 'cpu' | 'memory'
-): string {
+function formatUsageValue(signal: ResourceSignal | null, metric: 'cpu' | 'memory'): string {
   if (!signal || !isFiniteNumber(signal.value)) {
     return '-';
   }

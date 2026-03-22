@@ -133,7 +133,8 @@ function optimisticJobRun(override: SystemHealthJobOverride, recentJobs: JobRun[
     recordsProcessed: existing?.recordsProcessed,
     gitSha: existing?.gitSha,
     triggeredBy: override.triggeredBy,
-    warnings: existing?.warnings
+    warnings: existing?.warnings,
+    metadata: existing?.metadata
   };
 }
 

@@ -431,6 +431,13 @@ export interface DataLayer {
   triggerUrl?: string;
 }
 
+export interface JobRunMetadata {
+  retrySymbols?: string[];
+  retrySymbolCount?: number;
+  retrySymbolsTruncated?: boolean;
+  retrySymbolsUpdatedAt?: string | null;
+}
+
 export interface JobRun {
   jobName: string;
   jobType: 'backtest' | 'data-ingest' | 'attribution' | 'risk-calc' | 'portfolio-build';
@@ -443,6 +450,7 @@ export interface JobRun {
   triggeredBy: string;
   errors?: string[];
   warnings?: string[];
+  metadata?: JobRunMetadata;
 }
 
 export interface SystemAlert {
