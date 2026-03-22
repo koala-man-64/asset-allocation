@@ -47,8 +47,14 @@ import { formatSystemStatusText } from './systemStatusText';
 
 const LOG_LINE_LIMIT = 200;
 const LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 16;
-const CPU_SIGNAL_NAMES = ['cpuusage', 'cpupercentage', 'cpupercent'];
-const MEMORY_SIGNAL_NAMES = ['memoryworkingsetbytes', 'memoryusage', 'memorybytes'];
+const CPU_SIGNAL_NAMES = ['cpuusage', 'cpupercentage', 'cpupercent', 'usagenanocores'];
+const MEMORY_SIGNAL_NAMES = [
+  'memoryworkingsetbytes',
+  'memoryusage',
+  'memorybytes',
+  'usagebytes',
+  'workingsetbytes'
+];
 
 export type JobLogStreamTarget = {
   name: string;
@@ -133,6 +139,12 @@ function formatBinaryBytes(value: number): string {
   return `${formatMetricNumber(sign * scaled, maximumFractionDigits)} ${units[unitIndex]}`;
 }
 
+function formatCpuCoresFromNanocores(value: number): string {
+  const cores = value / 1_000_000_000;
+  const maximumFractionDigits = cores >= 10 ? 1 : cores >= 1 ? 2 : 3;
+  return `${formatMetricNumber(cores, maximumFractionDigits)} cores`;
+}
+
 function formatUsageValue(signal: ResourceSignal | null, metric: 'cpu' | 'memory'): string {
   if (!signal || !isFiniteNumber(signal.value)) {
     return '-';
@@ -141,6 +153,10 @@ function formatUsageValue(signal: ResourceSignal | null, metric: 'cpu' | 'memory
   const unit = normalizeSignalName(signal.unit);
   if (unit.includes('percent')) {
     return formatPercent(signal.value);
+  }
+
+  if (metric === 'cpu' && unit.includes('nanocore')) {
+    return formatCpuCoresFromNanocores(signal.value);
   }
 
   if (metric === 'memory' && unit.includes('byte')) {

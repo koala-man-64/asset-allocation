@@ -4927,11 +4927,11 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     },
     "SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS": {
         "description": "Comma-separated metric names to query for Container Apps.",
-        "example": "CpuUsage,MemoryWorkingSetBytes",
+        "example": "UsageNanoCores,WorkingSetBytes",
     },
     "SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS": {
         "description": "Comma-separated metric names to query for Container Apps Jobs.",
-        "example": "JobExecutionCount,JobExecutionTime",
+        "example": "UsageNanoCores,UsageBytes",
     },
     "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON": {
         "description": "JSON object mapping metric name to thresholds (warn_above/error_above/etc).",

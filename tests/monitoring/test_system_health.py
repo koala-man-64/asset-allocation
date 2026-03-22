@@ -360,6 +360,100 @@ def test_system_health_defaults_arm_api_version_when_not_set(monkeypatch: pytest
     assert captured.get("api_version") == system_health.DEFAULT_ARM_API_VERSION
 
 
+def test_system_health_defaults_job_monitor_metric_names_when_env_not_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "myjob")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS", raising=False)
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    resource_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob"
+    job_url = "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob"
+    metrics_url = f"https://management.azure.com{resource_id}/providers/microsoft.insights/metrics"
+    captured_metric_names: list[str] = []
+
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": resource_id,
+            "properties": {"provisioningState": "Succeeded", "runningState": "Running"},
+        },
+        f"{job_url}/executions": {"value": []},
+        metrics_url: {
+            "value": [
+                {
+                    "name": {"value": "UsageNanoCores"},
+                    "unit": "NanoCores",
+                    "timeseries": [{"data": [{"timeStamp": "2024-01-01T00:00:00Z", "average": 750000000}]}],
+                },
+                {
+                    "name": {"value": "UsageBytes"},
+                    "unit": "Bytes",
+                    "timeseries": [{"data": [{"timeStamp": "2024-01-01T00:00:00Z", "average": 2147483648}]}],
+                },
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            if url == metrics_url and params is not None:
+                captured_metric_names.extend(str(params.get("metricnames") or "").split(","))
+            return responses[url]
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+
+    assert captured_metric_names == ["UsageNanoCores", "UsageBytes"]
+    job_resource = next(
+        (item for item in payload["resources"] if item.get("resourceType") == "Microsoft.App/jobs"),
+        {},
+    )
+    assert job_resource.get("signals") == [
+        {
+            "name": "UsageNanoCores",
+            "value": 750000000.0,
+            "unit": "NanoCores",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "status": "unknown",
+            "source": "metrics",
+        },
+        {
+            "name": "UsageBytes",
+            "value": 2147483648.0,
+            "unit": "Bytes",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "status": "unknown",
+            "source": "metrics",
+        },
+    ]
+
+
 def test_system_health_degraded_on_warning_resource(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")

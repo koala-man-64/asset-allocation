@@ -270,6 +270,50 @@ describe('JobLogStreamPanel', () => {
     expect(screen.getByText(/1\.5 GiB/)).toBeInTheDocument();
   });
 
+  it('formats Azure Monitor job usage metrics using current Azure metric names', async () => {
+    const job: JobLogStreamTarget = {
+      ...JOBS[1],
+      signals: [
+        {
+          name: 'UsageNanoCores',
+          value: 750000000,
+          unit: 'NanoCores',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        },
+        {
+          name: 'UsageBytes',
+          value: 2147483648,
+          unit: 'Bytes',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        }
+      ]
+    };
+
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          tail: ['beta snapshot']
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[job]} />);
+
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    expect(screen.getByText('CPU Usage')).toBeInTheDocument();
+    expect(screen.getByText('0.75 cores')).toBeInTheDocument();
+    expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+    expect(screen.getByText('2 GiB')).toBeInTheDocument();
+  });
+
   it('keeps streaming without refetching when job metadata refreshes for the same run', async () => {
     vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
       jobName: 'beta-job',

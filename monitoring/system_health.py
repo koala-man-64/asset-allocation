@@ -30,6 +30,8 @@ DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_v
 DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX = "system/health_markers"
 DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS = 5.0
 DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB = 3
+DEFAULT_SYSTEM_HEALTH_CONTAINERAPP_MONITOR_METRIC_NAMES = ("UsageNanoCores", "WorkingSetBytes")
+DEFAULT_SYSTEM_HEALTH_JOB_MONITOR_METRIC_NAMES = ("UsageNanoCores", "UsageBytes")
 _RETRY_SYMBOL_METADATA_JOB_NAMES = frozenset({"bronze-finance-job", "bronze-market-job"})
 _RETRY_SYMBOL_LOG_MESSAGE = "Retry-on-next-run candidates (not promoted):"
 
@@ -1893,8 +1895,10 @@ def collect_system_health_snapshot(
 
             containerapp_metric_names = _split_csv(
                 os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
-            )
-            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS"))
+            ) or (list(DEFAULT_SYSTEM_HEALTH_CONTAINERAPP_MONITOR_METRIC_NAMES) if app_names else [])
+            job_metric_names = _split_csv(
+                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS")
+            ) or (list(DEFAULT_SYSTEM_HEALTH_JOB_MONITOR_METRIC_NAMES) if job_names else [])
             monitor_metrics_enabled = bool(containerapp_metric_names or job_metric_names)
             monitor_metrics_api_version = (
                 _require_env("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION")
