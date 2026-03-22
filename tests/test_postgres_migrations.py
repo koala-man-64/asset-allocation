@@ -153,6 +153,28 @@ def test_gold_column_lookup_migration_defines_constraints_and_indexes() -> None:
     assert "USING GIN (calculation_dependencies)" in text
 
 
+def test_add_gold_finance_ratio_columns_migration_rebuilds_view_and_adds_ratio_columns() -> None:
+    repo_root = _repo_root()
+    migration = (
+        repo_root
+        / "deploy"
+        / "sql"
+        / "postgres"
+        / "migrations"
+        / "0033_add_gold_finance_ratio_columns.sql"
+    )
+    text = migration.read_text(encoding="utf-8")
+
+    assert "DROP VIEW IF EXISTS gold.finance_data_by_date;" in text
+    assert "ALTER TABLE IF EXISTS gold.finance_data" in text
+    assert "ADD COLUMN IF NOT EXISTS price_to_book DOUBLE PRECISION" in text
+    assert "ADD COLUMN IF NOT EXISTS current_ratio DOUBLE PRECISION" in text
+    assert "ADD COLUMN IF NOT EXISTS free_cash_flow DOUBLE PRECISION" in text
+    assert "CREATE OR REPLACE VIEW gold.finance_data_by_date AS" in text
+    assert "SELECT * FROM gold.finance_data;" in text
+    assert "GRANT SELECT ON TABLE gold.finance_data_by_date TO backtest_service;" in text
+
+
 def test_provision_azure_postgres_uses_valid_do_block_sql_for_app_user_creation() -> None:
     repo_root = _repo_root()
     script = repo_root / "scripts" / "provision_azure_postgres.ps1"

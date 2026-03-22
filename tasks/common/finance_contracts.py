@@ -6,6 +6,27 @@ PIOTROSKI_FINANCE_SUBDOMAINS: tuple[str, ...] = (
     "cash_flow",
 )
 
+VALUATION_FINANCE_COLUMNS: tuple[str, ...] = (
+    "market_cap",
+    "pe_ratio",
+    "price_to_book",
+    "price_to_sales",
+    "price_to_cash_flow",
+    "price_to_free_cash_flow",
+    "dividend_yield",
+    "return_on_assets",
+    "return_on_equity",
+    "debt_to_equity",
+    "current_ratio",
+    "quick_ratio",
+    "cash_ratio",
+    "ev_to_sales",
+    "ev_to_ebitda",
+    "enterprise_value",
+    "earnings_per_share",
+    "free_cash_flow",
+)
+
 SILVER_FINANCE_SUBDOMAINS: tuple[str, ...] = (
     *PIOTROSKI_FINANCE_SUBDOMAINS,
     "valuation",
@@ -40,8 +61,7 @@ SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN: dict[str, tuple[str, ...]] = {
     "valuation": (
         "date",
         "symbol",
-        "market_cap",
-        "pe_ratio",
+        *VALUATION_FINANCE_COLUMNS,
     ),
 }
 
@@ -93,6 +113,22 @@ SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[str, ...]]
     "valuation": {
         "market_cap": ("market_cap",),
         "pe_ratio": ("pe_ratio", "price_to_earnings"),
+        "price_to_book": ("price_to_book",),
+        "price_to_sales": ("price_to_sales",),
+        "price_to_cash_flow": ("price_to_cash_flow",),
+        "price_to_free_cash_flow": ("price_to_free_cash_flow",),
+        "dividend_yield": ("dividend_yield",),
+        "return_on_assets": ("return_on_assets",),
+        "return_on_equity": ("return_on_equity",),
+        "debt_to_equity": ("debt_to_equity",),
+        "current_ratio": ("current_ratio", "current"),
+        "quick_ratio": ("quick_ratio", "quick"),
+        "cash_ratio": ("cash_ratio", "cash"),
+        "ev_to_sales": ("ev_to_sales",),
+        "ev_to_ebitda": ("ev_to_ebitda",),
+        "enterprise_value": ("enterprise_value",),
+        "earnings_per_share": ("earnings_per_share",),
+        "free_cash_flow": ("free_cash_flow",),
     },
 }
 

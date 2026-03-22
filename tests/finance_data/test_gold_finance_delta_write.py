@@ -151,6 +151,8 @@ def test_project_gold_finance_piotroski_frame_limits_output_schema() -> None:
                     "symbol": "AAPL",
                     "market_cap": 1_000_000.0,
                     "pe_ratio": 20.0,
+                    "price_to_book": 5.0,
+                    "current_ratio": 1.5,
                     "piotroski_roa_pos": 1,
                     "piotroski_cfo_pos": 1,
                     "piotroski_delta_roa_pos": 1,
@@ -170,6 +172,8 @@ def test_project_gold_finance_piotroski_frame_limits_output_schema() -> None:
     assert list(projected.columns) == EXPECTED_GOLD_FINANCE_COLUMNS
     assert projected.loc[0, "market_cap"] == 1_000_000.0
     assert projected.loc[0, "pe_ratio"] == 20.0
+    assert projected.loc[0, "price_to_book"] == 5.0
+    assert projected.loc[0, "current_ratio"] == 1.5
     assert projected.loc[0, "piotroski_f_score"] == 8
     assert "shares_outstanding" not in projected.columns
 
@@ -222,6 +226,8 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
             "symbol": [ticker],
             "market_cap": [1_000_000.0],
             "pe_ratio": [20.0],
+            "price_to_book": [5.0],
+            "current_ratio": [1.4],
         }
     )
 
@@ -247,6 +253,8 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
                     "symbol": ticker,
                     "market_cap": 1_000_000.0,
                     "pe_ratio": 20.0,
+                    "price_to_book": 5.0,
+                    "current_ratio": 1.4,
                     "piotroski_roa_pos": 1,
                     "piotroski_cfo_pos": 1,
                     "piotroski_delta_roa_pos": 1,
@@ -294,11 +302,15 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
     assert index_path == "index"
     assert "market_cap" in list(captured["merged"].columns)
     assert "pe_ratio" in list(captured["merged"].columns)
+    assert "price_to_book" in list(captured["merged"].columns)
+    assert "current_ratio" in list(captured["merged"].columns)
     assert captured["path"] == target_path
     assert captured["mode"] == "overwrite"
     assert list(captured["df"].columns) == EXPECTED_GOLD_FINANCE_COLUMNS
     assert captured["df"].loc[0, "market_cap"] == 1_000_000.0
     assert captured["df"].loc[0, "pe_ratio"] == 20.0
+    assert captured["df"].loc[0, "price_to_book"] == 5.0
+    assert captured["df"].loc[0, "current_ratio"] == 1.4
 
 
 def test_run_alpha26_finance_gold_preflight_blocks_missing_required_inputs(monkeypatch):

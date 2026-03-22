@@ -36,7 +36,7 @@ def test_compute_features_adds_expected_columns() -> None:
         "rev_yoy",
         "net_inc_yoy",
         "gross_margin",
-        "current_ratio",
+        "current_ratio_stmt",
         "piotroski_f_score",
         "roa_ttm",
     }
@@ -58,11 +58,13 @@ def test_compute_features_preserves_optional_valuation_metrics() -> None:
     df = _make_finance_df(8)
     df["market_cap"] = np.linspace(1_000_000, 1_100_000, len(df))
     df["pe_ratio"] = np.linspace(20.0, 21.0, len(df))
+    df["current_ratio"] = np.linspace(1.2, 1.6, len(df))
 
     out = compute_features(df)
 
     assert out.iloc[-1]["market_cap"] == pytest.approx(1_100_000.0)
     assert out.iloc[-1]["pe_ratio"] == pytest.approx(21.0)
+    assert out.iloc[-1]["current_ratio"] == pytest.approx(1.6)
 
 
 def test_piotroski_score_calculation() -> None:

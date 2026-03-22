@@ -202,3 +202,31 @@ def test_market_sync_config_includes_market_structure_columns() -> None:
     assert int(row["sr_support_1_touches"]) == 2
     assert int(row["fib_swing_direction"]) == -1
     assert int(row["fib_in_value_zone"]) == 1
+
+
+def test_finance_sync_config_includes_wide_ratio_columns() -> None:
+    config = sync.get_sync_config("finance")
+    prepared = sync._prepare_frame(  # type: ignore[attr-defined]
+        pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-02-28")],
+                "symbol": ["aapl"],
+                "market_cap": [1_000_000.0],
+                "pe_ratio": [20.0],
+                "price_to_book": [5.2],
+                "current_ratio": [1.8],
+                "ev_to_ebitda": [12.4],
+                "free_cash_flow": [123456.0],
+            }
+        ),
+        config=config,
+    )
+
+    row = prepared.iloc[0]
+    assert "price_to_book" in config.columns
+    assert "current_ratio" in config.columns
+    assert "ev_to_ebitda" in config.columns
+    assert "free_cash_flow" in config.columns
+    assert row["symbol"] == "AAPL"
+    assert row["price_to_book"] == pytest.approx(5.2)
+    assert row["current_ratio"] == pytest.approx(1.8)

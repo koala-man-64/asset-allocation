@@ -50,12 +50,7 @@ def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> 
     monkeypatch.setattr(
         silver.delta_core,
         "load_delta",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [
-                {"date": "2024-03-30", "close": 95.0, "symbol": "AAPL"},
-                {"date": "2024-03-31", "close": 100.0, "symbol": "AAPL"},
-            ]
-        ),
+        lambda *_args, **_kwargs: pytest.fail("valuation parsing should not read market data"),
     )
 
     out = silver._read_finance_json(
@@ -73,10 +68,12 @@ def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> 
         report_type="valuation",
     )
 
-    assert list(out.columns) == ["Date", "Symbol", "market_cap", "pe_ratio"]
-    assert out.loc[0, "market_cap"] == 950.0
-    assert out.loc[1, "market_cap"] == 1000.0
-    assert out.loc[1, "pe_ratio"] == 20.0
+    expected_columns = ["Date", "Symbol", *silver.SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"][2:]]
+    assert list(out.columns) == expected_columns
+    assert len(out) == 1
+    assert out.loc[0, "market_cap"] == 1000.0
+    assert out.loc[0, "pe_ratio"] == 20.0
+    assert pd.isna(out.loc[0, "price_to_book"])
 
 
 def test_read_finance_json_decodes_raw_statement_payloads_and_filters_timeframes() -> None:
@@ -107,12 +104,7 @@ def test_read_finance_json_decodes_raw_valuation_payload(monkeypatch) -> None:
     monkeypatch.setattr(
         silver.delta_core,
         "load_delta",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [
-                {"date": "2024-03-30", "close": 90.0, "symbol": "AAPL"},
-                {"date": "2024-03-31", "close": 100.0, "symbol": "AAPL"},
-            ]
-        ),
+        lambda *_args, **_kwargs: pytest.fail("valuation parsing should not read market data"),
     )
 
     out = silver._read_finance_json(
@@ -120,7 +112,50 @@ def test_read_finance_json_decodes_raw_valuation_payload(monkeypatch) -> None:
             {
                 "status": "OK",
                 "results": [
-                    {"date": "2024-03-30", "market_cap": 900.0, "price_to_earnings": 18.0},
+                    {
+                        "date": "2024-03-30",
+                        "market_cap": 900.0,
+                        "price_to_earnings": 18.0,
+                        "price_to_book": 4.5,
+                        "current": 1.25,
+                    },
+                    {
+                        "date": "2024-03-31",
+                        "market_cap": 1000.0,
+                        "price_to_earnings": 20.0,
+                        "price_to_book": 5.0,
+                        "current": 1.5,
+                        "quick": 1.1,
+                        "cash": 0.6,
+                        "ev_to_ebitda": 12.0,
+                        "free_cash_flow": 12345.0,
+                    },
+                ],
+            }
+        ).encode("utf-8"),
+        ticker="AAPL",
+        report_type="valuation",
+    )
+
+    expected_columns = ["Date", "Symbol", *silver.SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"][2:]]
+    assert list(out.columns) == expected_columns
+    assert out.loc[1, "market_cap"] == 1000.0
+    assert out.loc[1, "pe_ratio"] == 20.0
+    assert out.loc[1, "price_to_book"] == 5.0
+    assert out.loc[1, "current_ratio"] == 1.5
+    assert out.loc[1, "quick_ratio"] == 1.1
+    assert out.loc[1, "cash_ratio"] == 0.6
+    assert out.loc[1, "ev_to_ebitda"] == 12.0
+    assert out.loc[1, "free_cash_flow"] == 12345.0
+
+
+def test_read_finance_json_keeps_last_valuation_row_for_duplicate_dates() -> None:
+    out = silver._read_finance_json(
+        json.dumps(
+            {
+                "status": "OK",
+                "results": [
+                    {"date": "2024-03-31", "market_cap": 900.0, "price_to_earnings": 18.0},
                     {"date": "2024-03-31", "market_cap": 1000.0, "price_to_earnings": 20.0},
                 ],
             }
@@ -129,9 +164,9 @@ def test_read_finance_json_decodes_raw_valuation_payload(monkeypatch) -> None:
         report_type="valuation",
     )
 
-    assert list(out.columns) == ["Date", "Symbol", "market_cap", "pe_ratio"]
-    assert out.loc[1, "market_cap"] == 1000.0
-    assert out.loc[1, "pe_ratio"] == 20.0
+    assert len(out) == 1
+    assert out.loc[0, "market_cap"] == 1000.0
+    assert out.loc[0, "pe_ratio"] == 20.0
 
 
 def test_read_finance_json_rejects_unsupported_payload() -> None:
@@ -192,16 +227,7 @@ def test_process_alpha26_bucket_blob_processes_valuation_rows_into_valuation_buc
         "read_raw_bytes",
         lambda _name, client=None: bucket_df.to_parquet(index=False),
     )
-    monkeypatch.setattr(
-        silver.delta_core,
-        "load_delta",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [
-                {"date": "2026-03-03", "close": 95.0, "symbol": "AAPL"},
-                {"date": "2026-03-04", "close": 100.0, "symbol": "AAPL"},
-            ]
-        ),
-    )
+    monkeypatch.setattr(silver.delta_core, "load_delta", lambda *_args, **_kwargs: pd.DataFrame())
 
     results = silver.process_alpha26_bucket_blob(
         blob,
@@ -215,6 +241,44 @@ def test_process_alpha26_bucket_blob_processes_valuation_rows_into_valuation_buc
     assert len(results) == 1
     assert results[0].status == "ok"
     assert results[0].silver_path == "finance-data/valuation/buckets/A"
+    assert blob_name in watermarks
+
+
+def test_process_alpha26_bucket_blob_skips_empty_valuation_rows(monkeypatch) -> None:
+    blob_name = "finance-data/buckets/A.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": datetime(2026, 3, 4, 1, 0, tzinfo=timezone.utc),
+    }
+    bucket_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "report_type": "valuation",
+                "payload_json": json.dumps({"status": "OK", "results": []}),
+            }
+        ]
+    )
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(
+        silver.mdc,
+        "read_raw_bytes",
+        lambda _name, client=None: bucket_df.to_parquet(index=False),
+    )
+
+    results = silver.process_alpha26_bucket_blob(
+        blob,
+        desired_end=pd.Timestamp("2026-03-04"),
+        backfill_start=None,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "skipped"
     assert blob_name in watermarks
 
 

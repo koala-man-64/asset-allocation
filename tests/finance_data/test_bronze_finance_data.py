@@ -109,7 +109,52 @@ def test_fetch_and_save_raw_marks_empty_valuation_payload_as_coverage_unavailabl
         assert exc_info.value.reason_code == "empty_finance_payload"
         assert exc_info.value.payload == {"symbol": symbol, "report": "valuation"}
         mock_list_manager.add_to_blacklist.assert_not_called()
-        mock_massive.get_ratios.assert_called_once_with(symbol=symbol, limit=1, pagination=False)
+        mock_massive.get_ratios.assert_called_once_with(symbol=symbol, sort="date.asc", pagination=True)
+
+
+def test_fetch_and_save_raw_writes_full_history_valuation_payload(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    raw_payload = {
+        "status": "OK",
+        "request_id": "req-1",
+        "results": [
+            {"date": "2024-03-31", "market_cap": 900.0, "price_to_earnings": 18.0},
+            {"date": "2024-06-30", "market_cap": 1000.0, "price_to_earnings": 20.0},
+        ],
+    }
+    mock_massive.get_ratios.return_value = raw_payload
+    row_store: dict[tuple[str, str], dict[str, object]] = {}
+    coverage_summary = bronze._empty_coverage_summary()
+
+    report = {
+        "folder": "Valuation",
+        "file_suffix": "quarterly_valuation_measures",
+        "report": "valuation",
+    }
+
+    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            report,
+            mock_massive,
+            coverage_summary=coverage_summary,
+            alpha26_mode=True,
+            alpha26_rows=row_store,
+        )
+
+    assert wrote is True
+    stored = row_store[(symbol, "valuation")]
+    payload = json.loads(str(stored["payload_json"]))
+    assert payload == raw_payload
+    assert stored["source_min_date"] == "2024-03-31"
+    assert stored["source_max_date"] == "2024-06-30"
+    assert coverage_summary["provider_valuation_requests"] == 1
+    assert coverage_summary["provider_valuation_nonempty_raw_payloads"] == 1
+    assert coverage_summary["provider_valuation_canonical_rows"] == 2
+    mock_massive.get_ratios.assert_called_once_with(symbol=symbol, sort="date.asc", pagination=True)
 
 
 def test_fetch_and_save_raw_tracks_empty_statement_payload_diagnostics(unique_ticker):

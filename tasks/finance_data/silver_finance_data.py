@@ -95,10 +95,7 @@ _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
 _DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
 _DEFAULT_CATCHUP_MAX_PASSES = 3
 _FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = SILVER_FINANCE_SUBDOMAINS
-_FINANCE_VALUATION_CALCULATED_COLUMNS = {
-    "market_cap",
-    "pe_ratio",
-}
+_FINANCE_VALUATION_CALCULATED_COLUMNS = set(SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"][2:])
 _STATEMENT_TIMEFRAMES = frozenset({"quarterly", "annual"})
 
 
@@ -262,28 +259,6 @@ def _get_first_value(payload: dict[str, Any], candidates: tuple[str, ...]) -> An
     return None
 
 
-def _load_close_prices(ticker: str) -> pd.DataFrame:
-    symbol = str(ticker or "").strip().upper()
-    if not symbol:
-        return pd.DataFrame()
-
-    layer_bucketing.silver_layout_mode()
-    market_path = DataPaths.get_silver_market_bucket_path(layer_bucketing.bucket_letter(symbol))
-    df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, market_path, columns=["date", "close", "symbol"])
-    if df is not None and not df.empty and "symbol" in df.columns:
-        df = df[df["symbol"].astype(str).str.upper() == symbol]
-
-    if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
-        return pd.DataFrame()
-
-    out = df[["date", "close"]].copy()
-    out = out.rename(columns={"date": "Date", "close": "Close"})
-    out["Date"] = coerce_to_naive_datetime(out["Date"])
-    out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
-    out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
-    return out
-
-
 def _normalize_finance_report_type(report_type: Any) -> str:
     return str(report_type or "").strip().lower()
 
@@ -321,77 +296,53 @@ def _is_raw_finance_payload(payload: dict[str, Any]) -> bool:
     return isinstance(payload, dict) and isinstance(payload.get("results"), list)
 
 
-def _extract_valuation_snapshot(payload: dict[str, Any], *, report_type: str) -> Optional[dict[str, Any]]:
+def _read_valuation_payload(payload: dict[str, Any], *, ticker: str, report_type: str) -> pd.DataFrame:
     alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN["valuation"]
+    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"]
     if _is_canonical_finance_payload(payload, report_type=report_type):
-        as_of = _extract_finance_row_date({"as_of": payload.get("as_of")}, report_type="valuation")
-        if as_of is None:
-            return None
-        market_cap = _try_parse_float(_get_first_value(payload, alias_map["market_cap"]))
-        pe_ratio = _try_parse_float(_get_first_value(payload, alias_map["pe_ratio"]))
-        if market_cap is None and pe_ratio is None:
-            return None
-        return {"as_of": as_of, "market_cap": market_cap, "pe_ratio": pe_ratio}
+        rows = payload.get("rows")
+        if isinstance(rows, list):
+            reports = rows
+        elif payload.get("as_of") is not None:
+            reports = [payload]
+        else:
+            return pd.DataFrame(columns=["Date", "Symbol", *expected_columns[2:]])
+    else:
+        results = payload.get("results")
+        if not isinstance(results, list) or not results:
+            return pd.DataFrame(columns=["Date", "Symbol", *expected_columns[2:]])
+        reports = results
 
-    results = payload.get("results")
-    if not isinstance(results, list) or not results:
-        return None
-
-    candidates: list[tuple[pd.Timestamp, int, dict[str, Any]]] = []
-    for index, item in enumerate(results):
+    prepared_rows: list[tuple[pd.Timestamp, int, dict[str, Any]]] = []
+    for index, item in enumerate(reports):
         if not isinstance(item, dict):
             continue
         report_date = _extract_finance_row_date(item, report_type="valuation")
         if report_date is None:
             continue
-        candidates.append((report_date, index, item))
-    if not candidates:
-        return None
+        row: dict[str, Any] = {"Date": report_date, "Symbol": ticker}
+        for column in expected_columns[2:]:
+            row[column] = _try_parse_float(_get_first_value(item, alias_map[column]))
+        if not any(row.get(column) is not None for column in expected_columns[2:]):
+            continue
+        prepared_rows.append((report_date, index, row))
 
-    candidates.sort(key=lambda entry: (entry[0], entry[1]))
-    latest_date, _latest_index, latest_row = candidates[-1]
-    market_cap = _try_parse_float(_get_first_value(latest_row, alias_map["market_cap"]))
-    pe_ratio = _try_parse_float(_get_first_value(latest_row, alias_map["pe_ratio"]))
-    if market_cap is None and pe_ratio is None:
-        return None
-    return {"as_of": latest_date, "market_cap": market_cap, "pe_ratio": pe_ratio}
+    if not prepared_rows:
+        return pd.DataFrame(columns=["Date", "Symbol", *expected_columns[2:]])
 
+    deduped: dict[pd.Timestamp, dict[str, Any]] = {}
+    for report_date, index, row in sorted(prepared_rows, key=lambda entry: (entry[0], entry[1])):
+        del index
+        deduped[report_date] = row
 
-def _build_valuation_timeseries(snapshot: dict[str, Any], *, ticker: str) -> pd.DataFrame:
-    df_prices = _load_close_prices(ticker)
-    if df_prices.empty:
-        return pd.DataFrame()
-
-    as_of = snapshot.get("as_of")
-    if as_of is None or pd.isna(as_of):
-        return pd.DataFrame()
-    df_prices = df_prices[df_prices["Date"] <= as_of].copy()
-    if df_prices.empty:
-        return pd.DataFrame()
-
-    market_cap_now = _try_parse_float(snapshot.get("market_cap"))
-    pe_ratio_now = _try_parse_float(snapshot.get("pe_ratio"))
-    anchor_close = float(df_prices["Close"].iloc[-1])
-    if anchor_close <= 0:
-        return pd.DataFrame()
-
-    scale = df_prices["Close"] / anchor_close
-    out = pd.DataFrame({"Date": df_prices["Date"], "Symbol": ticker})
-
-    if market_cap_now is not None:
-        out["market_cap"] = float(market_cap_now) * scale
-
-    if pe_ratio_now is not None:
-        out["pe_ratio"] = float(pe_ratio_now) * scale
-
-    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"][2:]
-    for column in expected_columns:
-        if column not in out.columns:
-            out[column] = pd.Series(dtype="float64")
-
-    out["Date"] = coerce_to_naive_datetime(out["Date"])
-    out = out.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
-    return out[["Date", "Symbol", *expected_columns]]
+    ordered_rows = [deduped[key] for key in sorted(deduped.keys())]
+    df = pd.DataFrame(ordered_rows)
+    for column in expected_columns[2:]:
+        if column not in df.columns:
+            df[column] = pd.Series(dtype="float64")
+    df["Date"] = coerce_to_naive_datetime(df["Date"])
+    df = df.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
+    return df[["Date", "Symbol", *expected_columns[2:]]]
 
 
 def _read_statement_payload(payload: dict[str, Any], *, ticker: str, report_type: str) -> pd.DataFrame:
@@ -476,10 +427,7 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, report_type: str) -> pd
         raise ValueError(f"Unsupported finance payload schema for {ticker}/{sub_domain}.")
 
     if sub_domain == "valuation":
-        snapshot = _extract_valuation_snapshot(payload, report_type=sub_domain)
-        if snapshot is None:
-            return pd.DataFrame()
-        return _build_valuation_timeseries(snapshot, ticker=ticker)
+        return _read_valuation_payload(payload, ticker=ticker, report_type=sub_domain)
 
     return _read_statement_payload(payload, ticker=ticker, report_type=sub_domain)
 
@@ -956,13 +904,14 @@ def _process_finance_frame(
     persist: bool = True,
     alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
 ) -> BlobProcessResult:
+    is_optional_valuation = suffix == "quarterly_valuation_measures"
     if df_raw is None or df_raw.empty:
         return BlobProcessResult(
             blob_name=blob_name,
             silver_path=silver_path,
             ticker=ticker,
-            status="failed",
-            error=f"Empty finance payload: {blob_name}",
+            status="skipped" if is_optional_valuation else "failed",
+            error=None if is_optional_valuation else f"Empty finance payload: {blob_name}",
         )
 
     df_clean = df_raw
@@ -1053,8 +1002,8 @@ def _process_finance_frame(
             blob_name=blob_name,
             silver_path=silver_path,
             ticker=ticker,
-            status="failed",
-            error="No valid dated rows after cleaning/resample.",
+            status="skipped" if is_optional_valuation else "failed",
+            error=None if is_optional_valuation else "No valid dated rows after cleaning/resample.",
         )
 
     df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)

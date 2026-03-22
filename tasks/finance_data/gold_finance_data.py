@@ -13,7 +13,7 @@ from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import coerce_to_naive_datetime, normalize_columns_to_snake_case
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
-from tasks.common.finance_contracts import SILVER_FINANCE_SUBDOMAINS
+from tasks.common.finance_contracts import SILVER_FINANCE_SUBDOMAINS, VALUATION_FINANCE_COLUMNS
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
     collect_delta_silver_finance_symbols,
@@ -77,13 +77,17 @@ _REQUIRED_FEATURE_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
 _OPTIONAL_OUTPUT_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
     "market_cap": ("market_cap", "Market Cap", "MarketCapitalization"),
     "pe_ratio": ("pe_ratio", "PE Ratio", "P/E", "PERatio"),
+    **{
+        column: (column,)
+        for column in VALUATION_FINANCE_COLUMNS
+        if column not in {"market_cap", "pe_ratio"}
+    },
 }
 _GOLD_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = SILVER_FINANCE_SUBDOMAINS
 _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
     "date",
     "symbol",
-    "market_cap",
-    "pe_ratio",
+    *VALUATION_FINANCE_COLUMNS,
     "piotroski_roa_pos",
     "piotroski_cfo_pos",
     "piotroski_delta_roa_pos",
@@ -95,10 +99,7 @@ _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
     "piotroski_asset_turnover_increase",
     "piotroski_f_score",
 )
-_GOLD_FINANCE_FLOAT_COLUMNS: Tuple[str, ...] = (
-    "market_cap",
-    "pe_ratio",
-)
+_GOLD_FINANCE_FLOAT_COLUMNS: Tuple[str, ...] = tuple(VALUATION_FINANCE_COLUMNS)
 _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS: Tuple[str, ...] = tuple(
     column for column in _GOLD_FINANCE_PIOTROSKI_COLUMNS if column.startswith("piotroski_")
 )
@@ -320,7 +321,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["net_inc_yoy"] = _safe_div(net_income, net_income.groupby(symbol_key, sort=False).shift(4)) - 1.0
     out["gross_margin"] = _safe_div(gross_profit, revenue)
     out["margin_delta_qoq"] = out["gross_margin"] - out["gross_margin"].groupby(symbol_key, sort=False).shift(1)
-    out["current_ratio"] = _safe_div(current_assets, current_liabilities)
+    out["current_ratio_stmt"] = _safe_div(current_assets, current_liabilities)
     out["shares_change_yoy"] = _safe_div(shares_outstanding, shares_outstanding.groupby(symbol_key, sort=False).shift(4)) - 1.0
 
     net_income_ttm = net_income.groupby(symbol_key, sort=False).transform(
@@ -346,7 +347,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     roa_lag = out["roa_ttm"].groupby(symbol_key, sort=False).shift(4)
     lt_debt_lag = out["long_term_debt_to_assets"].groupby(symbol_key, sort=False).shift(4)
-    current_ratio_lag = out["current_ratio"].groupby(symbol_key, sort=False).shift(4)
+    current_ratio_lag = out["current_ratio_stmt"].groupby(symbol_key, sort=False).shift(4)
     gross_margin_lag = out["gross_margin_ttm"].groupby(symbol_key, sort=False).shift(4)
     asset_turnover_lag = out["asset_turnover_ttm"].groupby(symbol_key, sort=False).shift(4)
     shares_outstanding_lag = out["shares_outstanding"].groupby(symbol_key, sort=False).shift(4)
@@ -356,7 +357,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["piotroski_delta_roa_pos"] = (out["roa_ttm"] > roa_lag).astype(int)
     out["piotroski_accruals_pos"] = (out["operating_cash_flow_ttm"] > out["net_income_ttm"]).astype(int)
     out["piotroski_leverage_decrease"] = (out["long_term_debt_to_assets"] < lt_debt_lag).astype(int)
-    out["piotroski_liquidity_increase"] = (out["current_ratio"] > current_ratio_lag).astype(int)
+    out["piotroski_liquidity_increase"] = (out["current_ratio_stmt"] > current_ratio_lag).astype(int)
     out["piotroski_no_new_shares"] = (out["shares_outstanding"] <= shares_outstanding_lag).astype(int)
     out["piotroski_gross_margin_increase"] = (out["gross_margin_ttm"] > gross_margin_lag).astype(int)
     out["piotroski_asset_turnover_increase"] = (out["asset_turnover_ttm"] > asset_turnover_lag).astype(int)

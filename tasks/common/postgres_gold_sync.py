@@ -7,6 +7,7 @@ from typing import Any, Mapping, Optional, Sequence
 import pandas as pd
 
 from core.postgres import PostgresError, connect, copy_rows, get_dsn
+from tasks.common.finance_contracts import VALUATION_FINANCE_COLUMNS
 
 
 _MARKET_COLUMNS: tuple[str, ...] = (
@@ -222,8 +223,7 @@ _MARKET_BIGINT_COLUMNS = frozenset({"volume"})
 _FINANCE_COLUMNS: tuple[str, ...] = (
     "date",
     "symbol",
-    "market_cap",
-    "pe_ratio",
+    *VALUATION_FINANCE_COLUMNS,
     "piotroski_roa_pos",
     "piotroski_cfo_pos",
     "piotroski_delta_roa_pos",

@@ -570,21 +570,36 @@ Rows are extracted from Bronze JSON, reduced to the required Piotroski fields, t
 
 Path: `finance-data/valuation/buckets/{bucket}`
 
-Rows are derived from Bronze `overview` payloads and Silver market close prices, then resampled to daily frequency with forward fill.
+Rows are normalized directly from Bronze Massive `ratios` history, then resampled to daily frequency with forward fill.
 
 | Column | Type | Description |
 | --- | --- | --- |
 | `date` | datetime | Daily as-of date after forward fill. |
 | `symbol` | string | Uppercased ticker symbol. |
-| `market_cap` | number | Approximate daily market capitalization derived from `overview` and close-price scaling. |
-| `pe_ratio` | number | Approximate daily trailing P/E ratio derived from `overview` and close-price scaling. |
-| `forward_pe` | number | Approximate daily forward P/E ratio derived from `overview` and close-price scaling. |
+| `market_cap` | number | Daily market capitalization carried from Massive ratios history. |
+| `pe_ratio` | number | Daily trailing P/E carried from Massive ratios history. |
+| `price_to_book` | number | Daily price-to-book ratio carried from Massive ratios history. |
+| `price_to_sales` | number | Daily price-to-sales ratio carried from Massive ratios history. |
+| `price_to_cash_flow` | number | Daily price-to-cash-flow ratio carried from Massive ratios history. |
+| `price_to_free_cash_flow` | number | Daily price-to-free-cash-flow ratio carried from Massive ratios history. |
+| `dividend_yield` | number | Daily dividend yield carried from Massive ratios history. |
+| `return_on_assets` | number | Daily return on assets carried from Massive ratios history. |
+| `return_on_equity` | number | Daily return on equity carried from Massive ratios history. |
+| `debt_to_equity` | number | Daily debt-to-equity ratio carried from Massive ratios history. |
+| `current_ratio` | number | Daily current ratio carried from Massive ratios history. |
+| `quick_ratio` | number | Daily quick ratio carried from Massive ratios history. |
+| `cash_ratio` | number | Daily cash ratio carried from Massive ratios history. |
+| `ev_to_sales` | number | Daily enterprise-value-to-sales ratio carried from Massive ratios history. |
+| `ev_to_ebitda` | number | Daily enterprise-value-to-EBITDA ratio carried from Massive ratios history. |
+| `enterprise_value` | number | Daily enterprise value carried from Massive ratios history. |
+| `earnings_per_share` | number | Daily earnings per share carried from Massive ratios history. |
+| `free_cash_flow` | number | Daily free cash flow carried from Massive ratios history. |
 
 ### Gold Finance
 
 Path: `finance/buckets/{bucket}`
 
-Gold finance computes a larger feature set internally, then persists the Piotroski output together with the selected valuation metrics carried from Silver.
+Gold finance computes a larger feature set internally, then persists the Piotroski output together with the valuation metrics carried from Silver.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -592,7 +607,22 @@ Gold finance computes a larger feature set internally, then persists the Piotros
 | `symbol` | string | Uppercased ticker symbol. |
 | `market_cap` | number | Daily market capitalization carried from Silver valuation. |
 | `pe_ratio` | number | Daily trailing P/E carried from Silver valuation. |
-| `forward_pe` | number | Daily forward P/E carried from Silver valuation. |
+| `price_to_book` | number | Daily price-to-book ratio carried from Silver valuation. |
+| `price_to_sales` | number | Daily price-to-sales ratio carried from Silver valuation. |
+| `price_to_cash_flow` | number | Daily price-to-cash-flow ratio carried from Silver valuation. |
+| `price_to_free_cash_flow` | number | Daily price-to-free-cash-flow ratio carried from Silver valuation. |
+| `dividend_yield` | number | Daily dividend yield carried from Silver valuation. |
+| `return_on_assets` | number | Daily return on assets carried from Silver valuation. |
+| `return_on_equity` | number | Daily return on equity carried from Silver valuation. |
+| `debt_to_equity` | number | Daily debt-to-equity ratio carried from Silver valuation. |
+| `current_ratio` | number | Provider current ratio carried from Silver valuation. |
+| `quick_ratio` | number | Daily quick ratio carried from Silver valuation. |
+| `cash_ratio` | number | Daily cash ratio carried from Silver valuation. |
+| `ev_to_sales` | number | Daily enterprise-value-to-sales ratio carried from Silver valuation. |
+| `ev_to_ebitda` | number | Daily enterprise-value-to-EBITDA ratio carried from Silver valuation. |
+| `enterprise_value` | number | Daily enterprise value carried from Silver valuation. |
+| `earnings_per_share` | number | Daily earnings per share carried from Silver valuation. |
+| `free_cash_flow` | number | Daily free cash flow carried from Silver valuation. |
 | `piotroski_roa_pos` | nullable int | `1` when trailing-twelve-month ROA is positive. |
 | `piotroski_cfo_pos` | nullable int | `1` when trailing-twelve-month operating cash flow is positive. |
 | `piotroski_delta_roa_pos` | nullable int | `1` when trailing-twelve-month ROA improved versus four periods earlier. |

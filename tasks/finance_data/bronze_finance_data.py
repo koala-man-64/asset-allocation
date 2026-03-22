@@ -82,7 +82,7 @@ _COVERAGE_DOMAIN = "finance"
 _COVERAGE_PROVIDER = "massive"
 _INVALID_CANDIDATE_REASON = "core_statements_provider_invalid"
 _FINANCE_SCHEMA_VERSION = 2
-_VALUATION_QUERY_LIMIT = 1
+_VALUATION_QUERY_SORT = "date.asc"
 _CORE_FINANCE_REPORTS = frozenset({"balance_sheet", "cash_flow", "income_statement"})
 _TRACE_FINANCE_ENABLED = (os.environ.get("MASSIVE_FINANCE_TRACE_ENABLED") or "").strip().lower() in {
     "1",
@@ -146,6 +146,7 @@ def _empty_coverage_summary() -> dict[str, int]:
         "provider_valuation_empty_raw_payloads": 0,
         "provider_valuation_nonempty_raw_payloads": 0,
         "provider_valuation_errors": 0,
+        "provider_valuation_canonical_rows": 0,
         "provider_valuation_canonical_empty_payloads": 0,
     }
 
@@ -195,7 +196,7 @@ def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
     return text[: max(0, limit - 3)] + "..."
 
 
-def _summarize_massive_payload(payload: Any) -> str:
+def _summarize_massive_payload(payload: Any, *, report_name: Optional[str] = None) -> str:
     if not isinstance(payload, dict):
         return f"payload_type={type(payload).__name__}"
 
@@ -209,13 +210,18 @@ def _summarize_massive_payload(payload: Any) -> str:
     results = payload.get("results")
     if isinstance(results, list):
         parts.append(f"results_len={len(results)}")
-        if results and isinstance(results[0], dict):
-            first = results[0]
-            first_date = first.get("period_end") or first.get("date") or first.get("as_of")
-            if first_date:
-                parts.append(f"first_date={_truncate_trace_text(first_date, limit=32)}")
     else:
         parts.append(f"results_type={type(results).__name__ if results is not None else 'None'}")
+    try:
+        dates = sorted(_payload_report_dates(payload, report_name=report_name))
+    except Exception:
+        dates = []
+    if dates:
+        parts.append(f"usable_dates={len(dates)}")
+        parts.append(f"earliest_date={dates[0].isoformat()}")
+        parts.append(f"latest_date={dates[-1].isoformat()}")
+    elif isinstance(results, list) and results:
+        parts.append("usable_dates=0")
     parts.append(f"next_url={'present' if payload.get('next_url') else 'none'}")
     if payload.get("error"):
         parts.append(f"error={_truncate_trace_text(payload.get('error'))}")
@@ -272,7 +278,7 @@ def _log_finance_payload_observation(
         _emit_bounded_trace(
             "provider_response_anomaly",
             f"Massive finance response symbol={symbol} report={report_name} "
-            f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload)}",
+            f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload, report_name=report_name)}",
             warning=True,
         )
         return
@@ -281,7 +287,7 @@ def _log_finance_payload_observation(
     _emit_bounded_trace(
         "provider_response_success",
         f"Massive finance response symbol={symbol} report={report_name} "
-        f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload)}",
+        f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload, report_name=report_name)}",
         warning=False,
         limit=_TRACE_FINANCE_SUCCESS_LIMIT,
     )
@@ -568,6 +574,9 @@ def _payload_row_items(payload: dict[str, Any], *, report_name: str) -> list[dic
     normalized_report = _normalize_report_name(report_name or payload.get("report_type"))
     if _is_canonical_finance_payload(payload, report_name=normalized_report):
         if normalized_report == "valuation":
+            rows = payload.get("rows")
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
             row = {
                 "as_of": payload.get("as_of"),
                 "market_cap": payload.get("market_cap"),
@@ -644,8 +653,8 @@ def _fetch_massive_finance_payload(
         try:
             payload = massive_client.get_ratios(
                 symbol=symbol,
-                limit=_VALUATION_QUERY_LIMIT,
-                pagination=False,
+                sort=_VALUATION_QUERY_SORT,
+                pagination=True,
             )
         except BaseException as exc:
             if coverage_summary is not None:
@@ -666,6 +675,10 @@ def _fetch_massive_finance_payload(
             if results:
                 if coverage_summary is not None:
                     coverage_summary["provider_valuation_nonempty_raw_payloads"] += 1
+                    coverage_summary["provider_valuation_canonical_rows"] += _count_usable_payload_rows(
+                        payload,
+                        report_name=report_name,
+                    )
                 _log_finance_payload_observation(
                     symbol=symbol,
                     report_name=report_name,
@@ -687,7 +700,7 @@ def _fetch_massive_finance_payload(
             _emit_bounded_trace(
                 "valuation_unexpected_payload",
                 f"Massive valuation payload missing results list symbol={symbol} report={report_name} "
-                f"{_summarize_massive_payload(payload)}",
+                f"{_summarize_massive_payload(payload, report_name=report_name)}",
                 warning=True,
             )
         return payload
@@ -788,6 +801,13 @@ def _is_empty_finance_payload(payload: dict[str, Any], *, report_name: str) -> b
         return True
 
     if payload_report_type == "valuation":
+        rows = _payload_row_items(payload, report_name=payload_report_type)
+        if rows:
+            return not any(
+                _extract_report_date_from_row(payload_report_type, row) is not None
+                for row in rows
+                if isinstance(row, dict)
+            )
         return not _has_non_empty_value(payload.get("as_of")) or not any(
             _has_non_empty_value(payload.get(key)) for key in ("market_cap", "pe_ratio")
         )
@@ -1544,6 +1564,7 @@ async def main_async() -> int:
         "provider_valuation_empty_raw_payloads={provider_valuation_empty_raw_payloads} "
         "provider_valuation_nonempty_raw_payloads={provider_valuation_nonempty_raw_payloads} "
         "provider_valuation_errors={provider_valuation_errors} "
+        "provider_valuation_canonical_rows={provider_valuation_canonical_rows} "
         "provider_valuation_canonical_empty_payloads={provider_valuation_canonical_empty_payloads} "
         "job_status={job_status}".format(
             **progress,
