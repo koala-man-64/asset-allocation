@@ -42,8 +42,13 @@ type JobResourceSummary = {
 };
 
 export function SystemStatusPage() {
-  const { data, isLoading, error, isFetching, refresh: refreshSystemStatusView } =
-    useSystemStatusViewQuery({
+  const {
+    data,
+    isLoading,
+    error,
+    isFetching,
+    refresh: refreshSystemStatusView
+  } = useSystemStatusViewQuery({
     autoRefresh: true
   });
   const queryClient = useQueryClient();
