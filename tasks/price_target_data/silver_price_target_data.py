@@ -108,6 +108,10 @@ def _parse_alpha26_bucket_from_blob_name(blob_name: str) -> Optional[str]:
     return bronze_bucketing.parse_bucket_from_blob_name(blob_name, expected_prefix="price-target-data")
 
 
+def _extract_ticker(blob_name: str) -> str:
+    return str(blob_name or "").replace("price-target-data/", "").replace(".parquet", "")
+
+
 def _restore_blob_watermark(
     watermarks: dict,
     *,
@@ -316,6 +320,48 @@ def _process_symbol_frame(
     if persist:
         mdc.write_line(f"Updated Silver {ticker}")
     return "ok"
+
+
+def process_blob(
+    blob,
+    *,
+    watermarks: dict,
+    include_history: bool = True,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+) -> str:
+    blob_name = str(blob.get("name", ""))
+    watermark_key = normalize_watermark_blob_name(blob_name)
+    if not blob_name.endswith(".parquet"):
+        return "skipped_non_parquet"
+
+    ticker = _extract_ticker(blob_name)
+    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
+        return "skipped_debug_symbols"
+
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(watermark_key))
+    if unchanged:
+        return "skipped_unchanged"
+
+    mdc.write_line(f"Processing {ticker}...")
+    try:
+        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
+        df_new = pd.read_parquet(BytesIO(raw_bytes))
+        status = _process_symbol_frame(
+            ticker=ticker,
+            df_new=df_new,
+            source_name=blob_name,
+            include_history=include_history,
+            persist=persist,
+            alpha26_bucket_frames=alpha26_bucket_frames,
+        )
+        if status == "ok" and signature:
+            signature["updated_at"] = _utc_now_iso()
+            watermarks[watermark_key] = signature
+        return status
+    except Exception as exc:
+        mdc.write_error(f"Failed to process {ticker}: {exc}")
+        return "failed"
 
 
 def process_alpha26_bucket_blob(

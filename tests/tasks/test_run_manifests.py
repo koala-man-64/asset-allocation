@@ -126,6 +126,34 @@ def test_resolve_active_bronze_alpha26_prefix_returns_manifest_data_prefix(monke
     assert run_manifests.resolve_active_bronze_alpha26_prefix("market") == "market-data/runs/run-456"
 
 
+def test_load_latest_bronze_finance_manifest_backfills_legacy_blob_fields(monkeypatch):
+    monkeypatch.setattr(
+        run_manifests,
+        "load_latest_bronze_alpha26_manifest",
+        lambda _domain: {
+            "runId": "run-123",
+            "manifestPath": "system/run-manifests/bronze_finance/run-123.json",
+            "producedAt": "2026-02-26T00:00:00+00:00",
+            "dataPrefix": "finance-data/runs/run-123",
+            "bucketPaths": [
+                {"name": "finance-data/runs/run-123/buckets/A.parquet"},
+                {"name": "finance-data/runs/run-123/buckets/B.parquet"},
+            ],
+        },
+    )
+
+    manifest = run_manifests.load_latest_bronze_finance_manifest()
+
+    assert manifest is not None
+    assert manifest["blobPrefix"] == "finance-data/"
+    assert manifest["blobCount"] == 2
+    assert [item["name"] for item in manifest["blobs"]] == [
+        "finance-data/runs/run-123/buckets/A.parquet",
+        "finance-data/runs/run-123/buckets/B.parquet",
+    ]
+    assert all(item["last_modified"] == "2026-02-26T00:00:00+00:00" for item in manifest["blobs"])
+
+
 def test_write_and_read_silver_manifest_ack(monkeypatch):
     saved: dict[str, dict] = {}
 
