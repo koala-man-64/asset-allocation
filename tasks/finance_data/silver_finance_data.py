@@ -66,6 +66,7 @@ class BlobProcessResult:
     status: str  # ok|skipped|failed
     rows_written: Optional[int] = None
     error: Optional[str] = None
+    reason: Optional[str] = None
     watermark_signature: Optional[dict[str, Optional[str]]] = None
 
 
@@ -87,6 +88,8 @@ class _FinanceAlpha26FlushState:
     written_symbols: int = 0
     index_path: Optional[str] = None
     column_count: Optional[int] = None
+    cached_symbol_maps: Optional[dict[str, dict[str, str]]] = None
+    index_recovery_source: Optional[str] = None
 
 
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
@@ -200,13 +203,28 @@ def _build_alpha26_checkpoint_candidates(
 def _log_alpha26_blob_results(*, blob_name: str, results: list[BlobProcessResult]) -> None:
     ok_count = sum(1 for result in results if result.status == "ok")
     skipped_count = sum(1 for result in results if result.status == "skipped")
+    no_data_results = [result for result in results if result.status == "skipped" and result.reason == "no_data"]
     failed_results = [result for result in results if result.status == "failed"]
     row_count = sum(int(result.rows_written or 0) for result in results if result.status == "ok")
     summary = (
         "Silver finance blob processed: "
-        f"blob={blob_name} ok={ok_count} skipped={skipped_count} failed={len(failed_results)} rows={row_count}"
+        f"blob={blob_name} ok={ok_count} skipped={skipped_count} skippedNoData={len(no_data_results)} "
+        f"failed={len(failed_results)} rows={row_count}"
     )
+    no_data_preview: list[str] = []
+    for result in no_data_results[:3]:
+        ticker = result.ticker or "n/a"
+        error = str(result.error or "no data").replace("\n", " ").strip()
+        if len(error) > 160:
+            error = error[:157] + "..."
+        no_data_preview.append(f"{ticker}: {error}")
+    if len(no_data_results) > 3:
+        no_data_preview.append("...")
+
     if not failed_results:
+        if no_data_preview:
+            mdc.write_line(f"{summary} no_data={' | '.join(no_data_preview)}")
+            return
         mdc.write_line(summary)
         return
 
@@ -220,7 +238,10 @@ def _log_alpha26_blob_results(*, blob_name: str, results: list[BlobProcessResult
     if len(failed_results) > 3:
         failure_preview.append("...")
     log_fn = mdc.write_error if ok_count == 0 and skipped_count == 0 else mdc.write_warning
-    log_fn(f"{summary} failures={' | '.join(failure_preview)}")
+    message = f"{summary} failures={' | '.join(failure_preview)}"
+    if no_data_preview:
+        message = f"{message} no_data={' | '.join(no_data_preview)}"
+    log_fn(message)
 
 
 def _normalize_key(name: Any) -> str:
@@ -574,8 +595,46 @@ def _restore_blob_watermark(
     watermarks[watermark_key] = dict(prior_signature)
 
 
+def _empty_finance_symbol_maps() -> dict[str, dict[str, str]]:
+    return {sub_domain: {} for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS}
+
+
+def _copy_finance_symbol_maps(symbol_maps: Optional[dict[str, dict[str, str]]]) -> dict[str, dict[str, str]]:
+    out = _empty_finance_symbol_maps()
+    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
+    for sub_domain, mapping in (symbol_maps or {}).items():
+        normalized_sub_domain = layer_bucketing.normalize_sub_domain(sub_domain)
+        if normalized_sub_domain not in out or not isinstance(mapping, dict):
+            continue
+        for symbol, bucket in mapping.items():
+            clean_symbol = str(symbol or "").strip().upper()
+            clean_bucket = str(bucket or "").strip().upper()
+            if not clean_symbol or clean_bucket not in valid_buckets:
+                continue
+            out[normalized_sub_domain][clean_symbol] = clean_bucket
+    return out
+
+
+def _finance_symbol_maps_have_values(symbol_maps: Optional[dict[str, dict[str, str]]]) -> bool:
+    return any(bool(mapping) for mapping in (symbol_maps or {}).values())
+
+
+def _collect_frame_symbol_to_bucket_map(frame: Optional[pd.DataFrame], *, bucket: str) -> dict[str, str]:
+    if frame is None or frame.empty or "symbol" not in frame.columns:
+        return {}
+    clean_bucket = str(bucket or "").strip().upper()
+    if clean_bucket not in set(layer_bucketing.ALPHABET_BUCKETS):
+        return {}
+    out: dict[str, str] = {}
+    for value in frame["symbol"].dropna().tolist():
+        symbol = str(value or "").strip().upper()
+        if symbol:
+            out[symbol] = clean_bucket
+    return out
+
+
 def _load_existing_finance_symbol_maps() -> dict[str, dict[str, str]]:
-    out: dict[str, dict[str, str]] = {sub_domain: {} for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS}
+    out = _empty_finance_symbol_maps()
     existing = layer_bucketing.load_layer_symbol_index(layer="silver", domain="finance")
     if existing is None or existing.empty:
         return out
@@ -593,7 +652,7 @@ def _load_existing_finance_symbol_maps() -> dict[str, dict[str, str]]:
     )
     existing = existing.assign(_normalized_sub_domain=normalized_sub)
     for _, row in existing.iterrows():
-        sub_domain = str(row.get("_normalized_sub_domain") or "").strip()
+        sub_domain = layer_bucketing.normalize_sub_domain(row.get("_normalized_sub_domain"))
         if not sub_domain or sub_domain not in out:
             continue
         symbol = str(row.get("symbol") or "").strip().upper()
@@ -604,10 +663,83 @@ def _load_existing_finance_symbol_maps() -> dict[str, dict[str, str]]:
     return out
 
 
+def _rebuild_finance_symbol_maps_from_storage() -> dict[str, dict[str, str]]:
+    rebuilt = _empty_finance_symbol_maps()
+    for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
+        for bucket in layer_bucketing.ALPHABET_BUCKETS:
+            silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
+            df_existing = delta_core.load_delta(
+                cfg.AZURE_CONTAINER_SILVER,
+                silver_bucket_path,
+                columns=["symbol"],
+            )
+            if df_existing is None or df_existing.empty:
+                continue
+            rebuilt[sub_domain].update(_collect_frame_symbol_to_bucket_map(df_existing, bucket=bucket))
+    return rebuilt
+
+
+def _seed_finance_symbol_maps_from_staged_frames(
+    bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
+    *,
+    selected_keys: set[tuple[str, str]],
+) -> dict[str, dict[str, str]]:
+    seeded = _empty_finance_symbol_maps()
+    for sub_domain, bucket in sorted(selected_keys):
+        for frame in bucket_frames.get((sub_domain, bucket), []):
+            seeded[sub_domain].update(_collect_frame_symbol_to_bucket_map(frame, bucket=bucket))
+    return seeded
+
+
+def _resolve_existing_finance_symbol_maps(
+    *,
+    bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
+    selected_keys: set[tuple[str, str]],
+    recovery_state: Optional[_FinanceAlpha26FlushState] = None,
+) -> tuple[dict[str, dict[str, str]], bool]:
+    if recovery_state is not None and recovery_state.cached_symbol_maps is not None:
+        return _copy_finance_symbol_maps(recovery_state.cached_symbol_maps), False
+
+    existing = _load_existing_finance_symbol_maps()
+    if _finance_symbol_maps_have_values(existing):
+        if recovery_state is not None:
+            recovery_state.cached_symbol_maps = _copy_finance_symbol_maps(existing)
+            recovery_state.index_recovery_source = "shared-index"
+        return existing, False
+
+    rebuilt = _rebuild_finance_symbol_maps_from_storage()
+    recovery_source: Optional[str] = None
+    if _finance_symbol_maps_have_values(rebuilt):
+        existing = rebuilt
+        recovery_source = "persisted-silver-buckets"
+    else:
+        seeded = _seed_finance_symbol_maps_from_staged_frames(bucket_frames, selected_keys=selected_keys)
+        if _finance_symbol_maps_have_values(seeded):
+            existing = seeded
+            recovery_source = "staged-frames"
+        else:
+            existing = _empty_finance_symbol_maps()
+
+    if recovery_state is not None:
+        recovery_state.cached_symbol_maps = _copy_finance_symbol_maps(existing)
+        recovery_state.index_recovery_source = recovery_source
+
+    if recovery_source is None:
+        return existing, False
+
+    recovered_symbols = sum(len(mapping) for mapping in existing.values())
+    mdc.write_line(
+        "Silver finance symbol index recovered: "
+        f"source={recovery_source} symbols={recovered_symbols} touchedKeys={len(selected_keys)}"
+    )
+    return existing, True
+
+
 def _write_alpha26_finance_silver_buckets(
     bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
     *,
     touched_bucket_keys: Optional[set[tuple[str, str]]] = None,
+    recovery_state: Optional[_FinanceAlpha26FlushState] = None,
 ) -> tuple[int, Optional[str], Optional[int]]:
     valid_keys = {
         (sub_domain, str(bucket).strip().upper())
@@ -626,14 +758,17 @@ def _write_alpha26_finance_silver_buckets(
     if invalid_keys:
         raise ValueError(f"Invalid alpha26 finance bucket key(s) for Silver write: {sorted(invalid_keys)}")
 
-    existing_symbols_by_sub_domain = _load_existing_finance_symbol_maps()
     is_partial_update = selected_keys != valid_keys
-    if is_partial_update and not any(existing_symbols_by_sub_domain.values()):
-        raise RuntimeError(
-            "Silver finance incremental alpha26 write blocked: existing silver finance symbol indexes are missing."
+    existing_symbols_by_sub_domain = _empty_finance_symbol_maps()
+    recovered_missing_index = False
+    if is_partial_update:
+        existing_symbols_by_sub_domain, recovered_missing_index = _resolve_existing_finance_symbol_maps(
+            bucket_frames=bucket_frames,
+            selected_keys=selected_keys,
+            recovery_state=recovery_state,
         )
 
-    touched_symbols_by_sub_domain: dict[str, dict[str, str]] = {key: {} for key in _FINANCE_ALPHA26_SUBDOMAINS}
+    touched_symbols_by_sub_domain = _empty_finance_symbol_maps()
     for sub_domain, bucket in sorted(selected_keys):
         silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
         parts = bucket_frames.get((sub_domain, bucket), [])
@@ -731,7 +866,11 @@ def _write_alpha26_finance_silver_buckets(
     index_path = root_index_path
     column_count: Optional[int] = None
     finance_subdomain_artifacts: dict[str, dict[str, Any]] = {}
-    sub_domains_to_write = sorted(touched_sub_domains) if is_partial_update else list(_FINANCE_ALPHA26_SUBDOMAINS)
+    sub_domains_to_write = (
+        list(_FINANCE_ALPHA26_SUBDOMAINS)
+        if recovered_missing_index
+        else (sorted(touched_sub_domains) if is_partial_update else list(_FINANCE_ALPHA26_SUBDOMAINS))
+    )
     for sub_domain in sub_domains_to_write:
         sub_index_path = layer_bucketing.write_layer_symbol_index(
             layer="silver",
@@ -785,6 +924,10 @@ def _write_alpha26_finance_silver_buckets(
             column_count = domain_artifacts.extract_column_count(payload)
         except Exception as exc:
             mdc.write_warning(f"Silver finance metadata artifact write failed: {exc}")
+    if recovery_state is not None:
+        recovery_state.cached_symbol_maps = _copy_finance_symbol_maps(symbols_by_sub_domain)
+        if recovery_state.index_recovery_source == "shared-index":
+            recovery_state.index_recovery_source = None
     return len(symbol_to_bucket), index_path, column_count
 
 
@@ -801,6 +944,7 @@ def _flush_alpha26_finance_staged_frames(
     written_symbols, index_path, column_count = _write_alpha26_finance_silver_buckets(
         bucket_frames,
         touched_bucket_keys=touched_bucket_keys,
+        recovery_state=flush_state,
     )
     flush_state.staged_rows += staged_rows
     flush_state.flush_count += 1
@@ -910,8 +1054,9 @@ def _process_finance_frame(
             blob_name=blob_name,
             silver_path=silver_path,
             ticker=ticker,
-            status="skipped" if is_optional_valuation else "failed",
+            status="skipped",
             error=None if is_optional_valuation else f"Empty finance payload: {blob_name}",
+            reason=None if is_optional_valuation else "no_data",
         )
 
     df_clean = df_raw
@@ -1384,6 +1529,7 @@ def main() -> int:
 
     processed = sum(1 for r in all_results if r.status == "ok")
     skipped = sum(1 for r in all_results if r.status == "skipped")
+    skipped_no_data = sum(1 for r in all_results if r.status == "skipped" and r.reason == "no_data")
     failed = sum(1 for r in all_results if r.status == "failed")
     attempts = len(all_results)
     distinct_tickers = len({str(r.ticker).strip() for r in all_results if r.ticker})
@@ -1397,7 +1543,10 @@ def main() -> int:
         if residual_staged_rows > 0:
             try:
                 alpha26_written_symbols, alpha26_index_path, alpha26_column_count = (
-                    _write_alpha26_finance_silver_buckets(alpha26_bucket_frames)
+                    _write_alpha26_finance_silver_buckets(
+                        alpha26_bucket_frames,
+                        recovery_state=alpha26_flush_state,
+                    )
                 )
                 alpha26_staged_rows += residual_staged_rows
                 mdc.write_line(
@@ -1419,7 +1568,8 @@ def main() -> int:
     total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver finance ingest complete: "
-        f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={total_failed}, "
+        f"attempts={attempts}, ok={processed}, skipped={skipped}, skippedNoData={skipped_no_data}, "
+        f"failed={total_failed}, "
         f"skippedCheckpoint={checkpoint_skipped_first_pass}, "
         f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, alpha26StagedRows={alpha26_staged_rows}, "
         f"alpha26Symbols={alpha26_written_symbols}, "
@@ -1444,6 +1594,7 @@ def main() -> int:
                 metadata={
                     "processed": processed,
                     "skipped": skipped,
+                    "skipped_no_data": skipped_no_data,
                     "failed": total_failed,
                     "attempts": attempts,
                     "rows_written": rows_written,
@@ -1469,6 +1620,8 @@ def main() -> int:
             "attempts": attempts,
             "processed": processed,
             "skipped": skipped,
+            "skipped_no_data": skipped_no_data,
+            "failed": total_failed,
             "skipped_checkpoint": checkpoint_skipped_first_pass,
             "skipped_checkpoint_total": checkpoint_skipped_total,
             "rows_written": rows_written,

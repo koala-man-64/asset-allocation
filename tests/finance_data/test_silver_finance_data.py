@@ -282,6 +282,46 @@ def test_process_alpha26_bucket_blob_skips_empty_valuation_rows(monkeypatch) -> 
     assert blob_name in watermarks
 
 
+def test_process_alpha26_bucket_blob_marks_empty_non_valuation_rows_as_no_data(monkeypatch) -> None:
+    blob_name = "finance-data/buckets/A.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": datetime(2026, 3, 4, 1, 0, tzinfo=timezone.utc),
+    }
+    bucket_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "report_type": "balance_sheet",
+                "payload_json": json.dumps({"status": "OK", "results": []}),
+            }
+        ]
+    )
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(
+        silver.mdc,
+        "read_raw_bytes",
+        lambda _name, client=None: bucket_df.to_parquet(index=False),
+    )
+
+    results = silver.process_alpha26_bucket_blob(
+        blob,
+        desired_end=pd.Timestamp("2026-03-04"),
+        backfill_start=None,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "skipped"
+    assert results[0].reason == "no_data"
+    assert "Empty finance payload" in str(results[0].error)
+    assert blob_name in watermarks
+
+
 def test_process_alpha26_bucket_blob_accepts_string_last_modified(monkeypatch) -> None:
     blob_name = "finance-data/buckets/A.parquet"
     blob = {
@@ -340,7 +380,7 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
     monkeypatch.setattr(
         silver,
         "_write_alpha26_finance_silver_buckets",
-        lambda _frames: (0, "system/silver-index/finance/latest.parquet", None),
+        lambda _frames, **_kwargs: (0, "system/silver-index/finance/latest.parquet", None),
     )
 
     initial_watermarks = {"preexisting": {"etag": "keep"}}
@@ -415,6 +455,72 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
     assert saved["items"]["preexisting"] == {"etag": "keep"}
     assert saved["items"]["finance-data/buckets/O.parquet"]["etag"] == "etag-ok"
     assert "finance-data/buckets/F.parquet" not in saved["items"]
+
+
+def test_silver_finance_main_succeeds_with_no_data_skips_and_records_skipped_no_data(monkeypatch):
+    blobs = [
+        {
+            "name": "finance-data/buckets/A.parquet",
+            "etag": "etag-a",
+            "last_modified": datetime(2026, 3, 22, 0, 0, tzinfo=timezone.utc),
+        }
+    ]
+    log_lines: list[str] = []
+    saved_last_success = {}
+
+    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver.mdc, "write_line", lambda message: log_lines.append(str(message)))
+    monkeypatch.setattr(
+        silver,
+        "_select_initial_alpha26_source",
+        lambda: silver._ManifestSelection(source="alpha26-bucket-listing", blobs=list(blobs), deduped=0),
+    )
+    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: (list(blobs), 0))
+    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-22"))
+    monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
+    monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
+    monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        silver,
+        "save_last_success",
+        lambda key, when=None, metadata=None: saved_last_success.update(
+            {"key": key, "when": when, "metadata": metadata}
+        ),
+    )
+
+    def _fake_process(*, candidate_blobs, desired_end, backfill_start=None, watermarks=None, **_kwargs):
+        del desired_end, backfill_start, _kwargs
+        out = []
+        for blob in candidate_blobs:
+            watermarks[blob["name"]] = {
+                "etag": blob["etag"],
+                "last_modified": blob["last_modified"].isoformat(),
+                "updated_at": "2026-03-22T00:00:01+00:00",
+            }
+            out.append(
+                silver.BlobProcessResult(
+                    blob_name=blob["name"],
+                    silver_path="finance-data/balance_sheet/buckets/A",
+                    ticker="AAPL",
+                    status="skipped",
+                    error=f"Empty finance payload: {blob['name']}",
+                    reason="no_data",
+                )
+            )
+        return out, 0.01
+
+    monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", _fake_process)
+
+    exit_code = silver.main()
+
+    assert exit_code == 0
+    assert saved_last_success["key"] == "silver_finance_data"
+    assert saved_last_success["metadata"]["skipped"] == 1
+    assert saved_last_success["metadata"]["skipped_no_data"] == 1
+    assert saved_last_success["metadata"]["failed"] == 0
+    assert any("skippedNoData=1" in line and "failed=0" in line for line in log_lines)
 
 
 def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatch):
@@ -643,7 +749,7 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-05"))
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([], 0))
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (0, "index", 14))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames, **_kwargs: (0, "index", 14))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
@@ -863,6 +969,123 @@ def test_write_alpha26_finance_silver_buckets_partial_update_preserves_untouched
     balance = next(call for call in index_calls if call.get("sub_domain") == "balance_sheet")
     assert aggregate["symbol_to_bucket"] == {"AMZN": "A", "MSFT": "M"}
     assert balance["symbol_to_bucket"] == {"AMZN": "A"}
+
+
+def test_write_alpha26_finance_silver_buckets_recovers_missing_shared_index_from_persisted_tables(monkeypatch):
+    balance_df = pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["AMZN"]})
+    bucket_frames = {
+        ("balance_sheet", "A"): [balance_df],
+    }
+    index_calls: list[dict] = []
+    stored_paths: list[str] = []
+    flush_state = silver._FinanceAlpha26FlushState()
+
+    monkeypatch.setattr(silver, "_FINANCE_ALPHA26_SUBDOMAINS", ("balance_sheet", "cash_flow"))
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ("A", "M"))
+    monkeypatch.setattr(silver.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
+
+    def _fake_load_delta(_container: str, path: str, version=None, columns=None, **_kwargs):
+        del version, _kwargs
+        assert columns == ["symbol"]
+        if path == "finance-data/balance_sheet/buckets/A":
+            return pd.DataFrame({"symbol": ["AAPL"]})
+        if path == "finance-data/cash_flow/buckets/M":
+            return pd.DataFrame({"symbol": ["MSFT"]})
+        return None
+
+    def _fake_store(_df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite") -> None:
+        assert mode == "overwrite"
+        stored_paths.append(path)
+
+    def _fake_index(**kwargs):
+        index_calls.append(dict(kwargs))
+        sub_domain = kwargs.get("sub_domain")
+        return "index-root" if sub_domain is None else f"index-{sub_domain}"
+
+    monkeypatch.setattr(silver.delta_core, "load_delta", _fake_load_delta)
+    monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
+    monkeypatch.setattr(silver.layer_bucketing, "write_layer_symbol_index", _fake_index)
+    monkeypatch.setattr(silver.domain_artifacts, "write_bucket_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(silver.domain_artifacts, "write_domain_artifact", lambda **_kwargs: {})
+    monkeypatch.setattr(silver.domain_artifacts, "load_domain_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(silver.domain_artifacts, "extract_column_count", lambda _payload: 14)
+
+    written_symbols, index_path, column_count = silver._write_alpha26_finance_silver_buckets(
+        bucket_frames,
+        touched_bucket_keys={("balance_sheet", "A")},
+        recovery_state=flush_state,
+    )
+
+    assert written_symbols == 2
+    assert index_path == "index-cash_flow"
+    assert column_count == 14
+    assert stored_paths == ["finance-data/balance_sheet/buckets/A"]
+    aggregate = next(call for call in index_calls if call.get("sub_domain") is None)
+    assert aggregate["symbol_to_bucket"] == {"AMZN": "A", "MSFT": "M"}
+    assert sorted(call.get("sub_domain") for call in index_calls if call.get("sub_domain")) == [
+        "balance_sheet",
+        "cash_flow",
+    ]
+    assert flush_state.cached_symbol_maps == {
+        "balance_sheet": {"AMZN": "A"},
+        "cash_flow": {"MSFT": "M"},
+    }
+    assert flush_state.index_recovery_source == "persisted-silver-buckets"
+
+
+def test_write_alpha26_finance_silver_buckets_bootstraps_missing_shared_index_from_staged_frames(monkeypatch):
+    balance_df = pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["AAPL"]})
+    bucket_frames = {
+        ("balance_sheet", "A"): [balance_df],
+    }
+    index_calls: list[dict] = []
+    stored_paths: list[str] = []
+    flush_state = silver._FinanceAlpha26FlushState()
+
+    monkeypatch.setattr(silver, "_FINANCE_ALPHA26_SUBDOMAINS", ("balance_sheet", "cash_flow"))
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ("A", "M"))
+    monkeypatch.setattr(silver.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver.delta_core, "load_delta", lambda *_args, **_kwargs: None)
+
+    def _fake_store(_df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite") -> None:
+        assert mode == "overwrite"
+        stored_paths.append(path)
+
+    def _fake_index(**kwargs):
+        index_calls.append(dict(kwargs))
+        sub_domain = kwargs.get("sub_domain")
+        return "index-root" if sub_domain is None else f"index-{sub_domain}"
+
+    monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
+    monkeypatch.setattr(silver.layer_bucketing, "write_layer_symbol_index", _fake_index)
+    monkeypatch.setattr(silver.domain_artifacts, "write_bucket_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(silver.domain_artifacts, "write_domain_artifact", lambda **_kwargs: {})
+    monkeypatch.setattr(silver.domain_artifacts, "load_domain_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(silver.domain_artifacts, "extract_column_count", lambda _payload: 14)
+
+    written_symbols, index_path, column_count = silver._write_alpha26_finance_silver_buckets(
+        bucket_frames,
+        touched_bucket_keys={("balance_sheet", "A")},
+        recovery_state=flush_state,
+    )
+
+    assert written_symbols == 1
+    assert index_path == "index-cash_flow"
+    assert column_count == 14
+    assert stored_paths == ["finance-data/balance_sheet/buckets/A"]
+    aggregate = next(call for call in index_calls if call.get("sub_domain") is None)
+    assert aggregate["symbol_to_bucket"] == {"AAPL": "A"}
+    assert sorted(call.get("sub_domain") for call in index_calls if call.get("sub_domain")) == [
+        "balance_sheet",
+        "cash_flow",
+    ]
+    assert flush_state.cached_symbol_maps == {
+        "balance_sheet": {"AAPL": "A"},
+        "cash_flow": {},
+    }
+    assert flush_state.index_recovery_source == "staged-frames"
 
 
 def test_process_alpha26_bucket_blob_does_not_skip_when_signature_matches_watermark(monkeypatch):
