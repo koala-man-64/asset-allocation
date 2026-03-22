@@ -226,6 +226,50 @@ describe('JobLogStreamPanel', () => {
     expect(screen.queryByText('SUCCESS')).not.toBeInTheDocument();
   });
 
+  it('shows cpu and memory usage when resource signals are available', async () => {
+    const job: JobLogStreamTarget = {
+      ...JOBS[1],
+      signals: [
+        {
+          name: 'CpuUsage',
+          value: 68.4,
+          unit: 'Percent',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'warning',
+          source: 'metrics'
+        },
+        {
+          name: 'MemoryWorkingSetBytes',
+          value: 1610612736,
+          unit: 'Bytes',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        }
+      ]
+    };
+
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          tail: ['beta snapshot']
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[job]} />);
+
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    expect(screen.getByText('CPU Usage')).toBeInTheDocument();
+    expect(screen.getByText('68%')).toBeInTheDocument();
+    expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+    expect(screen.getByText(/1\.5 GiB/)).toBeInTheDocument();
+  });
+
   it('keeps streaming without refetching when job metadata refreshes for the same run', async () => {
     vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
       jobName: 'beta-job',

@@ -1579,11 +1579,69 @@ def main() -> int:
     return asyncio.run(main_async())
 
 
-if __name__ == "__main__":
-    from tasks.common.job_entrypoint import run_logged_job
-    from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env
-    from tasks.common.system_health_markers import write_system_health_marker
+def run_bronze_finance_job_entrypoint(
+    *,
+    job_name: str = "bronze-finance-job",
+    run_logged_job_fn: Optional[Callable[..., int]] = None,
+    ensure_api_awake_fn: Optional[Callable[..., None]] = None,
+    trigger_next_job_fn: Optional[Callable[[], None]] = None,
+    write_system_health_marker_fn: Optional[Callable[..., None]] = None,
+) -> int:
+    if run_logged_job_fn is None:
+        from tasks.common.job_entrypoint import run_logged_job as run_logged_job_fn
+    if ensure_api_awake_fn is None:
+        from tasks.common.job_trigger import ensure_api_awake_from_env as ensure_api_awake_fn
+    if trigger_next_job_fn is None:
+        from tasks.common.job_trigger import trigger_next_job_from_env as trigger_next_job_fn
+    if write_system_health_marker_fn is None:
+        from tasks.common.system_health_markers import (
+            write_system_health_marker as write_system_health_marker_fn,
+        )
 
+    ensure_api_awake_fn(required=True)
+
+    exit_code: Optional[int] = None
+    run_exception: Optional[Exception] = None
+
+    def _write_success_marker() -> None:
+        write_system_health_marker_fn(layer="bronze", domain="finance", job_name=job_name)
+
+    try:
+        exit_code = int(
+            run_logged_job_fn(
+                job_name=job_name,
+                run=main,
+                on_success=(_write_success_marker,),
+            )
+        )
+        return exit_code
+    except Exception as exc:
+        run_exception = exc
+        raise
+    finally:
+        if run_exception is not None:
+            mdc.write_warning(
+                "Attempting downstream trigger after upstream exception: "
+                f"job={job_name} error={type(run_exception).__name__}: {run_exception}"
+            )
+        elif exit_code not in (None, 0):
+            mdc.write_warning(
+                f"Attempting downstream trigger after upstream failure: job={job_name} exit_code={exit_code}"
+            )
+        try:
+            trigger_next_job_fn()
+        except Exception as exc:
+            if run_exception is not None or exit_code not in (None, 0):
+                mdc.write_warning(
+                    "Downstream trigger failed after upstream finance completion: "
+                    f"job={job_name} preserving_original_failure=true "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+            else:
+                raise
+
+
+if __name__ == "__main__":
     job_name = "bronze-finance-job"
     shared_lock_name = (os.environ.get("FINANCE_PIPELINE_SHARED_LOCK_NAME") or _DEFAULT_SHARED_FINANCE_LOCK).strip()
     shared_wait_timeout = parse_wait_timeout_seconds(
@@ -1592,14 +1650,4 @@ if __name__ == "__main__":
     )
     with mdc.JobLock(shared_lock_name, conflict_policy="wait_then_fail", wait_timeout_seconds=shared_wait_timeout):
         with mdc.JobLock(job_name, conflict_policy="fail"):
-            ensure_api_awake_from_env(required=True)
-            raise SystemExit(
-                run_logged_job(
-                    job_name=job_name,
-                    run=main,
-                    on_success=(
-                        lambda: write_system_health_marker(layer="bronze", domain="finance", job_name=job_name),
-                        trigger_next_job_from_env,
-                    ),
-                )
-            )
+            raise SystemExit(run_bronze_finance_job_entrypoint(job_name=job_name))

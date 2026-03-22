@@ -188,7 +188,25 @@ function buildSystemStatusView(
           status: 'healthy',
           lastChecked: MOCK_RUN_TIMESTAMPS.latest,
           runningState: 'Running',
-          lastModifiedAt: MOCK_RUN_TIMESTAMPS.latest
+          lastModifiedAt: MOCK_RUN_TIMESTAMPS.latest,
+          signals: [
+            {
+              name: 'CpuUsage',
+              value: 52.3,
+              unit: 'Percent',
+              timestamp: MOCK_RUN_TIMESTAMPS.latest,
+              status: 'healthy',
+              source: 'metrics'
+            },
+            {
+              name: 'MemoryWorkingSetBytes',
+              value: 805306368,
+              unit: 'Bytes',
+              timestamp: MOCK_RUN_TIMESTAMPS.latest,
+              status: 'healthy',
+              source: 'metrics'
+            }
+          ]
         },
         {
           name: 'aca-job-zeta',
@@ -317,7 +335,19 @@ describe('SystemStatusPage', () => {
           name: 'aca-job-market',
           runningState: 'Running',
           recentStatus: 'success',
-          startTime: MOCK_RUN_TIMESTAMPS.latest
+          startTime: MOCK_RUN_TIMESTAMPS.latest,
+          signals: expect.arrayContaining([
+            expect.objectContaining({
+              name: 'CpuUsage',
+              value: 52.3,
+              unit: 'Percent'
+            }),
+            expect.objectContaining({
+              name: 'MemoryWorkingSetBytes',
+              value: 805306368,
+              unit: 'Bytes'
+            })
+          ])
         })
       ])
     );

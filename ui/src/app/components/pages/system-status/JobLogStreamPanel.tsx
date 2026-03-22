@@ -33,6 +33,7 @@ import {
   requestRealtimeUnsubscription,
   type ConsoleLogStreamLine
 } from '@/services/realtimeBus';
+import type { ResourceSignal } from '@/types/strategy';
 import {
   effectiveJobStatus,
   formatTimeAgo,
@@ -46,6 +47,8 @@ import { formatSystemStatusText } from './systemStatusText';
 
 const LOG_LINE_LIMIT = 200;
 const LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 16;
+const CPU_SIGNAL_NAMES = ['cpuusage', 'cpupercentage', 'cpupercent'];
+const MEMORY_SIGNAL_NAMES = ['memoryworkingsetbytes', 'memoryusage', 'memorybytes'];
 
 export type JobLogStreamTarget = {
   name: string;
@@ -56,6 +59,7 @@ export type JobLogStreamTarget = {
   runningState?: string | null;
   recentStatus?: string | null;
   startTime?: string | null;
+  signals?: ResourceSignal[] | null;
 };
 
 type ConsoleTailLine = {
@@ -71,6 +75,85 @@ type LogState = {
   loading: boolean;
   error: string | null;
 };
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function normalizeSignalName(value?: string | null): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function findUsageSignal(
+  signals: ResourceSignal[] | null | undefined,
+  preferredNames: string[]
+): ResourceSignal | null {
+  if (!Array.isArray(signals) || signals.length === 0) {
+    return null;
+  }
+
+  const exactMatch = signals.find((signal) =>
+    preferredNames.includes(normalizeSignalName(signal?.name))
+  );
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const broadMatch = signals.find((signal) => {
+    const signalName = normalizeSignalName(signal?.name);
+    return preferredNames.some((candidate) => signalName.includes(candidate.replace('usage', '')));
+  });
+  return broadMatch ?? null;
+}
+
+function formatMetricNumber(value: number, maximumFractionDigits = 1): string {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits
+  }).format(value);
+}
+
+function formatPercent(value: number): string {
+  return `${formatMetricNumber(value, value >= 10 ? 0 : 1)}%`;
+}
+
+function formatBinaryBytes(value: number): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  const sign = value < 0 ? -1 : 1;
+  let scaled = Math.abs(value);
+  let unitIndex = 0;
+
+  while (scaled >= 1024 && unitIndex < units.length - 1) {
+    scaled /= 1024;
+    unitIndex += 1;
+  }
+
+  const maximumFractionDigits = scaled >= 100 || unitIndex === 0 ? 0 : scaled >= 10 ? 1 : 2;
+  return `${formatMetricNumber(sign * scaled, maximumFractionDigits)} ${units[unitIndex]}`;
+}
+
+function formatUsageValue(
+  signal: ResourceSignal | null,
+  metric: 'cpu' | 'memory'
+): string {
+  if (!signal || !isFiniteNumber(signal.value)) {
+    return '-';
+  }
+
+  const unit = normalizeSignalName(signal.unit);
+  if (unit.includes('percent')) {
+    return formatPercent(signal.value);
+  }
+
+  if (metric === 'memory' && unit.includes('byte')) {
+    return formatBinaryBytes(signal.value);
+  }
+
+  const suffix = String(signal.unit || '').trim();
+  const value = formatMetricNumber(signal.value);
+  return suffix ? `${value} ${suffix}` : value;
+}
 
 function sortJobsForDisplay(jobs: JobLogStreamTarget[]): JobLogStreamTarget[] {
   return [...jobs].sort((left, right) => {
@@ -360,6 +443,8 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   const executionUrl = getAzureJobExecutionsUrl(selectedJob?.jobUrl);
   const portalUrl = normalizeAzurePortalUrl(selectedJob?.jobUrl);
   const status = effectiveJobStatus(selectedJob?.recentStatus, selectedJob?.runningState);
+  const cpuSignal = findUsageSignal(selectedJob?.signals, CPU_SIGNAL_NAMES);
+  const memorySignal = findUsageSignal(selectedJob?.signals, MEMORY_SIGNAL_NAMES);
 
   return (
     <Card className="h-full flex flex-col">
@@ -417,7 +502,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
             </Select>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <div className="rounded-md border bg-muted/20 p-3">
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
                 Status
@@ -441,6 +526,20 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
               </div>
               <div className="mt-2 text-sm">
                 {selectedJob?.startTime ? `${formatTimeAgo(selectedJob.startTime)} ago` : '-'}
+              </div>
+            </div>
+            <div className="rounded-md border bg-muted/20 p-3">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                CPU Usage
+              </div>
+              <div className="mt-2 text-sm font-medium">{formatUsageValue(cpuSignal, 'cpu')}</div>
+            </div>
+            <div className="rounded-md border bg-muted/20 p-3">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                Memory Usage
+              </div>
+              <div className="mt-2 text-sm font-medium">
+                {formatUsageValue(memorySignal, 'memory')}
               </div>
             </div>
           </div>

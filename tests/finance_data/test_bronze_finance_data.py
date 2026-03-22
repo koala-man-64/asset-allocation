@@ -746,3 +746,95 @@ def test_main_async_logs_symbol_success(unique_ticker):
         assert any("Bronze finance success: operation=list_flush" in message for message in messages)
 
     asyncio.run(run_test())
+
+
+def test_run_bronze_finance_job_entrypoint_triggers_downstream_after_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[str] = []
+    call_order: list[str] = []
+    captured_on_success: list[object] = []
+
+    monkeypatch.setattr(bronze.mdc, "write_warning", warnings.append)
+
+    def _fake_run_logged_job(*, job_name, run, on_success):
+        assert job_name == "bronze-finance-job"
+        assert run is bronze.main
+        captured_on_success.extend(on_success)
+        call_order.append("run")
+        return 1
+
+    result = bronze.run_bronze_finance_job_entrypoint(
+        run_logged_job_fn=_fake_run_logged_job,
+        ensure_api_awake_fn=lambda *, required: call_order.append(f"awake:{required}"),
+        trigger_next_job_fn=lambda: call_order.append("trigger"),
+        write_system_health_marker_fn=lambda **kwargs: call_order.append(f"marker:{kwargs['job_name']}"),
+    )
+
+    assert result == 1
+    assert call_order == ["awake:True", "run", "trigger"]
+    assert len(captured_on_success) == 1
+    assert any(
+        "Attempting downstream trigger after upstream failure: job=bronze-finance-job exit_code=1" in message
+        for message in warnings
+    )
+
+
+def test_run_bronze_finance_job_entrypoint_triggers_downstream_after_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[str] = []
+    call_order: list[str] = []
+
+    monkeypatch.setattr(bronze.mdc, "write_warning", warnings.append)
+
+    def _fake_run_logged_job(*, job_name, run, on_success):
+        assert job_name == "bronze-finance-job"
+        assert run is bronze.main
+        assert len(on_success) == 1
+        call_order.append("run")
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        bronze.run_bronze_finance_job_entrypoint(
+            run_logged_job_fn=_fake_run_logged_job,
+            ensure_api_awake_fn=lambda *, required: call_order.append(f"awake:{required}"),
+            trigger_next_job_fn=lambda: call_order.append("trigger"),
+            write_system_health_marker_fn=lambda **kwargs: call_order.append(f"marker:{kwargs['job_name']}"),
+        )
+
+    assert call_order == ["awake:True", "run", "trigger"]
+    assert any(
+        "Attempting downstream trigger after upstream exception: job=bronze-finance-job error=RuntimeError: boom"
+        in message
+        for message in warnings
+    )
+
+
+def test_run_bronze_finance_job_entrypoint_preserves_nonzero_exit_when_trigger_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[str] = []
+
+    monkeypatch.setattr(bronze.mdc, "write_warning", warnings.append)
+
+    result = bronze.run_bronze_finance_job_entrypoint(
+        run_logged_job_fn=lambda **kwargs: 1,
+        ensure_api_awake_fn=lambda *, required: None,
+        trigger_next_job_fn=lambda: (_ for _ in ()).throw(RuntimeError("downstream unavailable")),
+        write_system_health_marker_fn=lambda **kwargs: None,
+    )
+
+    assert result == 1
+    assert any("preserving_original_failure=true" in message for message in warnings)
+    assert any("downstream unavailable" in message for message in warnings)
+
+
+def test_run_bronze_finance_job_entrypoint_raises_when_successful_run_cannot_trigger_downstream() -> None:
+    with pytest.raises(RuntimeError, match="downstream unavailable"):
+        bronze.run_bronze_finance_job_entrypoint(
+            run_logged_job_fn=lambda **kwargs: 0,
+            ensure_api_awake_fn=lambda *, required: None,
+            trigger_next_job_fn=lambda: (_ for _ in ()).throw(RuntimeError("downstream unavailable")),
+            write_system_health_marker_fn=lambda **kwargs: None,
+        )

@@ -12,6 +12,7 @@ import { Skeleton } from '@/app/components/ui/skeleton';
 import { PageLoader } from '@/app/components/common/PageLoader';
 import type { ManagedContainerJob } from './system-status/JobKillSwitchPanel';
 import type { JobLogStreamTarget } from './system-status/JobLogStreamPanel';
+import type { ResourceSignal } from '@/types/strategy';
 
 // Lazy load components to reduce initial bundle size of the page
 const DomainLayerComparisonPanel = lazy(() =>
@@ -34,6 +35,13 @@ import {
 import { effectiveJobStatus, formatTimeAgo } from './system-status/SystemStatusHelpers';
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
+type JobResourceSummary = {
+  name: string;
+  runningState?: string | null;
+  lastModifiedAt?: string | null;
+  signals?: ResourceSignal[] | null;
+};
+
 export function SystemStatusPage() {
   const { data, isLoading, error, isFetching } = useSystemStatusViewQuery({
     autoRefresh: true
@@ -54,38 +62,46 @@ export function SystemStatusPage() {
     }));
   }, [systemHealth]);
 
-  const jobStates = useMemo(() => {
-    const states: Record<string, string> = {};
-    for (const resource of systemHealth?.resources || []) {
-      if (resource.resourceType !== 'Microsoft.App/jobs') continue;
-      const jobKey = normalizeAzureJobName(resource.name);
-      const runningState = String(resource.runningState || '').trim();
-      if (jobKey && runningState) {
-        states[jobKey] = runningState;
-      }
-    }
-    return states;
-  }, [systemHealth]);
-
-  const managedContainerJobs = useMemo<ManagedContainerJob[]>(() => {
-    const seen = new Set<string>();
-    const items: ManagedContainerJob[] = [];
+  const jobResourcesByKey = useMemo(() => {
+    const resources = new Map<string, JobResourceSummary>();
     for (const resource of systemHealth?.resources || []) {
       if (resource.resourceType !== 'Microsoft.App/jobs') continue;
       const rawName = String(resource.name || '').trim();
       if (!rawName) continue;
-      const normalizedName = normalizeAzureJobName(rawName);
-      const dedupeKey = normalizedName || rawName.toLowerCase();
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      items.push({
+      const jobKey = normalizeAzureJobName(rawName) || rawName.toLowerCase();
+      if (resources.has(jobKey)) continue;
+      resources.set(jobKey, {
         name: rawName,
+        runningState: resource.runningState || null,
+        lastModifiedAt: resource.lastModifiedAt || null,
+        signals: resource.signals || null
+      });
+    }
+    return resources;
+  }, [systemHealth?.resources]);
+
+  const jobStates = useMemo(() => {
+    const states: Record<string, string> = {};
+    for (const [jobKey, resource] of jobResourcesByKey.entries()) {
+      const runningState = String(resource.runningState || '').trim();
+      if (runningState) {
+        states[jobKey] = runningState;
+      }
+    }
+    return states;
+  }, [jobResourcesByKey]);
+
+  const managedContainerJobs = useMemo<ManagedContainerJob[]>(() => {
+    const items: ManagedContainerJob[] = [];
+    for (const resource of jobResourcesByKey.values()) {
+      items.push({
+        name: resource.name,
         runningState: resource.runningState || null,
         lastModifiedAt: resource.lastModifiedAt || null
       });
     }
     return items;
-  }, [systemHealth]);
+  }, [jobResourcesByKey]);
 
   const latestJobRuns = useMemo(
     () => buildLatestJobRunIndex(systemHealth?.recentJobs || []),
@@ -123,8 +139,7 @@ export function SystemStatusPage() {
       }
     }
 
-    for (const resource of systemHealth?.resources || []) {
-      if (resource.resourceType !== 'Microsoft.App/jobs') continue;
+    for (const resource of jobResourcesByKey.values()) {
       const rawJobName = String(resource.name || '').trim();
       if (!rawJobName) continue;
       const key = normalizeAzureJobName(rawJobName) || rawJobName.toLowerCase();
@@ -157,11 +172,13 @@ export function SystemStatusPage() {
     return Array.from(items.entries())
       .map(([key, item]) => {
         const latestRun = latestJobRuns.get(key);
+        const jobResource = jobResourcesByKey.get(key);
         return {
           ...item,
           runningState: jobStates[key] || null,
           recentStatus: latestRun?.status || null,
-          startTime: latestRun?.startTime || null
+          startTime: latestRun?.startTime || null,
+          signals: jobResource?.signals || null
         };
       })
       .sort((left, right) => {
@@ -186,7 +203,7 @@ export function SystemStatusPage() {
         return left.label.localeCompare(right.label);
       })
       .map(({ sortLayerName: _sortLayerName, ...item }) => item);
-  }, [displayDataLayers, jobStates, latestJobRuns, systemHealth?.resources]);
+  }, [displayDataLayers, jobResourcesByKey, jobStates, latestJobRuns]);
 
   const handleMetadataSnapshotChange = useCallback(
     (
