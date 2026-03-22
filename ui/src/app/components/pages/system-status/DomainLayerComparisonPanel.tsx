@@ -302,9 +302,7 @@ function summarizeBlacklistCount(metadata: DomainMetadata): { text: string; clas
   };
 }
 
-function summarizeRetrySymbols(
-  run?: JobRun | null
-): {
+function summarizeRetrySymbols(run?: JobRun | null): {
   text: string;
   title?: string;
 } | null {
