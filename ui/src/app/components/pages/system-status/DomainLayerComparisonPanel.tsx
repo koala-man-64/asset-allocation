@@ -396,7 +396,7 @@ export function DomainLayerComparisonPanel({
 }: DomainLayerComparisonPanelProps) {
   const queryClient = useQueryClient();
   const { triggeringJob, triggerJob } = useJobTrigger();
-  const { jobControl, setJobSuspended, stopJob } = useJobSuspend();
+  const { jobControl, setJobSuspended } = useJobSuspend();
   const [refreshingCells, setRefreshingCells] = useState<Set<string>>(new Set());
   const [triggeringLayerKeys, setTriggeringLayerKeys] = useState<Set<LayerKey>>(new Set());
   const [isRefreshingPanelCounts, setIsRefreshingPanelCounts] = useState(false);
@@ -2092,48 +2092,31 @@ export function DomainLayerComparisonPanel({
                                         size="sm"
                                         variant="outline"
                                         className="h-7 px-2 text-[11px]"
-                                        disabled={
-                                          !model.actionJobName ||
-                                          model.isJobControlBlocked ||
-                                          model.isRunning
-                                        }
+                                        disabled={!model.actionJobName || model.isJobControlBlocked}
                                         onClick={() => {
                                           if (!model.actionJobName) return;
-                                          void triggerJob(
-                                            model.actionJobName,
-                                            statusInvalidationKeys
-                                          );
+                                          if (model.isRunning) {
+                                            void setJobSuspended(
+                                              model.actionJobName,
+                                              true,
+                                              statusInvalidationKeys
+                                            );
+                                          } else {
+                                            void triggerJob(
+                                              model.actionJobName,
+                                              statusInvalidationKeys
+                                            );
+                                          }
                                         }}
                                       >
-                                        {model.isTriggeringThisJob ? (
+                                        {model.isControlling || model.isTriggeringThisJob ? (
                                           <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                        ) : model.isRunning ? (
+                                          <Square className="mr-1 h-3.5 w-3.5" />
                                         ) : (
                                           <Play className="mr-1 h-3.5 w-3.5" />
                                         )}
-                                        Run
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        className="h-7 px-2 text-[11px] text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                        aria-label={`Stop all jobs for ${model.layerColumn.label} ${row.label}`}
-                                        disabled={
-                                          !model.actionJobName ||
-                                          model.isJobControlBlocked ||
-                                          !model.isRunning
-                                        }
-                                        onClick={() => {
-                                          if (!model.actionJobName) return;
-                                          void stopJob(model.actionJobName, statusInvalidationKeys);
-                                        }}
-                                      >
-                                        {model.isControlling ? (
-                                          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                                        ) : (
-                                          <Square className="mr-1 h-3.5 w-3.5" />
-                                        )}
-                                        Stop all jobs
+                                        {model.isRunning ? 'Stop' : 'Run'}
                                       </Button>
                                       <DropdownMenu>
                                         <DropdownMenuTrigger asChild>

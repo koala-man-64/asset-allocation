@@ -9,7 +9,6 @@ import { renderWithProviders } from '@/test/utils';
 import type { DataLayer, DomainMetadata, JobRun } from '@/types/strategy';
 
 const setJobSuspendedMock = vi.fn().mockResolvedValue(undefined);
-const stopJobMock = vi.fn().mockResolvedValue(undefined);
 const triggerJobMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('sonner', () => ({
@@ -23,8 +22,7 @@ vi.mock('sonner', () => ({
 vi.mock('@/hooks/useJobSuspend', () => ({
   useJobSuspend: () => ({
     jobControl: null,
-    setJobSuspended: setJobSuspendedMock,
-    stopJob: stopJobMock
+    setJobSuspended: setJobSuspendedMock
   })
 }));
 
@@ -365,7 +363,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.getByText(/AAPL, MSFT/)).toBeInTheDocument();
   });
 
-  it('stops all running jobs for the selected medallion-domain subpanel', async () => {
+  it('stops a running medallion-domain job from the selected subpanel', async () => {
     const user = userEvent.setup();
 
     renderPanel({
@@ -373,10 +371,10 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     });
 
     await user.click(screen.getByRole('button', { name: 'Expand market details' }));
-    await user.click(screen.getByRole('button', { name: 'Stop all jobs for Bronze market' }));
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
 
     await waitFor(() => {
-      expect(stopJobMock).toHaveBeenCalledWith('aca-job-market', [
+      expect(setJobSuspendedMock).toHaveBeenCalledWith('aca-job-market', true, [
         ['systemStatusView'],
         ['systemHealth']
       ]);
