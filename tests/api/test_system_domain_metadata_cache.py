@@ -4,6 +4,7 @@ import pytest
 
 from api.endpoints import system
 from api.service.app import create_app
+from monitoring.control_plane import ResourceHealthItem
 from tests.api._client import get_test_client
 
 
@@ -264,6 +265,125 @@ async def test_system_status_view_refresh_bypasses_system_health_cache_and_domai
     assert refreshed.status_code == 200
     assert len(health_calls) == 2
     assert metadata_refresh_flags == [False, False, True]
+
+
+@pytest.mark.asyncio
+async def test_system_status_view_overlays_live_domain_job_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "aca-job-market")
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-03-17T12:00:00+00:00")
+    monkeypatch.setattr(
+        system,
+        "_resolve_system_health_payload",
+        lambda request, refresh=False: (
+            {
+                "overall": "healthy",
+                "dataLayers": [
+                    {
+                        "name": "Bronze",
+                        "domains": [
+                            {
+                                "name": "market",
+                                "jobName": "aca-job-market",
+                            }
+                        ],
+                    }
+                ],
+                "recentJobs": [
+                    {
+                        "jobName": "aca-job-market",
+                        "jobType": "data-ingest",
+                        "status": "success",
+                        "statusCode": "Succeeded",
+                        "executionName": "aca-job-market-exec-old",
+                        "startTime": "2026-03-17T11:45:00+00:00",
+                        "duration": 120,
+                        "triggeredBy": "azure",
+                    }
+                ],
+                "alerts": [],
+                "resources": [
+                    {
+                        "name": "aca-job-market",
+                        "resourceType": "Microsoft.App/jobs",
+                        "status": "healthy",
+                        "lastChecked": "2026-03-17T11:45:00+00:00",
+                        "runningState": "Stopped",
+                        "lastModifiedAt": "2026-03-17T11:45:10+00:00",
+                    }
+                ],
+            },
+            True,
+            False,
+        ),
+    )
+    monkeypatch.setattr(
+        system,
+        "_build_domain_metadata_snapshot_payload",
+        lambda **kwargs: {"version": 1, "updatedAt": None, "entries": {}, "warnings": []},
+    )
+
+    class _FakeArmClient:
+        def __init__(self, _cfg) -> None:
+            return None
+
+        def __enter__(self) -> "_FakeArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(system, "AzureArmClient", _FakeArmClient)
+    monkeypatch.setattr(
+        system,
+        "collect_jobs_and_executions",
+        lambda arm, **kwargs: (
+            [
+                ResourceHealthItem(
+                    name="aca-job-market",
+                    resource_type="Microsoft.App/jobs",
+                    status="healthy",
+                    last_checked="2026-03-17T12:00:00+00:00",
+                    details="provisioningState=Succeeded, runningState=Running",
+                    running_state="Running",
+                    last_modified_at="2026-03-17T11:59:59+00:00",
+                )
+            ],
+            [
+                {
+                    "jobName": "aca-job-market",
+                    "jobType": "data-ingest",
+                    "status": "running",
+                    "statusCode": "Running",
+                    "executionName": "aca-job-market-exec-live",
+                    "executionId": "/jobs/aca-job-market/executions/aca-job-market-exec-live",
+                    "startTime": "2026-03-17T11:58:00+00:00",
+                    "endTime": None,
+                    "triggeredBy": "azure",
+                }
+            ],
+        ),
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/status-view")
+
+    assert response.status_code == 200
+    payload = response.json()
+    job_resource = next(
+        resource
+        for resource in payload["systemHealth"]["resources"]
+        if resource["name"] == "aca-job-market"
+    )
+    assert job_resource["runningState"] == "Running"
+    assert job_resource["lastModifiedAt"] == "2026-03-17T11:59:59+00:00"
+    assert payload["systemHealth"]["recentJobs"][0]["executionName"] == "aca-job-market-exec-live"
+    assert payload["systemHealth"]["recentJobs"][0]["status"] == "running"
+    assert payload["systemHealth"]["recentJobs"][1]["executionName"] == "aca-job-market-exec-old"
 
 
 @pytest.mark.asyncio

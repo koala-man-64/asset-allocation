@@ -28,6 +28,7 @@ from api.service.dependencies import (
 )
 from api.service.realtime import manager as realtime_manager
 from monitoring.arm_client import ArmConfig, AzureArmClient
+from monitoring.control_plane import collect_jobs_and_executions
 from monitoring.domain_metadata import collect_domain_metadata
 from monitoring.lineage import get_lineage_snapshot
 from monitoring.log_analytics import AzureLogAnalyticsClient, extract_first_table_rows
@@ -549,11 +550,177 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     return JSONResponse(payload, headers=headers)
 
 
+def _normalize_job_name_key(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _status_view_domain_job_names(system_health_payload: Dict[str, Any]) -> List[str]:
+    names: List[str] = []
+    seen: set[str] = set()
+
+    for layer in system_health_payload.get("dataLayers") or []:
+        if not isinstance(layer, dict):
+            continue
+        for domain in layer.get("domains") or []:
+            if not isinstance(domain, dict):
+                continue
+            job_name = str(domain.get("jobName") or "").strip()
+            if not job_name:
+                continue
+            key = _normalize_job_name_key(job_name)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            names.append(job_name)
+
+    return names
+
+
+def _merge_live_job_resources(
+    existing_resources: Sequence[Dict[str, Any]],
+    live_resources: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    target_keys = {
+        _normalize_job_name_key(resource.get("name"))
+        for resource in live_resources
+        if isinstance(resource, dict)
+        and str(resource.get("resourceType") or "").strip() == "Microsoft.App/jobs"
+        and _normalize_job_name_key(resource.get("name"))
+    }
+
+    merged: List[Dict[str, Any]] = []
+    for resource in existing_resources:
+        if not isinstance(resource, dict):
+            continue
+        resource_type = str(resource.get("resourceType") or "").strip()
+        resource_key = _normalize_job_name_key(resource.get("name"))
+        if resource_type == "Microsoft.App/jobs" and resource_key in target_keys:
+            continue
+        merged.append(dict(resource))
+
+    merged.extend(dict(resource) for resource in live_resources if isinstance(resource, dict))
+    return merged
+
+
+def _same_job_run(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+    job_names_match = _normalize_job_name_key(left.get("jobName")) == _normalize_job_name_key(
+        right.get("jobName")
+    )
+
+    left_execution_name = str(left.get("executionName") or "").strip()
+    right_execution_name = str(right.get("executionName") or "").strip()
+    left_start_time = str(left.get("startTime") or "").strip()
+    right_start_time = str(right.get("startTime") or "").strip()
+
+    execution_names_match = bool(
+        left_execution_name and right_execution_name and left_execution_name == right_execution_name
+    )
+    start_times_match = bool(left_start_time and right_start_time and left_start_time == right_start_time)
+
+    return job_names_match and (
+        execution_names_match or (not (left_execution_name and right_execution_name) and start_times_match)
+    )
+
+
+def _merge_live_job_runs(
+    existing_runs: Sequence[Dict[str, Any]],
+    live_runs: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = [dict(run) for run in existing_runs if isinstance(run, dict)]
+
+    for live_run in live_runs:
+        if not isinstance(live_run, dict):
+            continue
+        if not _normalize_job_name_key(live_run.get("jobName")):
+            continue
+
+        filtered = [run for run in merged if not _same_job_run(run, live_run)]
+        filtered.insert(0, dict(live_run))
+        merged = filtered
+
+    return merged
+
+
+def _overlay_live_domain_job_runtime(system_health_payload: Dict[str, Any]) -> Dict[str, Any]:
+    job_names = _status_view_domain_job_names(system_health_payload)
+    if not job_names:
+        return system_health_payload
+
+    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
+    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+    resource_group = resource_group_raw.strip() if resource_group_raw else ""
+    allowlist = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS"))
+
+    if not (subscription_id and resource_group and allowlist):
+        return system_health_payload
+
+    allowlist_index = {_normalize_job_name_key(name): name for name in allowlist}
+    requested_job_names: List[str] = []
+    seen: set[str] = set()
+    for job_name in job_names:
+        key = _normalize_job_name_key(job_name)
+        resolved = allowlist_index.get(key)
+        if not resolved or key in seen:
+            continue
+        seen.add(key)
+        requested_job_names.append(resolved)
+
+    if not requested_job_names:
+        return system_health_payload
+
+    api_version_env = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION")
+    api_version = api_version_env.strip() if api_version_env else ""
+    if not api_version:
+        api_version = ArmConfig.api_version
+
+    timeout_env = os.environ.get("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS")
+    try:
+        timeout_seconds = float(timeout_env.strip()) if timeout_env else 5.0
+    except ValueError:
+        timeout_seconds = 5.0
+
+    cfg = ArmConfig(
+        subscription_id=subscription_id,
+        resource_group=resource_group,
+        api_version=api_version,
+        timeout_seconds=timeout_seconds,
+    )
+
+    checked_at = _utc_timestamp()
+    try:
+        with AzureArmClient(cfg) as arm:
+            live_resources_raw, live_runs = collect_jobs_and_executions(
+                arm,
+                job_names=requested_job_names,
+                last_checked_iso=checked_at,
+                include_ids=False,
+                max_executions_per_job=1,
+                resource_health_enabled=False,
+            )
+    except Exception as exc:
+        logger.warning(
+            "Status-view live domain job runtime overlay failed for jobs=%s error=%s",
+            requested_job_names,
+            exc,
+            exc_info=True,
+        )
+        return system_health_payload
+
+    live_resources = [resource.to_dict(include_ids=False) for resource in live_resources_raw]
+
+    payload = dict(system_health_payload)
+    payload["resources"] = _merge_live_job_resources(payload.get("resources") or [], live_resources)
+    payload["recentJobs"] = _merge_live_job_runs(payload.get("recentJobs") or [], live_runs)
+    return payload
+
+
 def build_system_status_view(request: Request, refresh: bool = False) -> Dict[str, Any]:
     system_health_payload, system_health_cache_hit, _refresh_error = _resolve_system_health_payload(
         request,
         refresh=bool(refresh),
     )
+    system_health_payload = _overlay_live_domain_job_runtime(system_health_payload)
     metadata_snapshot_payload = _build_domain_metadata_snapshot_payload(refresh=bool(refresh))
     return {
         "version": 1,
