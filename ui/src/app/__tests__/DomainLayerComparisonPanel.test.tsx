@@ -9,6 +9,7 @@ import { renderWithProviders } from '@/test/utils';
 import type { DataLayer, DomainMetadata, JobRun } from '@/types/strategy';
 
 const setJobSuspendedMock = vi.fn().mockResolvedValue(undefined);
+const stopJobMock = vi.fn().mockResolvedValue(undefined);
 const triggerJobMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('sonner', () => ({
@@ -22,7 +23,8 @@ vi.mock('sonner', () => ({
 vi.mock('@/hooks/useJobSuspend', () => ({
   useJobSuspend: () => ({
     jobControl: null,
-    setJobSuspended: setJobSuspendedMock
+    setJobSuspended: setJobSuspendedMock,
+    stopJob: stopJobMock
   })
 }));
 
@@ -361,6 +363,24 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.getByText('symbols to retry:')).toBeInTheDocument();
     expect(screen.getByText(/3 total/)).toBeInTheDocument();
     expect(screen.getByText(/AAPL, MSFT/)).toBeInTheDocument();
+  });
+
+  it('stops all running jobs for the selected medallion-domain subpanel', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      recentJobs: makeJobs('running')
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+    await user.click(screen.getByRole('button', { name: 'Stop all jobs for Bronze market' }));
+
+    await waitFor(() => {
+      expect(stopJobMock).toHaveBeenCalledWith('aca-job-market', [
+        ['systemStatusView'],
+        ['systemHealth']
+      ]);
+    });
   });
 
   it('uses an explicit disclosure button for inline domain details', async () => {
