@@ -2129,10 +2129,7 @@ export function DomainLayerComparisonPanel({
                                         }
                                         onClick={() => {
                                           if (!model.actionJobName) return;
-                                          void stopJob(
-                                            model.actionJobName,
-                                            statusInvalidationKeys
-                                          );
+                                          void stopJob(model.actionJobName, statusInvalidationKeys);
                                         }}
                                       >
                                         {jobControlAction === 'stop' ? (
