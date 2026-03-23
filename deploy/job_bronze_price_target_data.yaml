@@ -87,6 +87,6 @@ properties:
       name: bronze-price-target-job
       command: ["python", "-m", "tasks.price_target_data.bronze_price_target_data"]
       resources:
-        cpu: 1.0
-        memory: 4Gi
+        cpu: 1.5
+        memory: 3Gi
   workloadProfileName: Consumption

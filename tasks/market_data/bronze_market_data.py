@@ -23,7 +23,11 @@ from core import symbol_availability
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
-from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
+from tasks.common.bronze_alpha26_publish import (
+    finalize_alpha26_bronze_publish,
+    start_alpha26_bronze_publish,
+    write_alpha26_bronze_bucket,
+)
 from tasks.common.bronze_observability import log_bronze_success
 from tasks.common.bronze_symbol_policy import (
     BronzeCoverageUnavailableError,
@@ -59,6 +63,16 @@ _BUCKET_COLUMNS = [
     "short_volume",
     "ingested_at",
     "source_hash",
+]
+_EXISTING_MARKET_BUCKET_COLUMNS = [
+    "Symbol",
+    "Date",
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+    *_SUPPLEMENTAL_MARKET_COLUMNS,
 ]
 _MARKET_OUTCOME_LOG_SAMPLE_LIMIT = 20
 _MARKET_OUTCOME_LOG_INTERVAL = 250
@@ -635,101 +649,124 @@ def _normalize_market_bucket_df(symbol: str, df_daily: pd.DataFrame) -> pd.DataF
     return out.reset_index(drop=True)
 
 
-def _write_alpha26_market_buckets(
-    symbol_frames: dict[str, pd.DataFrame],
+def _empty_existing_market_bucket_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=_EXISTING_MARKET_BUCKET_COLUMNS)
+
+
+def _load_alpha26_existing_market_bucket(*, bucket: str) -> pd.DataFrame:
+    try:
+        bucket_df = bronze_bucketing.read_bucket_parquet(
+            client=bronze_client,
+            prefix="market-data",
+            bucket=bucket,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Bronze market alpha26 preload failed bucket={bucket}: {exc}") from exc
+    if bucket_df is None or bucket_df.empty:
+        return _empty_existing_market_bucket_frame()
+
+    out = bucket_df.copy()
+    rename_map = {
+        "symbol": "Symbol",
+        "date": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+        "short_interest": "ShortInterest",
+        "short_volume": "ShortVolume",
+    }
+    out = out.rename(columns={key: value for key, value in rename_map.items() if key in out.columns})
+    if "Symbol" not in out.columns or "Date" not in out.columns:
+        return _empty_existing_market_bucket_frame()
+
+    out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out = out.dropna(subset=["Symbol", "Date"]).copy()
+    if out.empty:
+        return _empty_existing_market_bucket_frame()
+    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
+    out = out[[column for column in _EXISTING_MARKET_BUCKET_COLUMNS if column in out.columns]]
+
+    normalized_parts: list[pd.DataFrame] = []
+    for symbol, group in out.groupby("Symbol", sort=False):
+        clean_symbol = str(symbol).strip().upper()
+        if not clean_symbol:
+            continue
+        symbol_frame = _canonical_market_df(group.drop(columns=["Symbol"], errors="ignore"))
+        if symbol_frame.empty:
+            continue
+        symbol_frame.insert(0, "Symbol", clean_symbol)
+        normalized_parts.append(symbol_frame)
+    if not normalized_parts:
+        return _empty_existing_market_bucket_frame()
+    return pd.concat(normalized_parts, ignore_index=True, sort=False)
+
+
+def _split_alpha26_existing_market_bucket_frames(
+    bucket_frame: pd.DataFrame,
     *,
-    run_id: str,
-) -> tuple[int, str | None]:
-    bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
-    symbol_to_bucket: dict[str, str] = {}
-    for symbol, frame in symbol_frames.items():
+    scheduled_symbols: set[str],
+    preserve_unscheduled: bool,
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    scheduled_existing_frames: dict[str, pd.DataFrame] = {}
+    preserved_unscheduled_frames: dict[str, pd.DataFrame] = {}
+    if bucket_frame is None or bucket_frame.empty:
+        return scheduled_existing_frames, preserved_unscheduled_frames
+
+    for symbol, group in bucket_frame.groupby("Symbol", sort=False):
+        clean_symbol = str(symbol).strip().upper()
+        if not clean_symbol:
+            continue
+        symbol_frame = _canonical_market_df(group.drop(columns=["Symbol"], errors="ignore"))
+        if symbol_frame.empty:
+            continue
+        if clean_symbol in scheduled_symbols:
+            scheduled_existing_frames[clean_symbol] = symbol_frame
+        elif preserve_unscheduled:
+            preserved_unscheduled_frames[clean_symbol] = symbol_frame
+    return scheduled_existing_frames, preserved_unscheduled_frames
+
+
+def _build_alpha26_market_bucket_frame(
+    *,
+    bucket: str,
+    scheduled_symbols: list[str],
+    collected_symbol_frames: dict[str, pd.DataFrame],
+    preserved_unscheduled_frames: Optional[dict[str, pd.DataFrame]] = None,
+) -> tuple[pd.DataFrame, dict[str, str], int]:
+    bucket_parts: list[pd.DataFrame] = []
+    bucket_symbol_to_bucket: dict[str, str] = {}
+    staged_symbol_count = 0
+
+    for raw_symbol in scheduled_symbols:
+        symbol = str(raw_symbol or "").strip().upper()
+        if not symbol:
+            continue
+        frame = collected_symbol_frames.get(symbol)
         if frame is None or frame.empty:
             continue
         normalized = _normalize_market_bucket_df(symbol, frame)
         if normalized.empty:
             continue
-        bucket = bronze_bucketing.bucket_letter(symbol)
-        symbol_to_bucket[str(symbol).upper()] = bucket
-        if bucket_frames[bucket].empty:
-            bucket_frames[bucket] = normalized
-        else:
-            bucket_frames[bucket] = pd.concat([bucket_frames[bucket], normalized], ignore_index=True)
+        bucket_parts.append(normalized)
+        bucket_symbol_to_bucket[symbol] = bucket
+        staged_symbol_count += 1
 
-    publish_result = publish_alpha26_bronze_domain(
-        domain="market",
-        root_prefix="market-data",
-        bucket_frames=bucket_frames,
-        bucket_columns=_BUCKET_COLUMNS,
-        date_column="date",
-        symbol_to_bucket=symbol_to_bucket,
-        storage_client=bronze_client,
-        job_name="bronze-market-job",
-        run_id=run_id,
-    )
-    log_bronze_success(
-        domain="market",
-        operation="metadata_artifacts_written",
-        bucket_artifacts_written=publish_result.file_count,
-        domain_artifact_written=True,
-        symbol_index_path=publish_result.index_path or "n/a",
-        manifest_path=publish_result.manifest_path or "n/a",
-    )
-    return publish_result.written_symbols, publish_result.index_path
-
-
-def _load_alpha26_existing_market_frames(*, symbols: set[str]) -> dict[str, pd.DataFrame]:
-    frames: dict[str, pd.DataFrame] = {}
-    failed_buckets: list[str] = []
-    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
-        try:
-            bucket_df = bronze_bucketing.read_bucket_parquet(
-                client=bronze_client,
-                prefix="market-data",
-                bucket=bucket,
-            )
-        except Exception as exc:
-            failed_buckets.append(bucket)
-            mdc.write_error(f"Bronze market alpha26 preload failed bucket={bucket}: {exc}")
+    for symbol, frame in (preserved_unscheduled_frames or {}).items():
+        clean_symbol = str(symbol or "").strip().upper()
+        if not clean_symbol or frame is None or frame.empty:
             continue
-        if bucket_df is None or bucket_df.empty:
+        normalized = _normalize_market_bucket_df(clean_symbol, frame)
+        if normalized.empty:
             continue
+        bucket_parts.append(normalized)
+        bucket_symbol_to_bucket[clean_symbol] = bucket
 
-        out = bucket_df.copy()
-        rename_map = {
-            "symbol": "Symbol",
-            "date": "Date",
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume",
-            "short_interest": "ShortInterest",
-            "short_volume": "ShortVolume",
-        }
-        out = out.rename(columns={k: v for k, v in rename_map.items() if k in out.columns})
-        if "Symbol" not in out.columns or "Date" not in out.columns:
-            continue
-
-        out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
-        out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
-        out = out.dropna(subset=["Symbol", "Date"]).copy()
-        if out.empty:
-            continue
-        out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
-        keep_cols = ["Symbol", "Date", "Open", "High", "Low", "Close", "Volume", *_SUPPLEMENTAL_MARKET_COLUMNS]
-        out = out[[c for c in keep_cols if c in out.columns]]
-        for symbol, group in out.groupby("Symbol", sort=False):
-            clean_symbol = str(symbol).strip().upper()
-            if not clean_symbol or (symbols and clean_symbol not in symbols):
-                continue
-            group = group.drop(columns=["Symbol"], errors="ignore")
-            group = _canonical_market_df(group)
-            if not group.empty:
-                frames[clean_symbol] = group
-    if failed_buckets:
-        bucket_list = ",".join(sorted(failed_buckets))
-        raise RuntimeError(f"Bronze market alpha26 preload failed for bucket(s): {bucket_list}")
-    return frames
+    if not bucket_parts:
+        return pd.DataFrame(columns=_BUCKET_COLUMNS), bucket_symbol_to_bucket, staged_symbol_count
+    return pd.concat(bucket_parts, ignore_index=True), bucket_symbol_to_bucket, staged_symbol_count
 
 
 def _set_collected_market_frame(
@@ -1173,13 +1210,15 @@ async def main_async() -> int:
 
     bronze_bucketing.bronze_layout_mode()
     mdc.write_line(f"Starting Massive Bronze Market Ingestion for {len(symbols)} symbols...")
-    symbol_set = {str(s).strip().upper() for s in symbols}
-    alpha26_existing_frames = _load_alpha26_existing_market_frames(symbols=symbol_set)
-    # Seed with existing rows to preserve unchanged symbols under full 26-bucket rewrite.
-    collected_symbol_frames: Dict[str, pd.DataFrame] = {k: v.copy() for k, v in alpha26_existing_frames.items()}
-    collected_lock: Optional[threading.Lock] = threading.Lock()
+    symbols_by_bucket: dict[str, list[str]] = {bucket: [] for bucket in bronze_bucketing.ALPHABET_BUCKETS}
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol or "").strip().upper()
+        if not symbol:
+            continue
+        symbols_by_bucket[bronze_bucketing.bucket_letter(symbol)].append(symbol)
+    buckets_with_symbols = sum(1 for bucket_symbols in symbols_by_bucket.values() if bucket_symbols)
     mdc.write_line(
-        f"Loaded existing market alpha26 seed frames: symbols={len(collected_symbol_frames)}."
+        f"Bronze market alpha26 bucket plan: buckets_with_symbols={buckets_with_symbols} total_buckets={len(bronze_bucketing.ALPHABET_BUCKETS)}"
     )
 
     snapshot_rows_by_symbol: dict[str, dict[str, float | str]] = {}
@@ -1199,6 +1238,15 @@ async def main_async() -> int:
             snapshot_rows_by_symbol = {}
 
     client_manager = _ThreadLocalMassiveClientManager()
+    publish_session = start_alpha26_bronze_publish(
+        domain="market",
+        root_prefix="market-data",
+        bucket_columns=_BUCKET_COLUMNS,
+        date_column="date",
+        storage_client=bronze_client,
+        job_name="bronze-market-job",
+        run_id=run_id,
+    )
 
     progress = {
         "processed": 0,
@@ -1214,19 +1262,6 @@ async def main_async() -> int:
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
-
-    def worker(symbol: str) -> None:
-        if _should_skip_blacklisted_market_symbol(symbol):
-            return
-
-        _download_and_save_raw_with_recovery(
-            symbol,
-            client_manager,
-            snapshot_row=snapshot_rows_by_symbol.get(symbol),
-            collected_symbol_frames=collected_symbol_frames,
-            collected_lock=collected_lock,
-            existing_symbol_df=alpha26_existing_frames.get(symbol),
-        )
 
     max_workers = _get_max_workers()
     semaphore = asyncio.Semaphore(max_workers)
@@ -1255,7 +1290,7 @@ async def main_async() -> int:
                 )
             )
 
-    async def run_symbol(symbol: str) -> None:
+    async def run_symbol(symbol: str, worker: Callable[[str], None]) -> None:
         async with semaphore:
             try:
                 if debug_mode:
@@ -1363,8 +1398,90 @@ async def main_async() -> int:
                             "no_history_promotions={no_history_promotions} failed={failed}".format(**progress)
                         )
 
+    bucket_publish_error: Optional[BaseException] = None
     try:
-        await asyncio.gather(*(run_symbol(s) for s in symbols))
+        try:
+            for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+                scheduled_bucket_symbols = list(symbols_by_bucket.get(bucket, []))
+                scheduled_symbol_set = {
+                    str(symbol or "").strip().upper()
+                    for symbol in scheduled_bucket_symbols
+                    if str(symbol or "").strip()
+                }
+                existing_bucket_frame = _load_alpha26_existing_market_bucket(bucket=bucket)
+                loaded_existing_rows = int(existing_bucket_frame.shape[0])
+                scheduled_existing_frames, preserved_unscheduled_frames = _split_alpha26_existing_market_bucket_frames(
+                    existing_bucket_frame,
+                    scheduled_symbols=scheduled_symbol_set,
+                    preserve_unscheduled=debug_mode,
+                )
+                collected_symbol_frames: Dict[str, pd.DataFrame] = {
+                    symbol: frame.copy() for symbol, frame in scheduled_existing_frames.items()
+                }
+                collected_lock: Optional[threading.Lock] = threading.Lock() if scheduled_bucket_symbols else None
+
+                mdc.write_line(
+                    "Bronze market alpha26 bucket prepared: bucket={bucket} scheduled_symbols={scheduled_symbols} "
+                    "loaded_existing_rows={loaded_existing_rows} seeded_symbols={seeded_symbols} "
+                    "preserved_unscheduled_symbols={preserved_symbols}".format(
+                        bucket=bucket,
+                        scheduled_symbols=len(scheduled_bucket_symbols),
+                        loaded_existing_rows=loaded_existing_rows,
+                        seeded_symbols=len(scheduled_existing_frames),
+                        preserved_symbols=len(preserved_unscheduled_frames),
+                    )
+                )
+
+                def worker(
+                    symbol: str,
+                    *,
+                    _collected_symbol_frames: Dict[str, pd.DataFrame] = collected_symbol_frames,
+                    _collected_lock: Optional[threading.Lock] = collected_lock,
+                    _scheduled_existing_frames: dict[str, pd.DataFrame] = scheduled_existing_frames,
+                ) -> None:
+                    if _should_skip_blacklisted_market_symbol(symbol):
+                        return
+
+                    _download_and_save_raw_with_recovery(
+                        symbol,
+                        client_manager,
+                        snapshot_row=snapshot_rows_by_symbol.get(symbol),
+                        collected_symbol_frames=_collected_symbol_frames,
+                        collected_lock=_collected_lock,
+                        existing_symbol_df=_scheduled_existing_frames.get(symbol),
+                    )
+
+                if scheduled_bucket_symbols:
+                    await asyncio.gather(*(run_symbol(symbol, worker) for symbol in scheduled_bucket_symbols))
+
+                bucket_frame, bucket_symbol_to_bucket, staged_symbol_count = _build_alpha26_market_bucket_frame(
+                    bucket=bucket,
+                    scheduled_symbols=scheduled_bucket_symbols,
+                    collected_symbol_frames=collected_symbol_frames,
+                    preserved_unscheduled_frames=preserved_unscheduled_frames if debug_mode else None,
+                )
+                bucket_entry = write_alpha26_bronze_bucket(
+                    publish_session,
+                    bucket=bucket,
+                    frame=bucket_frame,
+                    symbol_to_bucket=bucket_symbol_to_bucket,
+                )
+                mdc.write_line(
+                    "Bronze market alpha26 bucket committed: bucket={bucket} scheduled_symbols={scheduled_symbols} "
+                    "loaded_existing_rows={loaded_existing_rows} staged_symbols={staged_symbols} "
+                    "written_rows={written_rows} bytes={payload_bytes}".format(
+                        bucket=bucket,
+                        scheduled_symbols=len(scheduled_bucket_symbols),
+                        loaded_existing_rows=loaded_existing_rows,
+                        staged_symbols=staged_symbol_count,
+                        written_rows=len(bucket_frame),
+                        payload_bytes=int(bucket_entry.get("size") or 0),
+                    )
+                )
+        except Exception as exc:
+            bucket_publish_error = exc
+            progress["failed"] += 1
+            mdc.write_error(f"Bronze market alpha26 bucket publish failed: {exc}")
     finally:
         try:
             executor.shutdown(wait=True, cancel_futures=False)
@@ -1375,21 +1492,30 @@ async def main_async() -> int:
         except Exception:
             pass
 
-    try:
-        written_symbols, index_path = _write_alpha26_market_buckets(collected_symbol_frames, run_id=run_id)
-        mdc.write_line(
-            "Bronze market alpha26 buckets written: "
-            f"symbols={written_symbols} index={index_path or 'n/a'}"
-        )
+    if bucket_publish_error is None:
         try:
-            list_manager.flush()
+            publish_result = finalize_alpha26_bronze_publish(publish_session)
+            mdc.write_line(
+                "Bronze market alpha26 buckets written: "
+                f"symbols={publish_result.written_symbols} index={publish_result.index_path or 'n/a'}"
+            )
+            log_bronze_success(
+                domain="market",
+                operation="metadata_artifacts_written",
+                bucket_artifacts_written=publish_result.file_count,
+                domain_artifact_written=True,
+                symbol_index_path=publish_result.index_path or "n/a",
+                manifest_path=publish_result.manifest_path or "n/a",
+            )
+            try:
+                list_manager.flush()
+            except Exception as exc:
+                mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+            else:
+                log_bronze_success(domain="market", operation="list_flush")
         except Exception as exc:
-            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
-        else:
-            log_bronze_success(domain="market", operation="list_flush")
-    except Exception as exc:
-        progress["failed"] += 1
-        mdc.write_error(f"Bronze market alpha26 bucket write failed: {exc}")
+            progress["failed"] += 1
+            mdc.write_error(f"Bronze market alpha26 publish failed: {exc}")
 
     if failure_counts:
         ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)

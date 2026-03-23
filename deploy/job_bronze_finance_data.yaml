@@ -99,6 +99,6 @@ properties:
       name: bronze-finance-job
       command: ["python", "-m", "tasks.finance_data.bronze_finance_data"]
       resources:
-        cpu: 1.0
-        memory: 4Gi
+        cpu: 1.5
+        memory: 3Gi
   workloadProfileName: Consumption

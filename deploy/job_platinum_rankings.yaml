@@ -50,6 +50,6 @@ properties:
       name: platinum-rankings-job
       command: ["python", "-m", "tasks.ranking.platinum_rankings"]
       resources:
-        cpu: 1.0
-        memory: 4Gi
+        cpu: 1.5
+        memory: 3Gi
   workloadProfileName: Consumption

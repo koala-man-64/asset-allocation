@@ -95,6 +95,6 @@ properties:
       name: bronze-earnings-job
       command: ["python", "-m", "tasks.earnings_data.bronze_earnings_data"]
       resources:
-        cpu: 1.0
-        memory: 4Gi
+        cpu: 1.5
+        memory: 3Gi
   workloadProfileName: Consumption

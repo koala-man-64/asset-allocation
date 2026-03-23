@@ -31,6 +31,30 @@ def _sync_result() -> bronze.symbol_availability.SyncResult:
     )
 
 
+def _empty_existing_bucket_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=bronze._EXISTING_MARKET_BUCKET_COLUMNS)
+
+
+def _fake_empty_bucket_load(*, bucket: str) -> pd.DataFrame:
+    del bucket
+    return _empty_existing_bucket_frame()
+
+
+def _fake_publish_result(
+    *,
+    written_symbols: int = 0,
+    index_path: str = "system/bronze-index/market/latest.parquet",
+    manifest_path: str = "system/manifests/bronze/market/latest.json",
+    file_count: int = 26,
+) -> MagicMock:
+    return MagicMock(
+        written_symbols=written_symbols,
+        index_path=index_path,
+        manifest_path=manifest_path,
+        file_count=file_count,
+    )
+
+
 def test_download_and_stage_market_data_fetches_full_history_for_new_symbol(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
@@ -534,8 +558,8 @@ def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique
             "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
             return_value="alpha26",
         ), patch(
-            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
-            return_value={},
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_fake_empty_bucket_load,
         ), patch(
             "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
             return_value={},
@@ -554,8 +578,14 @@ def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique
         ) as mock_record_invalid, patch(
             "tasks.market_data.bronze_market_data.clear_invalid_candidate_marker"
         ), patch(
-            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
-            return_value=(0, "system/bronze-index/market/latest.parquet"),
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
+            return_value={"size": 1},
+        ), patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+            return_value=_fake_publish_result(),
         ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
@@ -593,8 +623,8 @@ def test_main_async_records_no_history_candidate_for_header_only_coverage(unique
             "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
             return_value="alpha26",
         ), patch(
-            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
-            return_value={},
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_fake_empty_bucket_load,
         ), patch(
             "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
             return_value={},
@@ -619,8 +649,14 @@ def test_main_async_records_no_history_candidate_for_header_only_coverage(unique
             "tasks.market_data.bronze_market_data.resolve_job_run_status",
             return_value=("succeededWithWarnings", 0),
         ) as mock_resolve_status, patch(
-            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
-            return_value=(0, "system/bronze-index/market/latest.parquet"),
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
+            return_value={"size": 1},
+        ), patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+            return_value=_fake_publish_result(),
         ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
@@ -657,8 +693,8 @@ def test_main_async_does_not_promote_non_header_coverage_unavailable(unique_tick
             "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
             return_value="alpha26",
         ), patch(
-            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
-            return_value={},
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_fake_empty_bucket_load,
         ), patch(
             "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
             return_value={},
@@ -680,8 +716,14 @@ def test_main_async_does_not_promote_non_header_coverage_unavailable(unique_tick
             "tasks.market_data.bronze_market_data.resolve_job_run_status",
             return_value=("succeeded", 0),
         ) as mock_resolve_status, patch(
-            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
-            return_value=(0, "system/bronze-index/market/latest.parquet"),
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
+            return_value={"size": 1},
+        ), patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+            return_value=_fake_publish_result(),
         ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
@@ -716,8 +758,8 @@ def test_main_async_schedules_regime_required_symbol_even_when_blacklisted():
             "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
             return_value="alpha26",
         ), patch(
-            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
-            return_value={},
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_fake_empty_bucket_load,
         ), patch(
             "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
             return_value={},
@@ -730,8 +772,14 @@ def test_main_async_schedules_regime_required_symbol_even_when_blacklisted():
         ), patch(
             "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
         ) as mock_download, patch(
-            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
-            return_value=(0, "system/bronze-index/market/latest.parquet"),
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
+            return_value={"size": 1},
+        ), patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+            return_value=_fake_publish_result(),
         ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
@@ -755,6 +803,9 @@ def test_main_async_fails_closed_when_alpha26_preload_errors(unique_ticker):
     symbol = unique_ticker
     client_manager = MagicMock()
 
+    def _boom(*, bucket: str) -> pd.DataFrame:
+        raise RuntimeError(f"Bronze market alpha26 preload failed bucket={bucket}: boom")
+
     async def run_test():
         with patch("tasks.market_data.bronze_market_data._validate_environment"), patch(
             "tasks.market_data.bronze_market_data.mdc.log_environment_diagnostics"
@@ -768,22 +819,34 @@ def test_main_async_fails_closed_when_alpha26_preload_errors(unique_ticker):
             "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
             return_value="alpha26",
         ), patch(
-            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
-            side_effect=RuntimeError("Bronze market alpha26 preload failed for bucket(s): A"),
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_boom,
+        ), patch(
+            "tasks.market_data.bronze_market_data._ThreadLocalMassiveClientManager",
+            return_value=client_manager,
+        ), patch(
+            "tasks.market_data.bronze_market_data.resolve_job_run_status",
+            return_value=("failed", 1),
         ), patch(
             "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
         ) as mock_download, patch(
-            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
         ) as mock_write, patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+        ) as mock_finalize, patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager:
             mock_list_manager.is_blacklisted.return_value = False
-            with pytest.raises(RuntimeError, match="bucket\\(s\\): A"):
-                await bronze.main_async()
+            exit_code = await bronze.main_async()
 
+        assert exit_code == 1
         mock_download.assert_not_called()
         mock_write.assert_not_called()
-        client_manager.close_all.assert_not_called()
+        mock_finalize.assert_not_called()
+        client_manager.close_all.assert_called_once()
 
     asyncio.run(run_test())
 
@@ -817,7 +880,37 @@ def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
             }
         ]
     )
-    captured_frames: dict[str, pd.DataFrame] = {}
+    captured_bucket_frames: dict[str, pd.DataFrame] = {}
+
+    def _fake_load_bucket(*, bucket: str) -> pd.DataFrame:
+        if bucket != "A":
+            return _empty_existing_bucket_frame()
+        return pd.DataFrame(
+            [
+                {
+                    "Symbol": "AAPL",
+                    "Date": "2024-01-02",
+                    "Open": 10.0,
+                    "High": 11.0,
+                    "Low": 9.0,
+                    "Close": 10.5,
+                    "Volume": 100.0,
+                    "ShortInterest": 1000.0,
+                    "ShortVolume": 500.0,
+                },
+                {
+                    "Symbol": "MSFT",
+                    "Date": "2024-01-02",
+                    "Open": 20.0,
+                    "High": 21.0,
+                    "Low": 19.0,
+                    "Close": 20.5,
+                    "Volume": 200.0,
+                    "ShortInterest": 2000.0,
+                    "ShortVolume": 800.0,
+                },
+            ]
+        )
 
     def _fake_download(
         symbol,
@@ -853,10 +946,10 @@ def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
             collected_lock=collected_lock,
         )
 
-    def _fake_write(frames, *, run_id):
-        assert run_id
-        captured_frames.update({key: value.copy() for key, value in frames.items()})
-        return len(frames), "system/bronze-index/market/latest.parquet"
+    def _fake_bucket_write(_session, *, bucket, frame, symbol_to_bucket=None):
+        del symbol_to_bucket
+        captured_bucket_frames[str(bucket)] = frame.copy()
+        return {"size": len(frame)}
 
     async def run_test():
         with patch("tasks.market_data.bronze_market_data._validate_environment"), patch(
@@ -875,8 +968,8 @@ def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
             "DEBUG_SYMBOLS",
             ["AAPL"],
         ), patch(
-            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
-            return_value={"AAPL": seed_aapl, "MSFT": seed_msft},
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_fake_load_bucket,
         ), patch(
             "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
             return_value={},
@@ -890,8 +983,14 @@ def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
             "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
             side_effect=_fake_download,
         ), patch(
-            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
-            side_effect=_fake_write,
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
+            side_effect=_fake_bucket_write,
+        ), patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+            return_value=_fake_publish_result(written_symbols=2),
         ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
@@ -904,11 +1003,272 @@ def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
 
     asyncio.run(run_test())
 
-    assert set(captured_frames.keys()) == {"AAPL", "MSFT"}
-    assert captured_frames["AAPL"]["Date"].tolist() == ["2024-01-03"]
-    pd.testing.assert_frame_equal(captured_frames["MSFT"], bronze._canonical_market_df(seed_msft))
+    assert "A" in captured_bucket_frames
+    bucket_a = captured_bucket_frames["A"].sort_values(["symbol", "date"]).reset_index(drop=True)
+    assert bucket_a["symbol"].tolist() == ["AAPL", "MSFT"]
+    assert bucket_a.loc[bucket_a["symbol"] == "AAPL", "date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-03"]
+    assert bucket_a.loc[bucket_a["symbol"] == "MSFT", "date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-02"]
+
+
+def test_main_async_normal_run_drops_unscheduled_seeded_rows_during_bucket_rewrite():
+    captured_bucket_frames: dict[str, pd.DataFrame] = {}
+
+    def _fake_load_bucket(*, bucket: str) -> pd.DataFrame:
+        if bucket != "A":
+            return _empty_existing_bucket_frame()
+        return pd.DataFrame(
+            [
+                {
+                    "Symbol": "AAPL",
+                    "Date": "2024-01-02",
+                    "Open": 10.0,
+                    "High": 11.0,
+                    "Low": 9.0,
+                    "Close": 10.5,
+                    "Volume": 100.0,
+                    "ShortInterest": 1000.0,
+                    "ShortVolume": 500.0,
+                },
+                {
+                    "Symbol": "AMZN",
+                    "Date": "2024-01-02",
+                    "Open": 20.0,
+                    "High": 21.0,
+                    "Low": 19.0,
+                    "Close": 20.5,
+                    "Volume": 200.0,
+                    "ShortInterest": 2000.0,
+                    "ShortVolume": 800.0,
+                },
+            ]
+        )
+
+    def _fake_download(
+        symbol,
+        _client_manager,
+        *,
+        snapshot_row=None,
+        collected_symbol_frames,
+        collected_lock=None,
+        existing_symbol_df=None,
+        max_attempts=0,
+        sleep_seconds=0.0,
+    ):
+        del snapshot_row, max_attempts, sleep_seconds
+        assert symbol == "AAPL"
+        assert existing_symbol_df is not None
+        bronze._set_collected_market_frame(
+            symbol=symbol,
+            frame=_market_frame(
+                [
+                    {
+                        "Date": "2024-01-03",
+                        "Open": 11.0,
+                        "High": 12.0,
+                        "Low": 10.0,
+                        "Close": 11.5,
+                        "Volume": 150.0,
+                        "ShortInterest": 1100.0,
+                        "ShortVolume": 550.0,
+                    }
+                ]
+            ),
+            collected_symbol_frames=collected_symbol_frames,
+            collected_lock=collected_lock,
+        )
+
+    def _fake_bucket_write(_session, *, bucket, frame, symbol_to_bucket=None):
+        del symbol_to_bucket
+        captured_bucket_frames[str(bucket)] = frame.copy()
+        return {"size": len(frame)}
+
+    async def run_test():
+        with patch("tasks.market_data.bronze_market_data._validate_environment"), patch(
+            "tasks.market_data.bronze_market_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.get_domain_symbols",
+            return_value=pd.DataFrame({"Symbol": ["AAPL"]}),
+        ), patch(
+            "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
+            return_value="alpha26",
+        ), patch(
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_fake_load_bucket,
+        ), patch(
+            "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._ThreadLocalMassiveClientManager",
+            return_value=MagicMock(),
+        ), patch(
+            "tasks.market_data.bronze_market_data._get_max_workers",
+            return_value=1,
+        ), patch(
+            "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
+            side_effect=_fake_download,
+        ), patch(
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
+            side_effect=_fake_bucket_write,
+        ), patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+            return_value=_fake_publish_result(written_symbols=1),
+        ), patch(
+            "tasks.market_data.bronze_market_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.market_data.bronze_market_data.mdc.write_line"
+        ):
+            mock_list_manager.is_blacklisted.return_value = False
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+
+    asyncio.run(run_test())
+
+    bucket_a = captured_bucket_frames["A"].sort_values(["symbol", "date"]).reset_index(drop=True)
+    assert bucket_a["symbol"].tolist() == ["AAPL"]
+    assert bucket_a["date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-03"]
+
+
+def test_main_async_failed_scheduled_symbol_retains_seeded_rows_in_bucket_rewrite():
+    captured_bucket_frames: dict[str, pd.DataFrame] = {}
+
+    def _fake_load_bucket(*, bucket: str) -> pd.DataFrame:
+        if bucket != "A":
+            return _empty_existing_bucket_frame()
+        return pd.DataFrame(
+            [
+                {
+                    "Symbol": "AAPL",
+                    "Date": "2024-01-02",
+                    "Open": 10.0,
+                    "High": 11.0,
+                    "Low": 9.0,
+                    "Close": 10.5,
+                    "Volume": 100.0,
+                    "ShortInterest": 1000.0,
+                    "ShortVolume": 500.0,
+                },
+                {
+                    "Symbol": "AMZN",
+                    "Date": "2024-01-02",
+                    "Open": 20.0,
+                    "High": 21.0,
+                    "Low": 19.0,
+                    "Close": 20.5,
+                    "Volume": 200.0,
+                    "ShortInterest": 2000.0,
+                    "ShortVolume": 800.0,
+                },
+            ]
+        )
+
+    def _fake_download(
+        symbol,
+        _client_manager,
+        *,
+        snapshot_row=None,
+        collected_symbol_frames,
+        collected_lock=None,
+        existing_symbol_df=None,
+        max_attempts=0,
+        sleep_seconds=0.0,
+    ):
+        del snapshot_row, max_attempts, sleep_seconds
+        assert existing_symbol_df is not None
+        if symbol == "AAPL":
+            bronze._set_collected_market_frame(
+                symbol=symbol,
+                frame=_market_frame(
+                    [
+                        {
+                            "Date": "2024-01-03",
+                            "Open": 11.0,
+                            "High": 12.0,
+                            "Low": 10.0,
+                            "Close": 11.5,
+                            "Volume": 150.0,
+                            "ShortInterest": 1100.0,
+                            "ShortVolume": 550.0,
+                        }
+                    ]
+                ),
+                collected_symbol_frames=collected_symbol_frames,
+                collected_lock=collected_lock,
+            )
+            return
+        raise bronze.MassiveGatewayError(f"boom for {symbol}")
+
+    def _fake_bucket_write(_session, *, bucket, frame, symbol_to_bucket=None):
+        del symbol_to_bucket
+        captured_bucket_frames[str(bucket)] = frame.copy()
+        return {"size": len(frame)}
+
+    async def run_test():
+        with patch("tasks.market_data.bronze_market_data._validate_environment"), patch(
+            "tasks.market_data.bronze_market_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.get_domain_symbols",
+            return_value=pd.DataFrame({"Symbol": ["AAPL", "AMZN"]}),
+        ), patch(
+            "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
+            return_value="alpha26",
+        ), patch(
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_bucket",
+            side_effect=_fake_load_bucket,
+        ), patch(
+            "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._ThreadLocalMassiveClientManager",
+            return_value=MagicMock(),
+        ), patch(
+            "tasks.market_data.bronze_market_data._get_max_workers",
+            return_value=1,
+        ), patch(
+            "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
+            side_effect=_fake_download,
+        ), patch(
+            "tasks.market_data.bronze_market_data.start_alpha26_bronze_publish",
+            return_value=object(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.write_alpha26_bronze_bucket",
+            side_effect=_fake_bucket_write,
+        ), patch(
+            "tasks.market_data.bronze_market_data.finalize_alpha26_bronze_publish",
+            return_value=_fake_publish_result(written_symbols=2),
+        ), patch(
+            "tasks.market_data.bronze_market_data.resolve_job_run_status",
+            return_value=("failed", 1),
+        ), patch(
+            "tasks.market_data.bronze_market_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.market_data.bronze_market_data.mdc.write_line"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.write_warning"
+        ):
+            mock_list_manager.is_blacklisted.return_value = False
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 1
+
+    asyncio.run(run_test())
+
+    bucket_a = captured_bucket_frames["A"].sort_values(["symbol", "date"]).reset_index(drop=True)
+    assert bucket_a["symbol"].tolist() == ["AAPL", "AMZN"]
+    assert bucket_a.loc[bucket_a["symbol"] == "AAPL", "date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-03"]
+    assert bucket_a.loc[bucket_a["symbol"] == "AMZN", "date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-02"]
 
 
 def test_bronze_source_contains_no_symbol_csv_contract():
     source = Path(bronze.__file__).read_text(encoding="utf-8")
     assert "market-data/{symbol}.csv" not in source
+    assert "_write_alpha26_market_buckets" not in source

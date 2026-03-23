@@ -65,6 +65,6 @@ properties:
       name: gold-regime-job
       command: ["python", "-m", "tasks.regime_data.gold_regime_data"]
       resources:
-        cpu: 1.0
-        memory: 4Gi
+        cpu: 1.5
+        memory: 3Gi
   workloadProfileName: Consumption
