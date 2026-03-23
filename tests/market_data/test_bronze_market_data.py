@@ -852,34 +852,6 @@ def test_main_async_fails_closed_when_alpha26_preload_errors(unique_ticker):
 
 
 def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
-    seed_aapl = _market_frame(
-        [
-            {
-                "Date": "2024-01-02",
-                "Open": 10.0,
-                "High": 11.0,
-                "Low": 9.0,
-                "Close": 10.5,
-                "Volume": 100.0,
-                "ShortInterest": 1000.0,
-                "ShortVolume": 500.0,
-            }
-        ]
-    )
-    seed_msft = _market_frame(
-        [
-            {
-                "Date": "2024-01-02",
-                "Open": 20.0,
-                "High": 21.0,
-                "Low": 19.0,
-                "Close": 20.5,
-                "Volume": 200.0,
-                "ShortInterest": 2000.0,
-                "ShortVolume": 800.0,
-            }
-        ]
-    )
     captured_bucket_frames: dict[str, pd.DataFrame] = {}
 
     def _fake_load_bucket(*, bucket: str) -> pd.DataFrame:
