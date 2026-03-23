@@ -51,5 +51,5 @@ properties:
       command: ["python", "-m", "tasks.ranking.platinum_rankings"]
       resources:
         cpu: 1.0
-        memory: 2Gi
+        memory: 4Gi
   workloadProfileName: Consumption

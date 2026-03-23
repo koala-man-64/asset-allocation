@@ -92,5 +92,5 @@ properties:
       command: ["python", "-m", "tasks.market_data.bronze_market_data"]
       resources:
         cpu: 1.0
-        memory: 2Gi
+        memory: 4Gi
   workloadProfileName: Consumption

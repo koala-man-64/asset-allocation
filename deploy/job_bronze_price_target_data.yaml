@@ -88,5 +88,5 @@ properties:
       command: ["python", "-m", "tasks.price_target_data.bronze_price_target_data"]
       resources:
         cpu: 1.0
-        memory: 2Gi
+        memory: 4Gi
   workloadProfileName: Consumption

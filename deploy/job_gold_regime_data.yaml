@@ -66,5 +66,5 @@ properties:
       command: ["python", "-m", "tasks.regime_data.gold_regime_data"]
       resources:
         cpu: 1.0
-        memory: 2Gi
+        memory: 4Gi
   workloadProfileName: Consumption
