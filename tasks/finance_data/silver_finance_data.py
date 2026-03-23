@@ -22,7 +22,6 @@ from tasks.common.finance_contracts import (
     SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN,
     SILVER_FINANCE_SUBDOMAINS,
 )
-from tasks.common import run_manifests
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import (
     build_blob_signature,
@@ -70,17 +69,6 @@ class BlobProcessResult:
     watermark_signature: Optional[dict[str, Optional[str]]] = None
 
 
-@dataclass(frozen=True)
-class _ManifestSelection:
-    source: str
-    blobs: list[dict]
-    deduped: int
-    manifest_run_id: Optional[str] = None
-    manifest_path: Optional[str] = None
-    manifest_blob_count: int = 0
-    manifest_filtered_bucket_blob_count: int = 0
-
-
 @dataclass
 class _FinanceAlpha26FlushState:
     staged_rows: int = 0
@@ -96,25 +84,9 @@ _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
 _ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = dict(SILVER_FINANCE_REPORT_TYPE_TO_LAYOUT)
 _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
 _DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
-_DEFAULT_CATCHUP_MAX_PASSES = 3
 _FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = SILVER_FINANCE_SUBDOMAINS
 _FINANCE_VALUATION_CALCULATED_COLUMNS = set(SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"][2:])
 _STATEMENT_TIMEFRAMES = frozenset({"quarterly", "annual"})
-
-
-def _get_positive_int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        value = int(str(raw).strip())
-    except Exception:
-        return default
-    return value if value > 0 else default
-
-
-def _get_catchup_max_passes() -> int:
-    return _get_positive_int_env("SILVER_FINANCE_CATCHUP_MAX_PASSES", _DEFAULT_CATCHUP_MAX_PASSES)
 
 
 def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
@@ -132,48 +104,6 @@ def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
             f"processing {len(blobs)} bucket inputs."
         )
     return blobs, 0
-
-
-def _filter_alpha26_manifest_bucket_blobs(manifest: dict[str, Any]) -> list[dict]:
-    filtered: list[dict] = []
-    for blob in run_manifests.manifest_blobs(manifest):
-        name = str(blob.get("name", "")).strip()
-        if not name.endswith(".parquet"):
-            continue
-        filtered.append(blob)
-    filtered.sort(key=lambda item: str(item.get("name", "")))
-    return filtered
-
-
-def _select_initial_alpha26_source() -> _ManifestSelection:
-    manifest = run_manifests.load_latest_bronze_finance_manifest()
-    if isinstance(manifest, dict):
-        run_id = str(manifest.get("runId", "")).strip()
-        manifest_path = str(manifest.get("manifestPath", "")).strip()
-        if run_id and run_manifests.silver_finance_ack_exists(run_id):
-            mdc.write_line(f"Silver finance manifest run already acknowledged; falling back to listing runId={run_id}.")
-        elif run_id and manifest_path:
-            filtered = _filter_alpha26_manifest_bucket_blobs(manifest)
-            manifest_blob_count = len(run_manifests.manifest_blobs(manifest))
-            mdc.write_line(
-                "Silver finance selected manifest source: "
-                f"runId={run_id} manifestPath={manifest_path} "
-                f"manifestBlobs={manifest_blob_count} bucketBlobs={len(filtered)}"
-            )
-            return _ManifestSelection(
-                source="bronze-manifest",
-                blobs=filtered,
-                deduped=0,
-                manifest_run_id=run_id,
-                manifest_path=manifest_path,
-                manifest_blob_count=manifest_blob_count,
-                manifest_filtered_bucket_blob_count=len(filtered),
-            )
-        else:
-            mdc.write_warning("Silver finance manifest pointer missing runId/path; falling back to listing.")
-
-    listed, deduped = _list_alpha26_finance_bucket_candidates()
-    return _ManifestSelection(source="alpha26-bucket-listing", blobs=listed, deduped=deduped)
 
 
 def _build_alpha26_checkpoint_candidates(
@@ -1432,100 +1362,36 @@ def main() -> int:
         mdc.write_line(f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}")
     mdc.write_line("Listing Bronze Finance files...")
 
-    selection = _select_initial_alpha26_source()
-    initial_source = selection.source
-    initial_blobs = list(selection.blobs)
-    deduped_total = int(selection.deduped)
-    manifest_run_id = selection.manifest_run_id
-    manifest_path = selection.manifest_path
-    manifest_blob_count = int(selection.manifest_blob_count)
-    manifest_filtered_bucket_blob_count = int(selection.manifest_filtered_bucket_blob_count)
+    blob_list, _ = _list_alpha26_finance_bucket_candidates()
+    candidate_blobs, checkpoint_skipped = _build_alpha26_checkpoint_candidates(
+        blobs=blob_list,
+        watermarks=watermarks,
+        last_success=last_success,
+        force_reprocess=force_rebuild,
+    )
+    if last_success is not None:
+        mdc.write_line(
+            "Silver finance checkpoint filter: "
+            f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} "
+            f"skipped_checkpoint={checkpoint_skipped}"
+        )
+    mdc.write_line(
+        f"Found {len(blob_list)} files total; {len(candidate_blobs)} candidate files to process."
+    )
 
-    max_passes = _get_catchup_max_passes()
-    pass_count = 0
-    seen_blob_names: set[str] = set()
-    newly_discovered_blob_names: set[str] = set()
-    checkpoint_skipped_first_pass = 0
-    checkpoint_skipped_total = 0
+    alpha26_flush_state = _FinanceAlpha26FlushState()
     all_results: list[BlobProcessResult] = []
     total_ingest_elapsed = 0.0
-    alpha26_bucket_frames: dict[tuple[str, str], list[pd.DataFrame]] = {}
-    alpha26_flush_state = _FinanceAlpha26FlushState()
-
-    while pass_count < max_passes:
-        pass_count += 1
-        if pass_count == 1:
-            blobs = list(initial_blobs)
-        else:
-            blobs, deduped = _list_alpha26_finance_bucket_candidates()
-            deduped_total += deduped
-
-        current_blob_names = {str(item.get("name", "")).strip() for item in blobs if item.get("name")}
-        if pass_count > 1:
-            newly_seen = current_blob_names - seen_blob_names
-            if newly_seen:
-                newly_discovered_blob_names.update(newly_seen)
-                mdc.write_line(
-                    f"Silver finance catch-up pass discovered {len(newly_seen)} newly listed Bronze blob(s)."
-                )
-        seen_blob_names.update(current_blob_names)
-
-        candidate_blobs, checkpoint_skipped = _build_alpha26_checkpoint_candidates(
-            blobs=blobs,
-            watermarks=watermarks,
-            last_success=last_success,
-            force_reprocess=force_rebuild,
-        )
-        checkpoint_skipped_total += checkpoint_skipped
-        if pass_count == 1:
-            checkpoint_skipped_first_pass = checkpoint_skipped
-            if last_success is not None:
-                mdc.write_line(
-                    "Silver finance checkpoint filter: "
-                    f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} "
-                    f"skipped_checkpoint={checkpoint_skipped_first_pass}"
-                )
-
-        mdc.write_line(
-            "Silver finance ingest pass {pass_no}/{max_passes}: source={source} total={total} "
-            "candidates={candidates} skipped_checkpoint={skipped}.".format(
-                pass_no=pass_count,
-                max_passes=max_passes,
-                source=initial_source if pass_count == 1 else "alpha26-bucket-listing",
-                total=len(blobs),
-                candidates=len(candidate_blobs),
-                skipped=checkpoint_skipped,
-            )
-        )
-        if not candidate_blobs:
-            break
-
-        pass_results, pass_elapsed = _process_alpha26_candidate_blobs(
+    if candidate_blobs:
+        all_results, total_ingest_elapsed = _process_alpha26_candidate_blobs(
             candidate_blobs=candidate_blobs,
             desired_end=desired_end,
             backfill_start=backfill_start,
             watermarks=watermarks,
             persist=False,
-            alpha26_bucket_frames=alpha26_bucket_frames,
             flush_state=alpha26_flush_state,
         )
-        watermarks_dirty = True if candidate_blobs else watermarks_dirty
-        total_ingest_elapsed += pass_elapsed
-        all_results.extend(pass_results)
-
-    lag_candidate_count = 0
-    try:
-        latest_blobs, deduped = _list_alpha26_finance_bucket_candidates()
-        deduped_total += deduped
-        lag_candidates, _ = _build_alpha26_checkpoint_candidates(
-            blobs=latest_blobs,
-            watermarks=watermarks,
-            last_success=last_success,
-            force_reprocess=force_rebuild,
-        )
-        lag_candidate_count = len(lag_candidates)
-    except Exception as exc:
-        mdc.write_warning(f"Silver finance lag probe failed: {exc}")
+        watermarks_dirty = True
 
     processed = sum(1 for r in all_results if r.status == "ok")
     skipped = sum(1 for r in all_results if r.status == "skipped")
@@ -1539,24 +1405,7 @@ def main() -> int:
     alpha26_index_path: Optional[str] = alpha26_flush_state.index_path
     alpha26_column_count: Optional[int] = alpha26_flush_state.column_count
     if failed == 0:
-        residual_staged_rows = layer_bucketing.count_staged_frame_rows(alpha26_bucket_frames)
-        if residual_staged_rows > 0:
-            try:
-                alpha26_written_symbols, alpha26_index_path, alpha26_column_count = (
-                    _write_alpha26_finance_silver_buckets(
-                        alpha26_bucket_frames,
-                        recovery_state=alpha26_flush_state,
-                    )
-                )
-                alpha26_staged_rows += residual_staged_rows
-                mdc.write_line(
-                    "Silver finance alpha26 buckets written: "
-                    f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
-                )
-            except Exception as exc:
-                failed += 1
-                mdc.write_error(f"Silver finance alpha26 bucket write failed: {exc}")
-        elif alpha26_staged_rows == 0:
+        if alpha26_staged_rows == 0:
             mdc.write_line("Silver finance alpha26 bucket write skipped: no staged rows.")
         elif alpha26_flush_state.flush_count == 0:
             failed += 1
@@ -1570,13 +1419,10 @@ def main() -> int:
         "Silver finance ingest complete: "
         f"attempts={attempts}, ok={processed}, skipped={skipped}, skippedNoData={skipped_no_data}, "
         f"failed={total_failed}, "
-        f"skippedCheckpoint={checkpoint_skipped_first_pass}, "
+        f"skippedCheckpoint={checkpoint_skipped}, "
         f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, alpha26StagedRows={alpha26_staged_rows}, "
         f"alpha26Symbols={alpha26_written_symbols}, "
         f"elapsedSec={total_ingest_elapsed:.2f}, "
-        f"passes={pass_count}, newlyDiscoveredAfterFirstPass={len(newly_discovered_blob_names)}, "
-        f"lagCandidates={lag_candidate_count}, source={initial_source}, "
-        f"manifestRunId={manifest_run_id or 'n/a'}, "
         f"reconciled_orphans={reconciliation_orphans}, "
         f"reconciliation_deleted_blobs={reconciliation_deleted_blobs}"
     )
@@ -1585,62 +1431,23 @@ def main() -> int:
 
     run_ended_at = datetime.now(timezone.utc)
     if total_failed == 0:
-        manifest_ack_path: Optional[str] = None
-        if initial_source == "bronze-manifest" and manifest_run_id and manifest_path:
-            manifest_ack_path = run_manifests.write_silver_finance_ack(
-                run_id=manifest_run_id,
-                manifest_path=manifest_path,
-                status="succeeded",
-                metadata={
-                    "processed": processed,
-                    "skipped": skipped,
-                    "skipped_no_data": skipped_no_data,
-                    "failed": total_failed,
-                    "attempts": attempts,
-                    "rows_written": rows_written,
-                    "column_count": alpha26_column_count,
-                    "source": initial_source,
-                },
-            )
-            if manifest_ack_path:
-                mdc.write_line(
-                    "Silver finance manifest acknowledged: "
-                    f"runId={manifest_run_id} ackPath={manifest_ack_path}"
-                )
-            else:
-                mdc.write_warning(
-                    "Silver finance manifest ack not written: "
-                    f"runId={manifest_run_id} manifestPath={manifest_path}"
-                )
-
         checkpoint_metadata = {
-            "total_blobs": len(initial_blobs),
-            "source": initial_source,
-            "candidates": attempts,
+            "total_blobs": len(blob_list),
+            "candidates": len(candidate_blobs),
             "attempts": attempts,
             "processed": processed,
             "skipped": skipped,
             "skipped_no_data": skipped_no_data,
             "failed": total_failed,
-            "skipped_checkpoint": checkpoint_skipped_first_pass,
-            "skipped_checkpoint_total": checkpoint_skipped_total,
+            "skipped_checkpoint": checkpoint_skipped,
             "rows_written": rows_written,
             "alpha26_staged_rows": alpha26_staged_rows,
             "alpha26_symbols": alpha26_written_symbols,
             "alpha26_index_path": alpha26_index_path,
             "column_count": alpha26_column_count,
             "elapsed_seconds": round(total_ingest_elapsed, 3),
-            "catchup_passes": pass_count,
-            "new_blobs_discovered_after_first_pass": len(newly_discovered_blob_names),
-            "lag_candidate_count": lag_candidate_count,
             "run_started_at": run_started_at.isoformat(),
             "run_ended_at": run_ended_at.isoformat(),
-            "deduped_candidates_total": deduped_total,
-            "manifest_run_id": manifest_run_id,
-            "manifest_path": manifest_path,
-            "manifest_blob_count": manifest_blob_count,
-            "manifest_filtered_bucket_blob_count": manifest_filtered_bucket_blob_count,
-            "manifest_ack_path": manifest_ack_path,
             "reconciled_orphans": reconciliation_orphans,
             "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
         }
@@ -1650,11 +1457,6 @@ def main() -> int:
             metadata=checkpoint_metadata,
         )
         return 0
-    if initial_source == "bronze-manifest" and manifest_run_id:
-        mdc.write_warning(
-            "Silver finance manifest remains unacknowledged due to run failures: "
-            f"runId={manifest_run_id} failed={total_failed}"
-        )
     return 1
 
 

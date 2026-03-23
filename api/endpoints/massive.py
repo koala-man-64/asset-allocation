@@ -112,6 +112,37 @@ def get_daily_time_series(
     return Response(content=csv_text, media_type="text/csv", headers={"Cache-Control": "no-store"})
 
 
+@router.get("/market-history")
+def get_market_history(
+    request: Request,
+    symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
+    from_date: Optional[str] = Query(default=None, alias="from", description="Optional start date (YYYY-MM-DD)."),
+    to_date: Optional[str] = Query(default=None, alias="to", description="Optional end date (YYYY-MM-DD)."),
+    gateway: MassiveGateway = Depends(_get_gateway),
+) -> JSONResponse:
+    validate_auth(request)
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol is required.")
+
+    parsed_from = _parse_iso_date(from_date, field_name="from")
+    parsed_to = _parse_iso_date(to_date, field_name="to")
+    if parsed_from and parsed_to and parsed_from > parsed_to:
+        raise HTTPException(status_code=400, detail="'from' must be <= 'to'.")
+
+    try:
+        with _caller_context(request):
+            payload = gateway.get_market_history(
+                symbol=sym,
+                from_date=parsed_from,
+                to_date=parsed_to,
+            )
+    except Exception as exc:
+        _handle_massive_error(exc)
+        raise
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/snapshot")
 def get_unified_snapshot(
     request: Request,

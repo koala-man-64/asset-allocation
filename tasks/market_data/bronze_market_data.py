@@ -19,6 +19,7 @@ from core.massive_gateway_client import (
     MassiveGatewayNotFoundError,
     MassiveGatewayRateLimitError,
 )
+from core.market_history_contract import MARKET_HISTORY_START_DATE, MARKET_HISTORY_STATUS_NO_HISTORY
 from core import symbol_availability
 from core import core as mdc
 from core.pipeline import ListManager
@@ -47,7 +48,7 @@ list_manager = ListManager(bronze_client, "market-data", auto_flush=False, allow
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume")
 _RECOVERY_MAX_ATTEMPTS = 3
 _RECOVERY_SLEEP_SECONDS = 5.0
-_FULL_HISTORY_START_DATE = "1970-01-01"
+_FULL_HISTORY_START_DATE = MARKET_HISTORY_START_DATE
 _SNAPSHOT_BATCH_SIZE = 250
 _SNAPSHOT_ASSET_TYPE = "stocks"
 _REGIME_REQUIRED_MARKET_SYMBOLS = frozenset({"SPY", "^VIX", "^VIX3M"})
@@ -79,7 +80,6 @@ _MARKET_OUTCOME_LOG_INTERVAL = 250
 _DOMAIN = "market"
 _PROVIDER = "massive"
 _NO_MARKET_HISTORY_REASON_CODE = "provider_no_market_history"
-_HEADER_ONLY_DAILY_REASON_CODE = "header_only_daily_csv"
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -553,6 +553,43 @@ def _market_frames_equal(existing_df: pd.DataFrame, merged_df: pd.DataFrame) -> 
     return left.equals(right)
 
 
+def _normalize_market_history_payload(payload: Any) -> tuple[str, pd.DataFrame]:
+    if not isinstance(payload, dict):
+        raise ValueError(f"Unexpected market history payload type: {type(payload).__name__}")
+
+    status = str(payload.get("status") or "").strip().lower() or "ok"
+    if status not in {"ok", MARKET_HISTORY_STATUS_NO_HISTORY}:
+        raise ValueError(f"Unexpected market history status: {status!r}")
+
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        if status == MARKET_HISTORY_STATUS_NO_HISTORY:
+            return status, pd.DataFrame(columns=_EXISTING_MARKET_BUCKET_COLUMNS)
+        raise ValueError("Market history payload missing rows list.")
+
+    if not rows:
+        return status, pd.DataFrame(columns=_EXISTING_MARKET_BUCKET_COLUMNS)
+
+    df = pd.DataFrame([row for row in rows if isinstance(row, dict)])
+    if df.empty:
+        return status, pd.DataFrame(columns=_EXISTING_MARKET_BUCKET_COLUMNS)
+
+    rename_map = {
+        "date": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+        "short_interest": "ShortInterest",
+        "short_volume": "ShortVolume",
+    }
+    out = df.rename(columns={key: value for key, value in rename_map.items() if key in df.columns})
+    if "Date" not in out.columns:
+        raise ValueError("Market history payload missing date column.")
+    return status, _canonical_market_df(out)
+
+
 def _merge_market_fundamentals(
     df_daily: pd.DataFrame,
     *,
@@ -840,10 +877,11 @@ def _resolve_fetch_window(
     existing_latest_date: date | None,
 ) -> tuple[str, str]:
     today = _utc_today()
+    history_floor = date.fromisoformat(_FULL_HISTORY_START_DATE)
     if existing_latest_date is None:
-        from_date = _FULL_HISTORY_START_DATE
+        from_date = history_floor.isoformat()
     else:
-        from_date = min(existing_latest_date, today).isoformat()
+        from_date = max(min(existing_latest_date, today), history_floor).isoformat()
     return from_date, today.isoformat()
 
 
@@ -1005,15 +1043,19 @@ def download_and_save_raw(
         existing_df = pd.DataFrame()
     existing_latest_date = _extract_latest_market_date(existing_df)
     from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
-    raw_text = ""
-    df_daily = None
-    snapshot_date = _extract_snapshot_date(snapshot_row)
-    if _can_use_snapshot_for_incremental(
-        existing_latest_date=existing_latest_date,
-    ):
-        if snapshot_date is not None and existing_latest_date is not None and snapshot_date <= existing_latest_date:
-            # Snapshot confirms we are already at the latest obtainable daily bar.
+    payload = massive_client.get_market_history(
+        symbol=symbol,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    try:
+        status, incoming_df = _normalize_market_history_payload(payload)
+        if status == MARKET_HISTORY_STATUS_NO_HISTORY or incoming_df.empty:
             if not existing_df.empty:
+                mdc.write_warning(
+                    f"Massive returned no market history for {symbol} in range {from_date}..{to_date}; "
+                    "keeping existing bronze data."
+                )
                 _set_collected_market_frame(
                     symbol=symbol,
                     frame=existing_df,
@@ -1021,67 +1063,16 @@ def download_and_save_raw(
                     collected_lock=collected_lock,
                 )
             list_manager.add_to_whitelist(symbol)
-            return
-        df_daily = _snapshot_row_to_daily_df(snapshot_row)
-        if df_daily is not None and existing_latest_date is not None:
-            snapshot_dates = pd.to_datetime(df_daily["Date"], errors="coerce").dropna()
-            if snapshot_dates.empty or snapshot_dates.max().date() < existing_latest_date:
-                # Snapshot can lag around weekends/market close windows.
-                if not existing_df.empty:
-                    _set_collected_market_frame(
-                        symbol=symbol,
-                        frame=existing_df,
-                        collected_symbol_frames=collected_symbol_frames,
-                        collected_lock=collected_lock,
-                    )
-                list_manager.add_to_whitelist(symbol)
-                return
-
-    if df_daily is None:
-        raw_text = massive_client.get_daily_time_series_csv(
-            symbol=symbol,
-            from_date=from_date,
-            to_date=to_date,
-            adjusted=True,
-        )
-
-        if _is_header_only_provider_daily_csv(raw_text):
             if not existing_df.empty:
-                mdc.write_warning(
-                    f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}; "
-                    "keeping existing bronze data."
-                )
-                if not existing_df.empty:
-                    _set_collected_market_frame(
-                        symbol=symbol,
-                        frame=existing_df,
-                        collected_symbol_frames=collected_symbol_frames,
-                        collected_lock=collected_lock,
-                    )
-                list_manager.add_to_whitelist(symbol)
                 return
             raise BronzeCoverageUnavailableError(
-                _HEADER_ONLY_DAILY_REASON_CODE,
-                detail=(
-                    f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}."
-                ),
+                _NO_MARKET_HISTORY_REASON_CODE,
+                detail=f"Massive returned no market history for {symbol} in range {from_date}..{to_date}.",
                 payload={"symbol": symbol, "from_date": from_date, "to_date": to_date},
             )
 
-    try:
-        if df_daily is None:
-            df_daily = _normalize_provider_daily_df(raw_text)
-
-        has_new_daily_rows = _incoming_has_new_market_dates(
-            existing_latest_date=existing_latest_date,
-            incoming_df=df_daily,
-        )
-        if (
-            existing_latest_date is not None
-            and not has_new_daily_rows
-            and _existing_has_complete_supplementals(existing_df, as_of_date=existing_latest_date)
-        ):
-            # No new market rows and supplemental metrics already populated.
+        merged_df = _merge_existing_and_new_market_data(existing_df, incoming_df)
+        if not existing_df.empty and _market_frames_equal(existing_df, merged_df):
             if not existing_df.empty:
                 _set_collected_market_frame(
                     symbol=symbol,
@@ -1091,55 +1082,17 @@ def download_and_save_raw(
                 )
             list_manager.add_to_whitelist(symbol)
             return
-
-        try:
-            short_interest_payload = massive_client.get_short_interest(
-                symbol=symbol,
-                settlement_date_gte=from_date,
-                settlement_date_lte=to_date,
-            )
-        except MassiveGatewayNotFoundError:
-            short_interest_payload = {}
-
-        try:
-            short_volume_payload = massive_client.get_short_volume(
-                symbol=symbol,
-                date_gte=from_date,
-                date_lte=to_date,
-            )
-        except MassiveGatewayNotFoundError:
-            short_volume_payload = {}
-
-        df_daily = _merge_market_fundamentals(
-            df_daily,
-            short_interest_payload=short_interest_payload,
-            short_volume_payload=short_volume_payload,
-        )
-        df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
-        if not existing_df.empty and _market_frames_equal(existing_df, df_daily):
-            if not existing_df.empty:
-                _set_collected_market_frame(
-                    symbol=symbol,
-                    frame=existing_df,
-                    collected_symbol_frames=collected_symbol_frames,
-                    collected_lock=collected_lock,
-                )
-            list_manager.add_to_whitelist(symbol)
-            return
-    except (MassiveGatewayRateLimitError, MassiveGatewayError):
+    except (BronzeCoverageUnavailableError, MassiveGatewayRateLimitError, MassiveGatewayError):
         raise
     except Exception as exc:
-        snippet = raw_text.strip().replace("\n", " ")
-        if len(snippet) > 200:
-            snippet = snippet[:200] + "..."
         raise MassiveGatewayError(
-            f"Failed to build Massive daily+fundamentals CSV for {symbol}: {type(exc).__name__}: {exc}",
-            payload={"snippet": snippet},
+            f"Failed to normalize Massive market history payload for {symbol}: {type(exc).__name__}: {exc}",
+            payload={"path": "/api/providers/massive/market-history"},
         ) from exc
 
     _set_collected_market_frame(
         symbol=symbol,
-        frame=df_daily,
+        frame=merged_df,
         collected_symbol_frames=collected_symbol_frames,
         collected_lock=collected_lock,
     )
@@ -1221,22 +1174,6 @@ async def main_async() -> int:
         f"Bronze market alpha26 bucket plan: buckets_with_symbols={buckets_with_symbols} total_buckets={len(bronze_bucketing.ALPHABET_BUCKETS)}"
     )
 
-    snapshot_rows_by_symbol: dict[str, dict[str, float | str]] = {}
-    if symbols:
-        try:
-            mdc.write_line(
-                f"Prefetching Massive unified snapshots in batches (chunk_size={_SNAPSHOT_BATCH_SIZE})..."
-            )
-            snapshot_rows_by_symbol = _fetch_snapshot_daily_rows(symbols)
-            mdc.write_line(
-                f"Massive unified snapshot prefetch complete: rows={len(snapshot_rows_by_symbol)} symbols."
-            )
-        except Exception as exc:
-            mdc.write_warning(
-                f"Massive unified snapshot prefetch failed; falling back to symbol-level daily fetches. ({exc})"
-            )
-            snapshot_rows_by_symbol = {}
-
     client_manager = _ThreadLocalMassiveClientManager()
     publish_session = start_alpha26_bronze_publish(
         domain="market",
@@ -1294,7 +1231,7 @@ async def main_async() -> int:
         async with semaphore:
             try:
                 if debug_mode:
-                    mdc.write_line(f"Downloading OHLCV+fundamentals for {symbol}...")
+                    mdc.write_line(f"Downloading aggregated market history for {symbol}...")
                 await loop.run_in_executor(executor, worker, symbol)
                 try:
                     clear_invalid_candidate_marker(common_client=common_client, domain=_DOMAIN, symbol=symbol)
@@ -1316,7 +1253,7 @@ async def main_async() -> int:
                 should_log = debug_mode
                 promoted = False
                 observed_runs = 0
-                if exc.reason_code == _HEADER_ONLY_DAILY_REASON_CODE:
+                if exc.reason_code == _NO_MARKET_HISTORY_REASON_CODE:
                     promotion = record_invalid_symbol_candidate(
                         common_client=common_client,
                         bronze_client=bronze_client,
@@ -1330,7 +1267,7 @@ async def main_async() -> int:
                     observed_runs = int(promotion.get("observedRunCount", 0) or 0)
                 async with progress_lock:
                     progress["unavailable"] += 1
-                    if exc.reason_code == _HEADER_ONLY_DAILY_REASON_CODE:
+                    if exc.reason_code == _NO_MARKET_HISTORY_REASON_CODE:
                         progress["no_history_candidates"] += 1
                         if promoted:
                             progress["no_history_promotions"] += 1
@@ -1339,7 +1276,7 @@ async def main_async() -> int:
                     mdc.write_warning(
                         f"Bronze market coverage unavailable: symbol={symbol} reason={exc.reason_code} detail={exc}"
                     )
-                    if exc.reason_code == _HEADER_ONLY_DAILY_REASON_CODE:
+                    if exc.reason_code == _NO_MARKET_HISTORY_REASON_CODE:
                         message = (
                             "Bronze market no-history candidate: symbol={symbol} reason={reason} "
                             "observed_runs={observed_runs}"
@@ -1445,7 +1382,6 @@ async def main_async() -> int:
                     _download_and_save_raw_with_recovery(
                         symbol,
                         client_manager,
-                        snapshot_row=snapshot_rows_by_symbol.get(symbol),
                         collected_symbol_frames=_collected_symbol_frames,
                         collected_lock=_collected_lock,
                         existing_symbol_df=_scheduled_existing_frames.get(symbol),

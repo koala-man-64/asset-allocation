@@ -369,13 +369,7 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
     ]
 
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
-    monkeypatch.setattr(
-        silver,
-        "_select_initial_alpha26_source",
-        lambda: silver._ManifestSelection(source="alpha26-bucket-listing", blobs=list(blobs), deduped=0),
-    )
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: (list(blobs), 0))
-    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
     monkeypatch.setattr(
         silver,
@@ -470,13 +464,7 @@ def test_silver_finance_main_succeeds_with_no_data_skips_and_records_skipped_no_
 
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(silver.mdc, "write_line", lambda message: log_lines.append(str(message)))
-    monkeypatch.setattr(
-        silver,
-        "_select_initial_alpha26_source",
-        lambda: silver._ManifestSelection(source="alpha26-bucket-listing", blobs=list(blobs), deduped=0),
-    )
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: (list(blobs), 0))
-    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-22"))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
@@ -523,114 +511,22 @@ def test_silver_finance_main_succeeds_with_no_data_skips_and_records_skipped_no_
     assert any("skippedNoData=1" in line and "failed=0" in line for line in log_lines)
 
 
-def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatch):
-    blob_a = {
-        "name": "finance-data/buckets/A.parquet",
-        "etag": "etag-a",
-        "last_modified": datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc),
-    }
-    blob_b = {
-        "name": "finance-data/buckets/B.parquet",
-        "etag": "etag-b",
-        "last_modified": datetime(2026, 1, 31, 0, 1, tzinfo=timezone.utc),
-    }
-    listings = [
-        ([blob_a], 0),  # initial
-        ([blob_a, blob_b], 0),  # pass 2 discovers B
-        ([blob_a, blob_b], 0),  # pass 3 converges (no candidates)
-        ([blob_a, blob_b], 0),  # lag probe
-    ]
-    list_index = {"value": 0}
-
-    def _fake_list():
-        idx = min(list_index["value"], len(listings) - 1)
-        list_index["value"] += 1
-        return listings[idx]
-
-    def _fake_process(*, candidate_blobs, desired_end, backfill_start=None, watermarks=None, **_kwargs):
-        del desired_end, backfill_start
-        out = []
-        for blob in candidate_blobs:
-            name = blob["name"]
-            ticker = name.split("/")[-1].split(".", 1)[0]
-            watermarks[name] = {
-                "etag": blob["etag"],
-                "last_modified": blob["last_modified"].isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            out.append(
-                silver.BlobProcessResult(
-                    blob_name=name,
-                    silver_path=f"finance-data/balance_sheet/buckets/{ticker}",
-                    ticker=ticker,
-                    status="ok",
-                    rows_written=1,
-                )
-            )
-        flush_state = _kwargs.get("flush_state")
-        if flush_state is not None and out:
-            flush_state.staged_rows += len(out)
-            flush_state.flush_count += len(out)
-            flush_state.written_symbols = len(out)
-            flush_state.index_path = "index"
-            flush_state.column_count = 14
-        return out, 0.01
-
-    saved_last_success = {}
-    saved_watermarks = {}
-
-    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
-    monkeypatch.setattr(
-        silver,
-        "_select_initial_alpha26_source",
-        lambda: silver._ManifestSelection(source="alpha26-bucket-listing", blobs=_fake_list()[0], deduped=0),
-    )
-    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", _fake_list)
-    monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", _fake_process)
-    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 3)
-    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
-    monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
-    monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
-    monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
-    monkeypatch.setattr(
-        silver,
-        "save_last_success",
-        lambda key, when=None, metadata=None: saved_last_success.update(
-            {"key": key, "when": when, "metadata": metadata}
-        ),
-    )
-    monkeypatch.setattr(
-        silver,
-        "save_watermarks",
-        lambda key, items: saved_watermarks.update({"key": key, "items": dict(items)}),
-    )
-
-    exit_code = silver.main()
-    assert exit_code == 0
-    assert saved_last_success["key"] == "silver_finance_data"
-    assert saved_last_success["metadata"]["new_blobs_discovered_after_first_pass"] == 1
-    assert saved_last_success["metadata"]["lag_candidate_count"] == 0
-    assert saved_last_success["metadata"]["catchup_passes"] >= 2
-    assert saved_last_success["metadata"]["column_count"] == 14
-    assert saved_watermarks["key"] == "bronze_finance_data"
-
-
-def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
+def test_silver_finance_main_processes_a_single_listing_pass(monkeypatch):
     bucket_blob = {
         "name": "finance-data/buckets/A.parquet",
         "etag": "etag-a",
         "last_modified": datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc),
     }
     saved_last_success = {}
+    saved_watermarks = {}
+    list_calls = {"count": 0}
 
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(
         silver,
-        "_select_initial_alpha26_source",
-        lambda: silver._ManifestSelection(source="alpha26-bucket-listing", blobs=[dict(bucket_blob)], deduped=0),
+        "_list_alpha26_finance_bucket_candidates",
+        lambda: list_calls.__setitem__("count", list_calls["count"] + 1) or ([dict(bucket_blob)], 0),
     )
-    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([dict(bucket_blob)], 0))
-    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
@@ -681,154 +577,28 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
             {"key": key, "when": when, "metadata": metadata}
         ),
     )
-    monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        silver,
+        "save_watermarks",
+        lambda key, items: saved_watermarks.update({"key": key, "items": dict(items)}),
+    )
 
     exit_code = silver.main()
     assert exit_code == 0
-    assert saved_last_success["metadata"]["source"] == "alpha26-bucket-listing"
-    assert saved_last_success["metadata"]["manifest_run_id"] is None
-    assert saved_last_success["metadata"]["manifest_path"] is None
+    assert list_calls["count"] == 1
+    assert saved_last_success["key"] == "silver_finance_data"
+    assert saved_last_success["metadata"]["total_blobs"] == 1
+    assert saved_last_success["metadata"]["candidates"] == 1
+    assert saved_last_success["metadata"]["attempts"] == 1
+    assert saved_last_success["metadata"]["skipped_checkpoint"] == 0
     assert saved_last_success["metadata"]["column_count"] == 14
-
-
-def test_silver_finance_select_initial_source_uses_unacked_manifest(monkeypatch):
-    manifest = {
-        "runId": "bronze-finance-20260305T000000000000Z-abcd1234",
-        "manifestPath": "system/run-manifests/bronze_finance/run.json",
-        "blobs": [
-            {"name": "finance-data/buckets/A.parquet"},
-            {"name": "finance-data/Balance Sheet/A_quarterly_balance-sheet.json"},
-        ],
-    }
-    monkeypatch.setattr(silver.run_manifests, "load_latest_bronze_finance_manifest", lambda: dict(manifest))
-    monkeypatch.setattr(silver.run_manifests, "silver_finance_ack_exists", lambda _run_id: False)
-
-    selection = silver._select_initial_alpha26_source()
-    assert selection.source == "bronze-manifest"
-    assert selection.manifest_run_id == manifest["runId"]
-    assert selection.manifest_path == manifest["manifestPath"]
-    assert selection.manifest_blob_count == 2
-    assert selection.manifest_filtered_bucket_blob_count == 1
-    assert [item["name"] for item in selection.blobs] == ["finance-data/buckets/A.parquet"]
-
-
-def test_silver_finance_select_initial_source_falls_back_when_manifest_is_acked(monkeypatch):
-    manifest = {
-        "runId": "bronze-finance-20260305T000000000000Z-abcd1234",
-        "manifestPath": "system/run-manifests/bronze_finance/run.json",
-        "blobs": [{"name": "finance-data/buckets/A.parquet"}],
-    }
-    listed = [{"name": "finance-data/buckets/Z.parquet"}]
-    monkeypatch.setattr(silver.run_manifests, "load_latest_bronze_finance_manifest", lambda: dict(manifest))
-    monkeypatch.setattr(silver.run_manifests, "silver_finance_ack_exists", lambda _run_id: True)
-    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: (list(listed), 0))
-
-    selection = silver._select_initial_alpha26_source()
-    assert selection.source == "alpha26-bucket-listing"
-    assert selection.manifest_run_id is None
-    assert selection.blobs == listed
-
-
-def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
-    saved_last_success = {}
-    ack_calls: list[dict] = []
-    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
-    monkeypatch.setattr(
-        silver,
-        "_select_initial_alpha26_source",
-        lambda: silver._ManifestSelection(
-            source="bronze-manifest",
-            blobs=[],
-            deduped=0,
-            manifest_run_id="bronze-finance-20260305T000000000000Z-abcd1234",
-            manifest_path="system/run-manifests/bronze_finance/run.json",
-            manifest_blob_count=0,
-            manifest_filtered_bucket_blob_count=0,
-        ),
-    )
-    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
-    monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-05"))
-    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([], 0))
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames, **_kwargs: (0, "index", 14))
-    monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
-    monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
-    monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        silver,
-        "save_last_success",
-        lambda key, when=None, metadata=None: saved_last_success.update(
-            {"key": key, "when": when, "metadata": metadata}
-        ),
-    )
-    monkeypatch.setattr(
-        silver.run_manifests,
-        "write_silver_finance_ack",
-        lambda **kwargs: ack_calls.append(dict(kwargs)) or "system/run-manifests/silver_finance/ack.json",
-    )
-
-    exit_code = silver.main()
-    assert exit_code == 0
-    assert len(ack_calls) == 1
-    assert ack_calls[0]["run_id"].endswith("abcd1234")
-    assert ack_calls[0]["metadata"]["column_count"] is None
-    assert saved_last_success["metadata"]["source"] == "bronze-manifest"
-    assert saved_last_success["metadata"]["manifest_run_id"].endswith("abcd1234")
-    assert saved_last_success["metadata"]["manifest_path"].endswith("run.json")
-    assert saved_last_success["metadata"]["column_count"] is None
-
-
-def test_silver_finance_main_does_not_ack_manifest_when_failed(monkeypatch):
-    bucket_blob = {
-        "name": "finance-data/buckets/A.parquet",
-        "etag": "etag-a",
-        "last_modified": datetime(2026, 3, 5, 0, 0, tzinfo=timezone.utc),
-    }
-    ack_calls: list[dict] = []
-    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
-    monkeypatch.setattr(
-        silver,
-        "_select_initial_alpha26_source",
-        lambda: silver._ManifestSelection(
-            source="bronze-manifest",
-            blobs=[dict(bucket_blob)],
-            deduped=0,
-            manifest_run_id="bronze-finance-20260305T000000000000Z-abcd1234",
-            manifest_path="system/run-manifests/bronze_finance/run.json",
-            manifest_blob_count=1,
-            manifest_filtered_bucket_blob_count=1,
-        ),
-    )
-    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
-    monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-05"))
-    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([dict(bucket_blob)], 0))
-    monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
-    monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
-    monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        silver,
-        "_process_alpha26_candidate_blobs",
-        lambda **_kwargs: (
-            [
-                silver.BlobProcessResult(
-                    blob_name=bucket_blob["name"],
-                    silver_path=None,
-                    ticker="A",
-                    status="failed",
-                    error="boom",
-                )
-            ],
-            0.01,
-        ),
-    )
-    monkeypatch.setattr(
-        silver.run_manifests,
-        "write_silver_finance_ack",
-        lambda **kwargs: ack_calls.append(dict(kwargs)) or "unexpected",
-    )
-
-    exit_code = silver.main()
-    assert exit_code == 1
-    assert ack_calls == []
+    assert saved_watermarks["key"] == "bronze_finance_data"
+    assert "source" not in saved_last_success["metadata"]
+    assert "manifest_run_id" not in saved_last_success["metadata"]
+    assert "manifest_path" not in saved_last_success["metadata"]
+    assert "catchup_passes" not in saved_last_success["metadata"]
+    assert "lag_candidate_count" not in saved_last_success["metadata"]
+    assert "new_blobs_discovered_after_first_pass" not in saved_last_success["metadata"]
 
 
 def test_write_alpha26_finance_silver_buckets_aligns_empty_bucket_to_existing_schema(monkeypatch):

@@ -115,6 +115,39 @@ def test_unified_snapshot_uses_batch_api_route() -> None:
     assert seen[0][1].get("type") == "stocks"
 
 
+def test_market_history_uses_aggregated_route() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.url.params)))
+        if request.url.path == "/api/providers/massive/market-history":
+            return httpx.Response(200, json={"symbol": "AAPL", "status": "ok", "rows": []})
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            api_scope="api://asset-allocation/.default",
+            timeout_seconds=60.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+        access_token_provider=lambda: "oidc-token",
+    )
+    try:
+        payload = client.get_market_history(symbol="AAPL", from_date="2016-01-01", to_date="2025-01-10")
+    finally:
+        http_client.close()
+
+    assert payload == {"symbol": "AAPL", "status": "ok", "rows": []}
+    assert seen[0][0] == "/api/providers/massive/market-history"
+    assert seen[0][1].get("symbol") == "AAPL"
+    assert seen[0][1].get("from") == "2016-01-01"
+    assert seen[0][1].get("to") == "2025-01-10"
+
+
 def test_get_tickers_uses_reference_ticker_route() -> None:
     seen: list[tuple[str, dict[str, str]]] = []
 

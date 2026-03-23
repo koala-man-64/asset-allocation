@@ -41,6 +41,24 @@ async def test_massive_daily_time_series_maps_rate_limit_to_429(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_massive_market_history_returns_json(monkeypatch):
+    def fake_market_history(self, *, symbol, from_date=None, to_date=None):
+        assert symbol == "AAPL"
+        assert from_date == "1970-01-01"
+        assert to_date == "2025-01-10"
+        return {"symbol": symbol, "status": "ok", "rows": [{"date": "2025-01-10"}]}
+
+    monkeypatch.setattr(MassiveGateway, "get_market_history", fake_market_history)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/providers/massive/market-history?symbol=AAPL&from=1970-01-01&to=2025-01-10")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"symbol": "AAPL", "status": "ok", "rows": [{"date": "2025-01-10"}]}
+
+
+@pytest.mark.asyncio
 async def test_massive_short_interest_returns_json(monkeypatch):
     def fake_short_interest(self, *, symbol):
         assert symbol == "AAPL"

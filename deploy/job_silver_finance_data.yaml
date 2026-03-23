@@ -65,8 +65,6 @@ properties:
         value: "finance-pipeline-shared"
       - name: SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS
         value: "3600"
-      - name: SILVER_FINANCE_CATCHUP_MAX_PASSES
-        value: "3"
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
@@ -85,8 +83,6 @@ properties:
         value: ${AZURE_FOLDER_FINANCE}
       - name: AZURE_CONTAINER_COMMON
         value: ${AZURE_CONTAINER_COMMON}
-      - name: SILVER_FINANCE_INGEST_MAX_WORKERS
-        value: "4"
       image: ${JOB_IMAGE}
       imageType: ContainerImage
       name: silver-finance-job

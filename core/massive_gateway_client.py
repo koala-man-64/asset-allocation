@@ -522,6 +522,21 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/time-series/daily", params=params)
         return str(resp.text or "")
 
+    def get_market_history(
+        self,
+        *,
+        symbol: str,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol}
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        resp = self._request("/api/providers/massive/market-history", params=params)
+        return resp.json()
+
     def get_unified_snapshot(
         self,
         *,

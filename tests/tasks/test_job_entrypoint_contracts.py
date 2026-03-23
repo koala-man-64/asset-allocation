@@ -13,8 +13,9 @@ _ENTRYPOINT_LOCK_CASES: list[tuple[str, list[str]]] = [
     (
         "tasks/finance_data/bronze_finance_data.py",
         [
-            'with mdc.JobLock(shared_lock_name, conflict_policy="wait_then_fail"',
-            'with mdc.JobLock(job_name, conflict_policy="fail")',
+            "job_lock_factory = mdc.JobLock",
+            'with job_lock_factory(job_name, conflict_policy="fail")',
+            'conflict_policy="wait_then_fail"',
         ],
     ),
     ("tasks/price_target_data/bronze_price_target_data.py", ['with mdc.JobLock(job_name, conflict_policy="fail")']),

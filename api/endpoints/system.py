@@ -5000,10 +5000,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "How many days finance statement data is considered fresh before re-fetch (integer).",
         "example": "28",
     },
-    "SILVER_FINANCE_CATCHUP_MAX_PASSES": {
-        "description": "Max catch-up relist passes for silver finance ingestion to absorb late Bronze writes (integer).",
-        "example": "3",
-    },
     "FEATURE_ENGINEERING_MAX_WORKERS": {
         "description": "Max workers for feature engineering concurrency (integer).",
         "example": "8",

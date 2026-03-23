@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Iterator, Literal, Optional
 
+from core.market_history_contract import (
+    MARKET_HISTORY_START_DATE,
+    MARKET_HISTORY_STATUS_NO_HISTORY,
+    MARKET_HISTORY_STATUS_OK,
+)
 from core.massive_provider import get_complete_ticker_list as get_complete_reference_ticker_list
 from massive_provider import MassiveClient, MassiveConfig
 from massive_provider.errors import (
@@ -256,6 +261,90 @@ def _extract_iso_date(payload: dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _normalize_key(value: object) -> str:
+    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
+
+def _extract_payload_rows(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        results = payload.get("results")
+        if isinstance(results, list):
+            return [row for row in results if isinstance(row, dict)]
+        if isinstance(results, dict):
+            return [results]
+        return [payload]
+    return []
+
+
+def _extract_row_date(payload: dict[str, Any]) -> Optional[str]:
+    normalized = {_normalize_key(key): value for key, value in payload.items()}
+    for key in (
+        "date",
+        "settlement_date",
+        "settlementdate",
+        "effective_date",
+        "effectivedate",
+        "as_of",
+        "asof",
+        "session",
+        "day",
+        "start",
+        "start_date",
+        "startdate",
+        "timestamp",
+        "t",
+        "time",
+        "window_start",
+        "windowstart",
+    ):
+        raw = normalized.get(_normalize_key(key))
+        if raw is None:
+            continue
+        if isinstance(raw, (int, float)):
+            try:
+                ivalue = int(raw)
+                if abs(ivalue) > 10_000_000_000:
+                    return ms_to_iso_date(ivalue)
+                return datetime.fromtimestamp(ivalue, tz=timezone.utc).date().isoformat()
+            except Exception:
+                continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        try:
+            out = datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
+        except Exception:
+            try:
+                out = date.fromisoformat(text[:10]).isoformat()
+            except Exception:
+                continue
+        if out:
+            return out
+    return None
+
+
+def _extract_first_numeric(payload: dict[str, Any], keys: tuple[str, ...]) -> Optional[float]:
+    normalized = {_normalize_key(key): value for key, value in payload.items()}
+    for key in keys:
+        raw = normalized.get(_normalize_key(key))
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except Exception:
+            continue
+    return None
+
+
+def _clamp_market_history_start(from_date: Optional[str], *, to_date: Optional[str]) -> tuple[str, str]:
+    start = from_date or MARKET_HISTORY_START_DATE
+    start = max(str(start), MARKET_HISTORY_START_DATE)
+    end = to_date or _utc_today_iso()
+    return start, str(end)
+
+
 class MassiveGateway:
     """
     Process-local gateway for Massive provider calls.
@@ -383,14 +472,14 @@ class MassiveGateway:
             "Volume": float(volume or 0.0),
         }
 
-    def get_daily_time_series_csv(
+    def _load_daily_time_series_rows(
         self,
         *,
         symbol: str,
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
         adjusted: bool = True,
-    ) -> str:
+    ) -> list[dict[str, float | str]]:
         sym = str(symbol or "").strip().upper()
         if not sym:
             raise ValueError("symbol is required.")
@@ -408,7 +497,7 @@ class MassiveGateway:
                 )
                 row = self._normalize_daily_summary_row(summary_payload, fallback_date=str(start_date))
                 if row is not None:
-                    return self._to_csv([row])
+                    return [row]
             except MassiveNotFoundError:
                 # Fallback to aggs endpoint below so callers still get a CSV response.
                 pass
@@ -424,8 +513,193 @@ class MassiveGateway:
             limit=50000,
             pagination=True,
         )
-        rows = self._normalize_ohlcv_rows([b for b in bars if isinstance(b, dict)])
+        return self._normalize_ohlcv_rows([b for b in bars if isinstance(b, dict)])
+
+    def _build_metric_values_by_date(
+        self,
+        payload: Any,
+        *,
+        value_keys: tuple[str, ...],
+        fallback_date: str,
+        min_date: str,
+        max_date: str,
+    ) -> dict[str, float]:
+        values_by_date: dict[str, float] = {}
+        for row in _extract_payload_rows(payload):
+            value = _extract_first_numeric(row, value_keys)
+            as_of = _extract_row_date(row)
+            if value is None or as_of is None:
+                continue
+            if as_of < min_date or as_of > max_date:
+                continue
+            values_by_date[as_of] = float(value)
+
+        if not values_by_date and isinstance(payload, dict):
+            top_level_value = _extract_first_numeric(payload, value_keys)
+            if top_level_value is not None:
+                values_by_date[fallback_date] = float(top_level_value)
+        return values_by_date
+
+    def _merge_market_metrics(
+        self,
+        daily_rows: list[dict[str, float | str]],
+        *,
+        short_interest_payload: Any,
+        short_volume_payload: Any,
+    ) -> list[dict[str, float | str | None]]:
+        if not daily_rows:
+            return []
+
+        out_rows = [dict(row) for row in daily_rows]
+        min_date = str(out_rows[0]["Date"])
+        max_date = str(out_rows[-1]["Date"])
+        metric_specs = (
+            (
+                "ShortInterest",
+                short_interest_payload,
+                (
+                    "short_interest",
+                    "shortinterest",
+                    "shortinterestshares",
+                    "short_interest_shares",
+                    "sharesshort",
+                    "value",
+                ),
+            ),
+            (
+                "ShortVolume",
+                short_volume_payload,
+                (
+                    "short_volume",
+                    "shortvolume",
+                    "shortvolumeshares",
+                    "short_volume_shares",
+                    "volumeshort",
+                    "value",
+                ),
+            ),
+        )
+
+        for column_name, payload, value_keys in metric_specs:
+            values_by_date = self._build_metric_values_by_date(
+                payload,
+                value_keys=value_keys,
+                fallback_date=max_date,
+                min_date=min_date,
+                max_date=max_date,
+            )
+            last_value: float | None = None
+            for row in out_rows:
+                row_date = str(row["Date"])
+                if row_date in values_by_date:
+                    last_value = values_by_date[row_date]
+                row[column_name] = last_value
+
+        return out_rows
+
+    def _market_history_payload(
+        self,
+        *,
+        symbol: str,
+        rows: list[dict[str, float | str | None]],
+        status: str,
+    ) -> dict[str, Any]:
+        payload_rows: list[dict[str, Any]] = []
+        for row in rows:
+            payload_rows.append(
+                {
+                    "date": row.get("Date"),
+                    "open": row.get("Open"),
+                    "high": row.get("High"),
+                    "low": row.get("Low"),
+                    "close": row.get("Close"),
+                    "volume": row.get("Volume"),
+                    "short_interest": row.get("ShortInterest"),
+                    "short_volume": row.get("ShortVolume"),
+                }
+            )
+        return {
+            "symbol": str(symbol or "").strip().upper(),
+            "status": status,
+            "rows": payload_rows,
+        }
+
+    def get_daily_time_series_csv(
+        self,
+        *,
+        symbol: str,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        adjusted: bool = True,
+    ) -> str:
+        rows = self._load_daily_time_series_rows(
+            symbol=symbol,
+            from_date=from_date,
+            to_date=to_date,
+            adjusted=adjusted,
+        )
         return self._to_csv(rows)
+
+    def get_market_history(
+        self,
+        *,
+        symbol: str,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        sym = str(symbol or "").strip().upper()
+        if not sym:
+            raise ValueError("symbol is required.")
+
+        start_date, end_date = _clamp_market_history_start(from_date, to_date=to_date)
+        if end_date < MARKET_HISTORY_START_DATE or start_date > end_date:
+            return self._market_history_payload(
+                symbol=sym,
+                rows=[],
+                status=MARKET_HISTORY_STATUS_NO_HISTORY,
+            )
+
+        daily_rows = self._load_daily_time_series_rows(
+            symbol=sym,
+            from_date=start_date,
+            to_date=end_date,
+            adjusted=True,
+        )
+        if not daily_rows:
+            return self._market_history_payload(
+                symbol=sym,
+                rows=[],
+                status=MARKET_HISTORY_STATUS_NO_HISTORY,
+            )
+
+        try:
+            short_interest_payload = self.get_short_interest(
+                symbol=sym,
+                settlement_date_gte=start_date,
+                settlement_date_lte=end_date,
+            )
+        except MassiveNotFoundError:
+            short_interest_payload = {}
+
+        try:
+            short_volume_payload = self.get_short_volume(
+                symbol=sym,
+                date_gte=start_date,
+                date_lte=end_date,
+            )
+        except MassiveNotFoundError:
+            short_volume_payload = {}
+
+        merged_rows = self._merge_market_metrics(
+            daily_rows,
+            short_interest_payload=short_interest_payload,
+            short_volume_payload=short_volume_payload,
+        )
+        return self._market_history_payload(
+            symbol=sym,
+            rows=merged_rows,
+            status=MARKET_HISTORY_STATUS_OK,
+        )
 
     def get_short_interest(
         self,
