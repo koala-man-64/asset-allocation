@@ -7,7 +7,7 @@ import pytest
 from tasks.finance_data import silver_finance_data as silver
 
 
-def test_read_finance_json_projects_only_piotroski_columns() -> None:
+def test_read_finance_json_projects_only_balance_sheet_columns() -> None:
     payload = {
         "schema_version": 2,
         "provider": "massive",
@@ -19,7 +19,6 @@ def test_read_finance_json_projects_only_piotroski_columns() -> None:
                 "total_assets": 1000.0,
                 "current_assets": 250.0,
                 "current_liabilities": 125.0,
-                "shares_outstanding": 50.0,
                 "long_term_debt": 300.0,
             }
         ],
@@ -38,12 +37,45 @@ def test_read_finance_json_projects_only_piotroski_columns() -> None:
         "total_assets",
         "current_assets",
         "current_liabilities",
-        "shares_outstanding",
         "timeframe",
     ]
     assert out.loc[0, "Symbol"] == "AAPL"
     assert out.loc[0, "total_assets"] == 1000.0
     assert out.loc[0, "timeframe"] == "quarterly"
+
+
+def test_read_finance_json_maps_income_statement_shares_outstanding_from_bronze_aliases() -> None:
+    payload = {
+        "status": "OK",
+        "results": [
+            {
+                "period_end": "2024-03-31",
+                "timeframe": "quarterly",
+                "total_revenue": 1000.0,
+                "gross_profit": 400.0,
+                "net_income": 120.0,
+                "basic_shares_outstanding": 50.0,
+                "diluted_shares_outstanding": 55.0,
+            }
+        ],
+    }
+
+    out = silver._read_finance_json(
+        json.dumps(payload).encode("utf-8"),
+        ticker="AAPL",
+        report_type="income_statement",
+    )
+
+    assert list(out.columns) == [
+        "Date",
+        "Symbol",
+        "total_revenue",
+        "gross_profit",
+        "net_income",
+        "shares_outstanding",
+        "timeframe",
+    ]
+    assert out.loc[0, "shares_outstanding"] == 55.0
 
 
 def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> None:
@@ -601,8 +633,8 @@ def test_silver_finance_main_processes_a_single_listing_pass(monkeypatch):
     assert "new_blobs_discovered_after_first_pass" not in saved_last_success["metadata"]
 
 
-def test_write_alpha26_finance_silver_buckets_aligns_empty_bucket_to_existing_schema(monkeypatch):
-    existing_cols = ["date", "symbol"] + [f"metric_{idx}" for idx in range(1, 38)]
+def test_write_alpha26_finance_silver_buckets_replaces_legacy_schema_with_contract(monkeypatch):
+    existing_cols = ["date", "symbol", "shares_outstanding", "timeframe"]
     target_path = "finance-data/balance_sheet/buckets/A"
     captured: dict[str, object] = {}
 
@@ -615,10 +647,17 @@ def test_write_alpha26_finance_silver_buckets_aligns_empty_bucket_to_existing_sc
         lambda _container, path: existing_cols if path == target_path else None,
     )
 
-    def _fake_store(df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite") -> None:
+    def _fake_store(
+        df: pd.DataFrame,
+        _container: str,
+        path: str,
+        mode: str = "overwrite",
+        schema_mode: str | None = None,
+    ) -> None:
         captured["df"] = df.copy()
         captured["path"] = path
         captured["mode"] = mode
+        captured["schema_mode"] = schema_mode
 
     monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
 
@@ -628,10 +667,19 @@ def test_write_alpha26_finance_silver_buckets_aligns_empty_bucket_to_existing_sc
     assert index_path == "index"
     assert captured["path"] == target_path
     assert captured["mode"] == "overwrite"
+    assert captured["schema_mode"] == "overwrite"
     df_written = captured["df"]
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
-    assert list(df_written.columns) == existing_cols
+    assert list(df_written.columns) == [
+        "date",
+        "symbol",
+        "long_term_debt",
+        "total_assets",
+        "current_assets",
+        "current_liabilities",
+        "timeframe",
+    ]
 
 
 def test_write_alpha26_finance_silver_buckets_skips_empty_bucket_without_existing_schema(monkeypatch):
@@ -648,10 +696,17 @@ def test_write_alpha26_finance_silver_buckets_skips_empty_bucket_without_existin
 
     monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", _fake_get_schema)
 
-    def _fake_store(df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite") -> None:
+    def _fake_store(
+        df: pd.DataFrame,
+        _container: str,
+        path: str,
+        mode: str = "overwrite",
+        schema_mode: str | None = None,
+    ) -> None:
         captured["store_calls"] = int(captured["store_calls"]) + 1
         captured["path"] = path
         captured["mode"] = mode
+        captured["schema_mode"] = schema_mode
         captured["df"] = df.copy()
 
     monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
@@ -764,8 +819,15 @@ def test_write_alpha26_finance_silver_buckets_recovers_missing_shared_index_from
             return pd.DataFrame({"symbol": ["MSFT"]})
         return None
 
-    def _fake_store(_df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite") -> None:
+    def _fake_store(
+        _df: pd.DataFrame,
+        _container: str,
+        path: str,
+        mode: str = "overwrite",
+        schema_mode: str | None = None,
+    ) -> None:
         assert mode == "overwrite"
+        assert schema_mode == "overwrite"
         stored_paths.append(path)
 
     def _fake_index(**kwargs):
@@ -819,8 +881,15 @@ def test_write_alpha26_finance_silver_buckets_bootstraps_missing_shared_index_fr
     monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(silver.delta_core, "load_delta", lambda *_args, **_kwargs: None)
 
-    def _fake_store(_df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite") -> None:
+    def _fake_store(
+        _df: pd.DataFrame,
+        _container: str,
+        path: str,
+        mode: str = "overwrite",
+        schema_mode: str | None = None,
+    ) -> None:
         assert mode == "overwrite"
+        assert schema_mode == "overwrite"
         stored_paths.append(path)
 
     def _fake_index(**kwargs):

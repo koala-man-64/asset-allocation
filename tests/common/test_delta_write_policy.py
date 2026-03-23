@@ -97,3 +97,23 @@ def test_prepare_delta_write_frame_preserves_empty_wider_schema_for_existing_tab
     assert decision.action == "write"
     assert decision.frame.empty
     assert list(decision.frame.columns) == existing_cols
+
+
+def test_prepare_delta_write_frame_enforces_declared_schema_over_legacy_table_columns(monkeypatch):
+    existing_cols = ["date", "symbol", "shares_outstanding", "timeframe"]
+    monkeypatch.setattr(
+        "tasks.common.delta_write_policy.delta_core.get_delta_schema_columns",
+        lambda _container, _path: existing_cols,
+    )
+
+    decision = prepare_delta_write_frame(
+        pd.DataFrame({"Date": ["2026-01-02"], "Symbol": ["AAPL"]}),
+        container="silver",
+        path="finance-data/balance_sheet/buckets/A",
+        enforced_schema_columns=("date", "symbol", "total_assets", "timeframe"),
+    )
+
+    assert decision.action == "write"
+    assert decision.reason == "aligned_to_enforced_schema"
+    assert list(decision.frame.columns) == ["date", "symbol", "total_assets", "timeframe"]
+    assert pd.isna(decision.frame.loc[0, "total_assets"])

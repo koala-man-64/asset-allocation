@@ -9,6 +9,7 @@ import { renderWithProviders } from '@/test/utils';
 import type { DataLayer, DomainMetadata, JobRun } from '@/types/strategy';
 
 const setJobSuspendedMock = vi.fn().mockResolvedValue(undefined);
+const stopJobMock = vi.fn().mockResolvedValue(undefined);
 const triggerJobMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('sonner', () => ({
@@ -22,7 +23,8 @@ vi.mock('sonner', () => ({
 vi.mock('@/hooks/useJobSuspend', () => ({
   useJobSuspend: () => ({
     jobControl: null,
-    setJobSuspended: setJobSuspendedMock
+    setJobSuspended: setJobSuspendedMock,
+    stopJob: stopJobMock
   })
 }));
 
@@ -371,10 +373,10 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     });
 
     await user.click(screen.getByRole('button', { name: 'Expand market details' }));
-    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    await user.click(screen.getByRole('button', { name: /Stop all running .* runs/i }));
 
     await waitFor(() => {
-      expect(setJobSuspendedMock).toHaveBeenCalledWith('aca-job-market', true, [
+      expect(stopJobMock).toHaveBeenCalledWith('aca-job-market', [
         ['systemStatusView'],
         ['systemHealth']
       ]);

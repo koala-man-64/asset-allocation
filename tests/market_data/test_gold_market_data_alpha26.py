@@ -75,6 +75,73 @@ def test_run_alpha26_market_gold_blocks_watermark_when_compute_fails(monkeypatch
     assert bucket_results[0].watermark_updated is False
 
 
+def test_run_alpha26_market_gold_logs_bucket_progress_and_loads_required_columns(monkeypatch):
+    messages: list[str] = []
+    load_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+
+    def _fake_last_commit(_container: str, path: str):
+        if path == DataPaths.get_silver_market_bucket_path("A"):
+            return 100.0
+        return None
+
+    def _fake_load_delta(_container: str, path: str, **kwargs):
+        load_calls.append({"path": path, "columns": tuple(kwargs.get("columns") or ())})
+        return _silver_bucket_df("AAPL")
+
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", _fake_last_commit)
+    monkeypatch.setattr(delta_core_module, "load_delta", _fake_load_delta)
+    monkeypatch.setattr(
+        gold,
+        "compute_features",
+        lambda df: pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-01-02")],
+                "symbol": [str(df["symbol"].iloc[0]).strip().upper()],
+                "close": [100.5],
+            }
+        ),
+    )
+    monkeypatch.setattr(delta_core_module, "store_delta", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(core_module, "write_line", messages.append)
+    monkeypatch.setattr(core_module, "write_warning", messages.append)
+    monkeypatch.setattr(core_module, "write_error", messages.append)
+
+    (
+        processed,
+        _skipped_unchanged,
+        _skipped_missing_source,
+        failed,
+        _watermarks_dirty,
+        _alpha26_symbols,
+        _index_path,
+        bucket_results,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks={},
+    )
+
+    assert processed == 1
+    assert failed == 0
+    assert len(bucket_results) == 1
+    assert bucket_results[0].status == "ok"
+    assert load_calls == [
+        {
+            "path": DataPaths.get_silver_market_bucket_path("A"),
+            "columns": gold._GOLD_MARKET_SILVER_SOURCE_COLUMNS,
+        }
+    ]
+    assert any("gold_market_bucket_progress bucket=A stage=bucket_start" in message for message in messages)
+    assert any("gold_market_bucket_progress bucket=A stage=source_loaded" in message for message in messages)
+    assert any("gold_market_bucket_progress bucket=A stage=compute_complete" in message for message in messages)
+    assert any("gold_market_bucket_progress bucket=A stage=write_completed" in message for message in messages)
+
+
 def test_run_alpha26_market_gold_updates_only_successful_bucket_watermarks(monkeypatch):
     watermarks: dict = {}
     captured_index: dict = {}
@@ -99,7 +166,7 @@ def test_run_alpha26_market_gold_updates_only_successful_bucket_watermarks(monke
             return 200.0
         return None
 
-    def _fake_load_delta(_container: str, path: str):
+    def _fake_load_delta(_container: str, path: str, **_kwargs):
         if path.endswith("/A"):
             return _silver_bucket_df("AAPL")
         if path.endswith("/B"):

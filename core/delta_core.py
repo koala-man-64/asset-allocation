@@ -552,6 +552,7 @@ def store_delta(
     mode: str = 'overwrite', 
     partition_by: list = None,
     predicate: Optional[str] = None,
+    schema_mode: Optional[str] = None,
 ) -> None:
     """
     Writes a pandas DataFrame to a Delta table in Azure.
@@ -590,6 +591,7 @@ def store_delta(
             mode=mode,
             partition_by=partition_by,
             predicate=predicate,
+            schema_mode=schema_mode,
             storage_options=opts
         )
         logger.info(f"Successfully wrote Delta table to {path}")

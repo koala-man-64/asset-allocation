@@ -71,6 +71,76 @@ _SILVER_TO_GOLD_REQUIRED_COLUMNS = {
     "close",
     "volume",
 }
+_GOLD_MARKET_SILVER_SOURCE_COLUMNS: tuple[str, ...] = (
+    "date",
+    "symbol",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+)
+_BUCKET_PROGRESS_LOG_INTERVAL = 100
+
+
+def _frame_memory_mb(df: Optional[pd.DataFrame]) -> float:
+    if df is None:
+        return 0.0
+    try:
+        raw_bytes = int(df.memory_usage(index=True, deep=True).sum())
+    except Exception:
+        return 0.0
+    return round(raw_bytes / (1024 * 1024), 2)
+
+
+def _log_bucket_progress(
+    *,
+    bucket: str,
+    stage: str,
+    rows: Optional[int] = None,
+    symbols: Optional[int] = None,
+    columns: Optional[int] = None,
+    memory_mb: Optional[float] = None,
+    processed_symbols: Optional[int] = None,
+    total_symbols: Optional[int] = None,
+    output_symbols: Optional[int] = None,
+    output_rows: Optional[int] = None,
+    failed_symbols: Optional[int] = None,
+    silver_path: Optional[str] = None,
+    gold_path: Optional[str] = None,
+    silver_commit_present: Optional[bool] = None,
+    gold_commit_present: Optional[bool] = None,
+) -> None:
+    from core import core as mdc
+
+    fields = [f"bucket={bucket}", f"stage={stage}"]
+    if silver_path:
+        fields.append(f"silver_path={silver_path}")
+    if gold_path:
+        fields.append(f"gold_path={gold_path}")
+    if silver_commit_present is not None:
+        fields.append(f"silver_commit_present={str(bool(silver_commit_present)).lower()}")
+    if gold_commit_present is not None:
+        fields.append(f"gold_commit_present={str(bool(gold_commit_present)).lower()}")
+    if rows is not None:
+        fields.append(f"rows={int(rows)}")
+    if symbols is not None:
+        fields.append(f"symbols={int(symbols)}")
+    if columns is not None:
+        fields.append(f"columns={int(columns)}")
+    if memory_mb is not None:
+        fields.append(f"memory_mb={float(memory_mb):.2f}")
+    if processed_symbols is not None:
+        fields.append(f"processed_symbols={int(processed_symbols)}")
+    if total_symbols is not None:
+        fields.append(f"total_symbols={int(total_symbols)}")
+    if output_symbols is not None:
+        fields.append(f"output_symbols={int(output_symbols)}")
+    if output_rows is not None:
+        fields.append(f"output_rows={int(output_rows)}")
+    if failed_symbols is not None:
+        fields.append(f"failed_symbols={int(failed_symbols)}")
+    mdc.write_line("gold_market_bucket_progress " + " ".join(fields))
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -468,6 +538,14 @@ def _run_alpha26_market_gold(
         postgres_sync_current = (
             bucket_sync_is_current(sync_state, bucket=bucket, source_commit=silver_commit) if postgres_dsn else True
         )
+        _log_bucket_progress(
+            bucket=bucket,
+            stage="bucket_start",
+            silver_path=silver_path,
+            gold_path=gold_path,
+            silver_commit_present=silver_commit is not None,
+            gold_commit_present=gold_commit is not None,
+        )
 
         # Skip stable buckets to reduce compute/write overhead on no-change runs.
         if (
@@ -486,6 +564,12 @@ def _run_alpha26_market_gold(
                     watermark_updated=False,
                 )
             )
+            _log_bucket_progress(
+                bucket=bucket,
+                stage="skipped_unchanged",
+                silver_commit_present=True,
+                gold_commit_present=True,
+            )
             continue
 
         prior_bucket_symbols = sorted(
@@ -493,17 +577,45 @@ def _run_alpha26_market_gold(
         )
         bucket_symbol_to_bucket: dict[str, str] = {}
         bucket_compute_failed = False
+        failed_symbols = 0
+        bucket_output_rows = 0
 
         # Missing source still writes an empty table to keep state deterministic.
         if silver_commit is None:
             skipped_missing_source += 1
             df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
+            _log_bucket_progress(
+                bucket=bucket,
+                stage="missing_source",
+                silver_path=silver_path,
+                gold_path=gold_path,
+            )
         else:
-            df_silver_bucket = delta_core.load_delta(silver_container, silver_path)
+            df_silver_bucket = delta_core.load_delta(
+                silver_container,
+                silver_path,
+                columns=list(_GOLD_MARKET_SILVER_SOURCE_COLUMNS),
+            )
             symbol_frames: list[pd.DataFrame] = []
+            bucket_input_rows = 0
+            bucket_input_symbols = 0
+            bucket_input_columns = 0
 
             # Compute features independently for each symbol in the bucket.
             if df_silver_bucket is not None and not df_silver_bucket.empty:
+                bucket_input_rows = int(len(df_silver_bucket))
+                bucket_input_columns = int(len(df_silver_bucket.columns))
+                if "symbol" in df_silver_bucket.columns:
+                    bucket_input_symbols = int(df_silver_bucket["symbol"].dropna().astype("string").nunique())
+                _log_bucket_progress(
+                    bucket=bucket,
+                    stage="source_loaded",
+                    rows=bucket_input_rows,
+                    symbols=bucket_input_symbols,
+                    columns=bucket_input_columns,
+                    memory_mb=_frame_memory_mb(df_silver_bucket),
+                    silver_path=silver_path,
+                )
                 try:
                     df_silver_bucket = _validate_silver_to_gold_market_bucket_contract(
                         df_silver_bucket,
@@ -530,12 +642,12 @@ def _run_alpha26_market_gold(
                         )
                     )
                     continue
-                for symbol, group in df_silver_bucket.groupby("symbol"):
+                for processed_symbols, (symbol, group) in enumerate(df_silver_bucket.groupby("symbol"), start=1):
                     ticker = str(symbol or "").strip().upper()
                     if not ticker:
                         continue
                     try:
-                        df_features = compute_features(group.copy())
+                        df_features = compute_features(group)
                         df_features, _ = apply_backfill_start_cutoff(
                             df_features,
                             date_col="date",
@@ -543,14 +655,54 @@ def _run_alpha26_market_gold(
                             context=f"gold market alpha26 {ticker}",
                         )
                         if df_features is None or df_features.empty:
+                            if (
+                                processed_symbols == 1
+                                or processed_symbols % _BUCKET_PROGRESS_LOG_INTERVAL == 0
+                                or processed_symbols == bucket_input_symbols
+                            ):
+                                _log_bucket_progress(
+                                    bucket=bucket,
+                                    stage="symbol_progress",
+                                    processed_symbols=processed_symbols,
+                                    total_symbols=bucket_input_symbols,
+                                    output_symbols=len(bucket_symbol_to_bucket),
+                                    output_rows=bucket_output_rows,
+                                    failed_symbols=failed_symbols,
+                                )
                             continue
                         symbol_frames.append(df_features)
+                        bucket_output_rows += int(len(df_features))
 
                         # Persist symbol->bucket mapping for downstream index generation.
                         bucket_symbol_to_bucket[ticker] = bucket
                     except Exception as exc:
                         bucket_compute_failed = True
+                        failed_symbols += 1
                         mdc.write_warning(f"Gold market alpha26 compute failed for {ticker}: {exc}")
+                    if (
+                        processed_symbols == 1
+                        or processed_symbols % _BUCKET_PROGRESS_LOG_INTERVAL == 0
+                        or processed_symbols == bucket_input_symbols
+                    ):
+                        _log_bucket_progress(
+                            bucket=bucket,
+                            stage="symbol_progress",
+                            processed_symbols=processed_symbols,
+                            total_symbols=bucket_input_symbols,
+                            output_symbols=len(bucket_symbol_to_bucket),
+                            output_rows=bucket_output_rows,
+                            failed_symbols=failed_symbols,
+                        )
+                _log_bucket_progress(
+                    bucket=bucket,
+                    stage="compute_complete",
+                    processed_symbols=bucket_input_symbols,
+                    total_symbols=bucket_input_symbols,
+                    output_symbols=len(bucket_symbol_to_bucket),
+                    output_rows=bucket_output_rows,
+                    failed_symbols=failed_symbols,
+                )
+                del df_silver_bucket
             if bucket_compute_failed:
                 failed += 1
                 mdc.write_line(
@@ -574,14 +726,35 @@ def _run_alpha26_market_gold(
             # Consolidate symbol outputs into one bucket table.
             if symbol_frames:
                 df_gold_bucket = pd.concat(symbol_frames, ignore_index=True)
+                symbol_frames.clear()
                 df_gold_bucket = project_gold_output_frame(df_gold_bucket, domain="market")
             else:
                 df_gold_bucket = project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="market")
+            _log_bucket_progress(
+                bucket=bucket,
+                stage="bucket_frame_ready",
+                rows=int(len(df_gold_bucket)),
+                symbols=int(df_gold_bucket["symbol"].dropna().astype("string").nunique()) if "symbol" in df_gold_bucket.columns else 0,
+                columns=int(len(df_gold_bucket.columns)),
+                memory_mb=_frame_memory_mb(df_gold_bucket),
+                output_rows=bucket_output_rows,
+                output_symbols=len(bucket_symbol_to_bucket),
+                failed_symbols=failed_symbols,
+            )
 
         write_decision = prepare_delta_write_frame(
-            df_gold_bucket.reset_index(drop=True),
+            df_gold_bucket,
             container=gold_container,
             path=gold_path,
+        )
+        del df_gold_bucket
+        _log_bucket_progress(
+            bucket=bucket,
+            stage="write_ready",
+            rows=int(len(write_decision.frame)),
+            columns=int(len(write_decision.frame.columns)),
+            memory_mb=_frame_memory_mb(write_decision.frame),
+            output_symbols=len(bucket_symbol_to_bucket),
         )
         mdc.write_line(
             "delta_write_decision layer=gold domain=market "
@@ -605,6 +778,12 @@ def _run_alpha26_market_gold(
                     symbols_written=0,
                     watermark_updated=False,
                 )
+            )
+            _log_bucket_progress(
+                bucket=bucket,
+                stage="skipped_empty_no_schema",
+                rows=int(len(write_decision.frame)),
+                output_symbols=0,
             )
             continue
 
@@ -681,6 +860,16 @@ def _run_alpha26_market_gold(
                     watermark_updated=watermark_updated,
                 )
             )
+            _log_bucket_progress(
+                bucket=bucket,
+                stage="write_completed",
+                rows=int(len(write_decision.frame)),
+                symbols=symbols_written,
+                columns=int(len(write_decision.frame.columns)),
+                memory_mb=_frame_memory_mb(write_decision.frame),
+                output_rows=bucket_output_rows,
+                failed_symbols=failed_symbols,
+            )
         except Exception as exc:
             failed += 1
             mdc.write_error(f"Gold market alpha26 write failed bucket={bucket}: {exc}")
@@ -698,6 +887,13 @@ def _run_alpha26_market_gold(
                     symbols_written=0,
                     watermark_updated=False,
                 )
+            )
+            _log_bucket_progress(
+                bucket=bucket,
+                stage="write_failed",
+                output_symbols=len(bucket_symbol_to_bucket),
+                output_rows=bucket_output_rows,
+                failed_symbols=failed_symbols,
             )
 
     index_path: Optional[str] = None

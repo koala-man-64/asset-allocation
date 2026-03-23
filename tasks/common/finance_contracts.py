@@ -40,7 +40,6 @@ SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN: dict[str, tuple[str, ...]] = {
         "total_assets",
         "current_assets",
         "current_liabilities",
-        "shares_outstanding",
         "timeframe",
     ),
     "income_statement": (
@@ -75,13 +74,6 @@ SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[str, ...]]
         "total_assets": ("total_assets",),
         "current_assets": ("current_assets", "total_current_assets"),
         "current_liabilities": ("current_liabilities", "total_current_liabilities"),
-        "shares_outstanding": (
-            "shares_outstanding",
-            "common_stock_shares_outstanding",
-            "common_shares_outstanding",
-            "ordinary_shares_number",
-            "share_issued",
-        ),
         "timeframe": ("timeframe",),
     },
     "income_statement": {

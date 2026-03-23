@@ -26,6 +26,16 @@ export function useJobSuspend() {
     action: JobControlAction;
   } | null>(null);
 
+  const invalidateStatusQueries = async (
+    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = DEFAULT_INVALIDATION_KEYS
+  ) => {
+    await Promise.all(
+      normalizeInvalidationKeys(queryKey).map((key) =>
+        queryClient.invalidateQueries({ queryKey: key })
+      )
+    );
+  };
+
   const setJobSuspended = async (
     jobName: string,
     suspended: boolean,
@@ -43,11 +53,7 @@ export function useJobSuspend() {
         clearJobOverride(queryClient, jobName);
         toast.success(`Resumed ${jobName}`);
       }
-      await Promise.all(
-        normalizeInvalidationKeys(queryKey).map((key) =>
-          queryClient.invalidateQueries({ queryKey: key })
-        )
-      );
+      await invalidateStatusQueries(queryKey);
     } catch (err: unknown) {
       const message =
         err instanceof ApiError
@@ -68,11 +74,7 @@ export function useJobSuspend() {
       await backtestApi.stopJob(jobName);
       clearJobOverride(queryClient, jobName);
       toast.success(`Stopped ${jobName}`);
-      await Promise.all(
-        normalizeInvalidationKeys(queryKey).map((key) =>
-          queryClient.invalidateQueries({ queryKey: key })
-        )
-      );
+      await invalidateStatusQueries(queryKey);
     } catch (err: unknown) {
       const message =
         err instanceof ApiError

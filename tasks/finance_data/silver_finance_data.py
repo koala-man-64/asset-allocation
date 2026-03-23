@@ -35,7 +35,6 @@ from tasks.common.watermarks import (
 from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import (
     ContractViolation,
-    align_to_existing_schema,
     assert_no_unexpected_mixed_empty,
     coerce_to_naive_datetime,
     log_contract_violation,
@@ -436,8 +435,37 @@ def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] 
     return pd.concat(grouped_frames, ignore_index=True)
 
 
-def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
-    return align_to_existing_schema(df, container=container, path=path)
+def _finance_declared_schema_columns(sub_domain: str) -> tuple[str, ...]:
+    normalized_sub_domain = layer_bucketing.normalize_sub_domain(sub_domain)
+    if normalized_sub_domain not in SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN:
+        raise ValueError(f"Unsupported finance sub-domain for contract alignment: {sub_domain}")
+    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN[normalized_sub_domain]
+    return ("date", "symbol", *expected_columns[2:])
+
+
+def _prepare_finance_delta_write_frame(
+    df: pd.DataFrame,
+    *,
+    sub_domain: str,
+    path: str,
+    skip_empty_without_schema: bool,
+):
+    return prepare_delta_write_frame(
+        df,
+        container=cfg.AZURE_CONTAINER_SILVER,
+        path=path,
+        skip_empty_without_schema=skip_empty_without_schema,
+        enforced_schema_columns=_finance_declared_schema_columns(sub_domain),
+    )
+
+
+def _align_finance_frame_to_contract(df: pd.DataFrame, *, sub_domain: str, path: str) -> pd.DataFrame:
+    return _prepare_finance_delta_write_frame(
+        df,
+        sub_domain=sub_domain,
+        path=path,
+        skip_empty_without_schema=False,
+    ).frame
 
 
 def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFrame:
@@ -721,10 +749,11 @@ def _write_alpha26_finance_silver_buckets(
         else:
             df_bucket = pd.DataFrame(columns=["date", "symbol"])
 
-        write_decision = prepare_delta_write_frame(
+        write_decision = _prepare_finance_delta_write_frame(
             df_bucket.reset_index(drop=True),
-            container=cfg.AZURE_CONTAINER_SILVER,
+            sub_domain=sub_domain,
             path=silver_bucket_path,
+            skip_empty_without_schema=True,
         )
         mdc.write_line(
             "delta_write_decision layer=silver domain=finance "
@@ -742,6 +771,7 @@ def _write_alpha26_finance_silver_buckets(
             cfg.AZURE_CONTAINER_SILVER,
             silver_bucket_path,
             mode="overwrite",
+            schema_mode="overwrite",
         )
         try:
             domain_artifacts.write_bucket_artifact(
@@ -979,6 +1009,7 @@ def _process_finance_frame(
     alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
 ) -> BlobProcessResult:
     is_optional_valuation = suffix == "quarterly_valuation_measures"
+    sub_domain = _finance_sub_domain(folder_name)
     if df_raw is None or df_raw.empty:
         return BlobProcessResult(
             blob_name=blob_name,
@@ -1041,7 +1072,18 @@ def _process_finance_frame(
                     f"deleted {deleted} blob(s) under {silver_path}."
                 )
             else:
-                delta_core.store_delta(df_remaining.reset_index(drop=True), cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
+                df_remaining = _align_finance_frame_to_contract(
+                    df_remaining.reset_index(drop=True),
+                    sub_domain=sub_domain,
+                    path=silver_path,
+                )
+                delta_core.store_delta(
+                    df_remaining,
+                    cfg.AZURE_CONTAINER_SILVER,
+                    silver_path,
+                    mode="overwrite",
+                    schema_mode="overwrite",
+                )
                 delta_core.vacuum_delta_table(
                     cfg.AZURE_CONTAINER_SILVER,
                     silver_path,
@@ -1081,9 +1123,9 @@ def _process_finance_frame(
             error=None if is_optional_valuation else "No valid dated rows after cleaning/resample.",
         )
 
-    df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
+    df_clean = _align_finance_frame_to_contract(df_clean, sub_domain=sub_domain, path=silver_path)
     if not df_history.empty:
-        df_history = _align_to_existing_schema(df_history, cfg.AZURE_CONTAINER_SILVER, silver_path)
+        df_history = _align_finance_frame_to_contract(df_history, sub_domain=sub_domain, path=silver_path)
         df_clean = pd.concat([df_history, df_clean], ignore_index=True)
     df_clean = normalize_columns_to_snake_case(df_clean)
     df_clean = _repair_symbol_column_aliases(df_clean, ticker=ticker)
@@ -1109,7 +1151,6 @@ def _process_finance_frame(
     if not persist:
         if alpha26_bucket_frames is None:
             raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
-        sub_domain = _finance_sub_domain(folder_name)
         bucket = layer_bucketing.bucket_letter(ticker)
         alpha26_bucket_frames.setdefault((sub_domain, bucket), []).append(df_clean.copy())
     else:
@@ -1126,12 +1167,17 @@ def _process_finance_frame(
                 subset=identity_columns,
                 keep="last",
             )
-        df_bucket_to_store = df_bucket_to_store.reset_index(drop=True)
+        df_bucket_to_store = _align_finance_frame_to_contract(
+            df_bucket_to_store.reset_index(drop=True),
+            sub_domain=sub_domain,
+            path=silver_path,
+        )
         delta_core.store_delta(
             df_bucket_to_store,
             cfg.AZURE_CONTAINER_SILVER,
             silver_path,
             mode="overwrite",
+            schema_mode="overwrite",
         )
         if backfill_start is not None:
             delta_core.vacuum_delta_table(

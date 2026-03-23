@@ -200,6 +200,7 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
             "total_revenue": [100.0],
             "gross_profit": [40.0],
             "net_income": [10.0],
+            "shares_outstanding": [100.0],
         }
     )
     balance_df = pd.DataFrame(
@@ -210,7 +211,6 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
             "total_assets": [1_000.0],
             "current_assets": [500.0],
             "current_liabilities": [250.0],
-            "shares_outstanding": [100.0],
         }
     )
     cashflow_df = pd.DataFrame(
