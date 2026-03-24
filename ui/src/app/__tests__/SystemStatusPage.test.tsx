@@ -285,7 +285,11 @@ describe('SystemStatusPage', () => {
       managedContainerJobs: Array<{
         name: string;
         lastModifiedAt?: string | null;
-        signals?: Array<{ name?: string | null; value?: number | null; unit?: string | null }> | null;
+        signals?: Array<{
+          name?: string | null;
+          value?: number | null;
+          unit?: string | null;
+        }> | null;
       }>;
       metadataSource?: string | null;
     };

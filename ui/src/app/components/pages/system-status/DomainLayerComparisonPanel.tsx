@@ -38,7 +38,13 @@ import {
 import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import type { DomainMetadataSnapshotResponse } from '@/services/apiService';
-import type { DataDomain, DataLayer, DomainMetadata, JobRun, ResourceSignal } from '@/types/strategy';
+import type {
+  DataDomain,
+  DataLayer,
+  DomainMetadata,
+  JobRun,
+  ResourceSignal
+} from '@/types/strategy';
 import { StatusTypos } from './StatusTokens';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { getDomainOrderEntries } from './domainOrdering';
@@ -82,12 +88,13 @@ const CHECKPOINT_RESET_LAYERS = new Set<LayerKey>(['silver', 'gold']);
 const DOMAIN_COLUMN_WIDTH_PX = 320;
 const PURGE_POLL_INTERVAL_MS = 1000;
 const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
-const CPU_USAGE_PERCENT_SIGNAL_NAMES = ['cpupercent', 'cpupercentage', 'cpuusagepercent', 'cpuusage'];
-const MEMORY_USAGE_PERCENT_SIGNAL_NAMES = [
-  'memorypercent',
-  'memoryusagepercent',
-  'memoryusage'
+const CPU_USAGE_PERCENT_SIGNAL_NAMES = [
+  'cpupercent',
+  'cpupercentage',
+  'cpuusagepercent',
+  'cpuusage'
 ];
+const MEMORY_USAGE_PERCENT_SIGNAL_NAMES = ['memorypercent', 'memoryusagepercent', 'memoryusage'];
 type LayerVisualConfig = {
   accent: string;
   softBg: string;
@@ -250,9 +257,11 @@ function normalizeSignalName(value?: string | null): string {
 }
 
 function formatMetricPercent(value: number): string {
-  return new Intl.NumberFormat(undefined, {
-    maximumFractionDigits: value >= 10 ? 0 : 1
-  }).format(value) + '%';
+  return (
+    new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: value >= 10 ? 0 : 1
+    }).format(value) + '%'
+  );
 }
 
 function findPreferredSignal(
