@@ -19,11 +19,13 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from core.postgres import connect
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
+from tasks.common.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
 from tasks.technical_analysis.market_structure import add_market_structure_features
 from tasks.technical_analysis.technical_indicators import (
     add_candlestick_patterns,
@@ -81,6 +83,7 @@ _GOLD_MARKET_SILVER_SOURCE_COLUMNS: tuple[str, ...] = (
     "volume",
 )
 _BUCKET_PROGRESS_LOG_INTERVAL = 100
+_REGIME_REQUIRED_MARKET_SYMBOL_SET = frozenset(REGIME_REQUIRED_MARKET_SYMBOLS)
 
 
 def _frame_memory_mb(df: Optional[pd.DataFrame]) -> float:
@@ -458,6 +461,84 @@ def _merge_symbol_to_bucket_map(
     return out
 
 
+def _normalize_market_symbol(value: object) -> str:
+    return str(value or "").strip().upper()
+
+
+def _is_regime_required_market_symbol(value: object) -> bool:
+    return _normalize_market_symbol(value) in _REGIME_REQUIRED_MARKET_SYMBOL_SET
+
+
+def _verify_postgres_critical_market_symbols(
+    *,
+    dsn: str,
+    sync_state: dict[str, dict[str, Any]],
+) -> None:
+    from core import core as mdc
+
+    required_symbols = tuple(REGIME_REQUIRED_MARKET_SYMBOLS)
+    required_buckets = {
+        symbol: layer_bucketing.bucket_letter(symbol)
+        for symbol in required_symbols
+    }
+    missing_sync: list[str] = []
+    for symbol, bucket in required_buckets.items():
+        state = sync_state.get(bucket, {})
+        status = str(state.get("status") or "").strip().lower()
+        if status != "success":
+            missing_sync.append(f"{symbol}:{bucket}:{status or 'missing'}")
+
+    try:
+        with connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT symbol, COUNT(*) AS row_count
+                    FROM gold.market_data
+                    WHERE symbol = ANY(%s)
+                    GROUP BY symbol
+                    """,
+                    (list(required_symbols),),
+                )
+                rows = cur.fetchall()
+    except Exception as exc:
+        mdc.write_line(
+            "postgres_gold_critical_symbol_status "
+            "domain=market status=failed reason=query_failed"
+        )
+        raise ValueError(
+            "Gold market critical-symbol verification failed: unable to query gold.market_data "
+            f"for {required_symbols}: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    observed_symbols = {
+        _normalize_market_symbol(symbol)
+        for symbol, row_count in rows
+        if int(row_count or 0) > 0
+    }
+    missing_symbols = sorted(set(required_symbols).difference(observed_symbols))
+
+    if missing_sync or missing_symbols:
+        mdc.write_line(
+            "postgres_gold_critical_symbol_status "
+            "domain=market status=failed "
+            f"missing_symbols={missing_symbols or ['none']} "
+            f"missing_sync={missing_sync or ['none']}"
+        )
+        raise ValueError(
+            "Gold market critical-symbol verification failed: "
+            f"missing_symbols={missing_symbols or ['none']} "
+            f"missing_sync={missing_sync or ['none']}"
+        )
+
+    mdc.write_line(
+        "postgres_gold_critical_symbol_status "
+        "domain=market status=ok "
+        f"symbols={list(required_symbols)} "
+        f"buckets={sorted(set(required_buckets.values()))}"
+    )
+
+
 def _validate_silver_to_gold_market_bucket_contract(
     df_silver_bucket: pd.DataFrame,
     *,
@@ -491,7 +572,7 @@ def _run_alpha26_market_gold(
     gold_container: str,
     backfill_start_iso: Optional[str],
     watermarks: dict,
-) -> tuple[int, int, int, int, bool, int, Optional[str], list[BucketExecutionResult]]:
+) -> tuple[int, int, int, int, bool, int, Optional[str]]:
     """Build and write bucketed gold market tables from silver alpha26 inputs.
 
     Processing model:
@@ -576,8 +657,8 @@ def _run_alpha26_market_gold(
             symbol for symbol, current_bucket in symbol_to_bucket.items() if current_bucket == bucket
         )
         bucket_symbol_to_bucket: dict[str, str] = {}
-        bucket_compute_failed = False
-        failed_symbols = 0
+        critical_compute_failure_symbol: Optional[str] = None
+        bucket_symbol_failures = 0
         bucket_output_rows = 0
 
         # Missing source still writes an empty table to keep state deterministic.
@@ -623,11 +704,11 @@ def _run_alpha26_market_gold(
                     )
                 except Exception as exc:
                     failed += 1
-                    bucket_compute_failed = True
                     mdc.write_error(str(exc))
                     mdc.write_line(
                         f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
-                        "reason=contract_validation symbols_in=0 symbols_out=0 failures=1"
+                        f"reason=contract_validation symbols_in={bucket_input_symbols} symbols_out=0 "
+                        f"failures={max(bucket_input_symbols, 1)}"
                     )
                     mdc.write_line(
                         f"watermark_update_status layer=gold domain=market bucket={bucket} "
@@ -667,7 +748,7 @@ def _run_alpha26_market_gold(
                                     total_symbols=bucket_input_symbols,
                                     output_symbols=len(bucket_symbol_to_bucket),
                                     output_rows=bucket_output_rows,
-                                    failed_symbols=failed_symbols,
+                                    failed_symbols=bucket_symbol_failures,
                                 )
                             continue
                         symbol_frames.append(df_features)
@@ -676,8 +757,14 @@ def _run_alpha26_market_gold(
                         # Persist symbol->bucket mapping for downstream index generation.
                         bucket_symbol_to_bucket[ticker] = bucket
                     except Exception as exc:
-                        bucket_compute_failed = True
-                        failed_symbols += 1
+                        failed += 1
+                        bucket_symbol_failures += 1
+                        if _is_regime_required_market_symbol(ticker):
+                            critical_compute_failure_symbol = ticker
+                            mdc.write_error(
+                                f"Gold market alpha26 compute failed for critical symbol {ticker}: {exc}"
+                            )
+                            break
                         mdc.write_warning(f"Gold market alpha26 compute failed for {ticker}: {exc}")
                     if (
                         processed_symbols == 1
@@ -691,7 +778,7 @@ def _run_alpha26_market_gold(
                             total_symbols=bucket_input_symbols,
                             output_symbols=len(bucket_symbol_to_bucket),
                             output_rows=bucket_output_rows,
-                            failed_symbols=failed_symbols,
+                            failed_symbols=bucket_symbol_failures,
                         )
                 _log_bucket_progress(
                     bucket=bucket,
@@ -700,18 +787,18 @@ def _run_alpha26_market_gold(
                     total_symbols=bucket_input_symbols,
                     output_symbols=len(bucket_symbol_to_bucket),
                     output_rows=bucket_output_rows,
-                    failed_symbols=failed_symbols,
+                    failed_symbols=bucket_symbol_failures,
                 )
                 del df_silver_bucket
-            if bucket_compute_failed:
-                failed += 1
+            if critical_compute_failure_symbol is not None:
                 mdc.write_line(
                     f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
-                    f"reason=compute_failure symbols_in={len(bucket_symbol_to_bucket)} symbols_out=0 failures=1"
+                    f"reason=compute_failure symbols_in={bucket_input_symbols} symbols_out=0 "
+                    f"failures={bucket_symbol_failures} critical_symbol=true symbol={critical_compute_failure_symbol}"
                 )
                 mdc.write_line(
                     f"watermark_update_status layer=gold domain=market bucket={bucket} "
-                    "status=blocked reason=compute_failure"
+                    f"status=blocked reason=compute_failure critical_symbol=true symbol={critical_compute_failure_symbol}"
                 )
                 bucket_results.append(
                     BucketExecutionResult(
@@ -734,12 +821,16 @@ def _run_alpha26_market_gold(
                 bucket=bucket,
                 stage="bucket_frame_ready",
                 rows=int(len(df_gold_bucket)),
-                symbols=int(df_gold_bucket["symbol"].dropna().astype("string").nunique()) if "symbol" in df_gold_bucket.columns else 0,
+                symbols=(
+                    int(df_gold_bucket["symbol"].dropna().astype("string").nunique())
+                    if "symbol" in df_gold_bucket.columns
+                    else 0
+                ),
                 columns=int(len(df_gold_bucket.columns)),
                 memory_mb=_frame_memory_mb(df_gold_bucket),
                 output_rows=bucket_output_rows,
                 output_symbols=len(bucket_symbol_to_bucket),
-                failed_symbols=failed_symbols,
+                failed_symbols=bucket_symbol_failures,
             )
 
         write_decision = prepare_delta_write_frame(
@@ -848,14 +939,16 @@ def _run_alpha26_market_gold(
                     f"watermark_update_status layer=gold domain=market bucket={bucket} "
                     "status=blocked reason=missing_source_commit"
                 )
+            bucket_status = "ok" if bucket_symbol_failures == 0 else "ok_with_failures"
             mdc.write_line(
-                f"layer_handoff_status transition=silver_to_gold status=ok bucket={bucket} "
-                f"symbols_in={len(bucket_symbol_to_bucket)} symbols_out={symbols_written} failures=0"
+                f"layer_handoff_status transition=silver_to_gold status={bucket_status} bucket={bucket} "
+                f"symbols_in={symbols_written + bucket_symbol_failures} symbols_out={symbols_written} "
+                f"failures={bucket_symbol_failures}"
             )
             bucket_results.append(
                 BucketExecutionResult(
                     bucket=bucket,
-                    status="ok",
+                    status=bucket_status,
                     symbols_written=symbols_written,
                     watermark_updated=watermark_updated,
                 )
@@ -868,14 +961,15 @@ def _run_alpha26_market_gold(
                 columns=int(len(write_decision.frame.columns)),
                 memory_mb=_frame_memory_mb(write_decision.frame),
                 output_rows=bucket_output_rows,
-                failed_symbols=failed_symbols,
+                failed_symbols=bucket_symbol_failures,
             )
         except Exception as exc:
             failed += 1
             mdc.write_error(f"Gold market alpha26 write failed bucket={bucket}: {exc}")
             mdc.write_line(
                 f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
-                "reason=write_failure symbols_in=0 symbols_out=0 failures=1"
+                f"reason=write_failure symbols_in={len(bucket_symbol_to_bucket) + bucket_symbol_failures} "
+                f"symbols_out=0 failures={bucket_symbol_failures + 1}"
             )
             mdc.write_line(
                 f"watermark_update_status layer=gold domain=market bucket={bucket} status=blocked reason=write_failure"
@@ -893,14 +987,30 @@ def _run_alpha26_market_gold(
                 stage="write_failed",
                 output_symbols=len(bucket_symbol_to_bucket),
                 output_rows=bucket_output_rows,
-                failed_symbols=failed_symbols,
+                failed_symbols=bucket_symbol_failures,
             )
+
+    status_counts: dict[str, int] = {}
+    for result in bucket_results:
+        status_counts[result.status] = int(status_counts.get(result.status, 0)) + 1
+    mdc.write_line(
+        "layer_handoff_status transition=silver_to_gold status=complete "
+        f"bucket_statuses={status_counts} failed={failed}"
+    )
 
     index_path: Optional[str] = None
     publication_reason: Optional[str] = None
-    if failed > 0:
+    if failed == 0 and postgres_dsn:
+        try:
+            _verify_postgres_critical_market_symbols(dsn=postgres_dsn, sync_state=sync_state)
+        except Exception as exc:
+            failed += 1
+            publication_reason = "critical_symbol_verification_failed"
+            mdc.write_error(str(exc))
+
+    if failed > 0 and publication_reason is None:
         publication_reason = "failed_buckets"
-    else:
+    elif failed == 0:
         try:
             index_path = layer_bucketing.write_layer_symbol_index(
                 layer="gold",
@@ -950,7 +1060,6 @@ def _run_alpha26_market_gold(
         watermarks_dirty,
         len(symbol_to_bucket),
         index_path,
-        bucket_results,
     )
 
 
@@ -980,19 +1089,11 @@ def main() -> int:
         watermarks_dirty,
         alpha26_symbols,
         alpha26_index_path,
-        bucket_results,
     ) = _run_alpha26_market_gold(
         silver_container=job_cfg.silver_container,
         gold_container=job_cfg.gold_container,
         backfill_start_iso=backfill_start_iso,
         watermarks=watermarks,
-    )
-    status_counts: dict[str, int] = {}
-    for result in bucket_results:
-        status_counts[result.status] = int(status_counts.get(result.status, 0)) + 1
-    mdc.write_line(
-        "layer_handoff_status transition=silver_to_gold status=complete "
-        f"bucket_statuses={status_counts} failed={failed}"
     )
 
     reconciliation_orphans = 0

@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
+from tasks.common.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
 from tasks.regime_data import gold_regime_data as regime_job
+
+
+def test_regime_job_uses_shared_required_market_symbol_contract() -> None:
+    assert regime_job.REGIME_REQUIRED_MARKET_SYMBOLS == REGIME_REQUIRED_MARKET_SYMBOLS
 
 
 def test_validate_required_market_series_reports_missing_symbols() -> None:
@@ -26,7 +31,7 @@ def test_validate_required_market_series_reports_missing_symbols() -> None:
 
     message = str(excinfo.value)
     assert "missing required regime symbols" in message
-    assert "^VIX3M" in message
+    assert REGIME_REQUIRED_MARKET_SYMBOLS[-1] in message
     assert "coverage=" in message
 
 

@@ -12,6 +12,7 @@ from core.postgres import connect, copy_rows
 from core.regime import build_regime_outputs, compute_curve_state, compute_trend_state
 from core.regime_repository import RegimeRepository
 from tasks.common import domain_artifacts
+from tasks.common.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
 from tasks.common.postgres_gold_sync import load_domain_sync_state
 from tasks.common.job_trigger import ensure_api_awake_from_env
 from tasks.common.system_health_markers import write_system_health_marker
@@ -63,7 +64,6 @@ _TRANSITIONS_COLUMNS = (
     "trigger_rule_id",
     "computed_at",
 )
-_REQUIRED_MARKET_SYMBOLS = ("SPY", "^VIX", "^VIX3M")
 
 
 def _require_postgres_dsn() -> str:
@@ -107,7 +107,7 @@ def _summarize_market_series_coverage(frame: pd.DataFrame) -> str:
         return "no rows"
 
     summary: list[str] = []
-    for symbol in _REQUIRED_MARKET_SYMBOLS:
+    for symbol in REGIME_REQUIRED_MARKET_SYMBOLS:
         symbol_frame = frame[frame["symbol"] == symbol]
         if symbol_frame.empty:
             summary.append(f"{symbol}=missing")
@@ -179,7 +179,7 @@ def _summarize_market_sync_state(dsn: str | None) -> str:
 
 def _validate_required_market_series(frame: pd.DataFrame, *, dsn: str | None = None) -> pd.DataFrame:
     present_symbols = {str(value).strip().upper() for value in frame["symbol"].dropna().tolist()}
-    missing = [symbol for symbol in _REQUIRED_MARKET_SYMBOLS if symbol not in present_symbols]
+    missing = [symbol for symbol in REGIME_REQUIRED_MARKET_SYMBOLS if symbol not in present_symbols]
     if missing:
         coverage = _summarize_market_series_coverage(frame)
         sync_summary = _summarize_market_sync_state(dsn)
@@ -211,14 +211,17 @@ def _assert_complete_regime_inputs(inputs: pd.DataFrame, *, market_series: pd.Da
 
 
 def _load_market_series(dsn: str) -> pd.DataFrame:
-    sql = """
-        SELECT symbol, date, close, return_1d, return_20d
-        FROM gold.market_data
-        WHERE symbol IN ('SPY', '^VIX', '^VIX3M')
-        ORDER BY date ASC, symbol ASC
-    """
     with connect(dsn) as conn:
-        frame = pd.read_sql_query(sql, conn)
+        frame = pd.read_sql_query(
+            """
+            SELECT symbol, date, close, return_1d, return_20d
+            FROM gold.market_data
+            WHERE symbol = ANY(%s)
+            ORDER BY date ASC, symbol ASC
+            """,
+            conn,
+            params=(list(REGIME_REQUIRED_MARKET_SYMBOLS),),
+        )
     normalized = _normalize_market_series(frame)
     return _validate_required_market_series(normalized, dsn=dsn)
 

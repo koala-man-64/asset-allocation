@@ -38,6 +38,21 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
   - upserts `core.gold_sync_state`
   - advances the bucket watermark only after Postgres sync succeeds
 
+## Gold Market Notes
+
+- `gold.market_data` is an upstream dependency for `gold-regime-job` and the storage-backed market API endpoints.
+- Ordinary symbol failures in `gold-market-job` are partial success:
+  - the bucket still writes surviving symbols to Delta and Postgres
+  - the bucket emits `status=ok_with_failures`
+  - final symbol-index publication and final watermark persistence stay blocked for the run
+- Critical market symbols `SPY`, `^VIX`, and `^VIX3M` remain fail-closed:
+  - a compute failure on any of those symbols aborts the bucket write
+  - a post-sync verification failure in `gold.market_data` blocks final publication
+- Operator-facing market logs now distinguish:
+  - `layer_handoff_status ... status=ok_with_failures` for ordinary-symbol partial success
+  - `layer_handoff_status ... status=failed ... critical_symbol=true symbol=<ticker>` for regime-critical hard failures
+  - `postgres_gold_critical_symbol_status` for the final Postgres presence/sync verification step
+
 ## Bootstrap
 
 Run Postgres migrations first, clear the Gold Delta layer, then rerun the gold jobs:
