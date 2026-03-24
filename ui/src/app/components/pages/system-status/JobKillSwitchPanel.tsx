@@ -7,12 +7,14 @@ import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { queryKeys } from '@/hooks/useDataQueries';
 import { backtestApi } from '@/services/backtestApi';
+import type { ResourceSignal } from '@/types/strategy';
 import { formatSystemStatusText } from './systemStatusText';
 
 export interface ManagedContainerJob {
   name: string;
   runningState?: string | null;
   lastModifiedAt?: string | null;
+  signals?: ResourceSignal[] | null;
 }
 
 type KillSwitchVariant = 'panel' | 'inline';

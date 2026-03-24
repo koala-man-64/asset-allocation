@@ -306,6 +306,114 @@ def test_system_health_control_plane_redacts_resource_ids(monkeypatch: pytest.Mo
     assert all("azureId" in item for item in verbose["resources"])
 
 
+def test_system_health_derives_job_cpu_and_memory_percent_signals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "myjob")
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    resource_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob"
+    job_url = f"https://management.azure.com{resource_id}"
+    metrics_url = f"https://management.azure.com{resource_id}/providers/microsoft.insights/metrics"
+
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": resource_id,
+            "systemData": {"lastModifiedAt": "2024-01-01T00:00:10Z"},
+            "properties": {
+                "provisioningState": "Succeeded",
+                "runningState": "Running",
+                "template": {
+                    "containers": [
+                        {
+                            "resources": {
+                                "cpu": 2.0,
+                                "memory": "4Gi",
+                            }
+                        }
+                    ]
+                },
+            },
+        },
+        f"{job_url}/executions": {
+            "value": [
+                {
+                    "properties": {
+                        "status": "Running",
+                        "startTime": "2024-01-01T00:00:00Z",
+                    }
+                }
+            ]
+        },
+        metrics_url: {
+            "value": [
+                {
+                    "name": {"value": "UsageNanoCores"},
+                    "unit": "NanoCores",
+                    "timeseries": [{"data": [{"timeStamp": "2024-01-01T00:00:00Z", "average": 1_000_000_000.0}]}],
+                },
+                {
+                    "name": {"value": "UsageBytes"},
+                    "unit": "Bytes",
+                    "timeseries": [{"data": [{"timeStamp": "2024-01-01T00:00:00Z", "average": 1_073_741_824.0}]}],
+                },
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+
+    assert payload["overall"] == "healthy"
+    assert len(payload["recentJobs"]) == 1
+    assert payload["recentJobs"][0]["status"] == "running"
+
+    job_resource = next(
+        item for item in payload["resources"] if item.get("resourceType") == "Microsoft.App/jobs"
+    )
+    signals_by_name = {
+        str(signal.get("name")): signal
+        for signal in job_resource.get("signals", [])
+        if isinstance(signal, dict)
+    }
+
+    assert signals_by_name["UsageNanoCores"]["value"] == 1_000_000_000.0
+    assert signals_by_name["UsageBytes"]["value"] == 1_073_741_824.0
+    assert signals_by_name["CpuPercent"]["unit"] == "Percent"
+    assert signals_by_name["MemoryPercent"]["unit"] == "Percent"
+    assert signals_by_name["CpuPercent"]["value"] == pytest.approx(50.0)
+    assert signals_by_name["MemoryPercent"]["value"] == pytest.approx(25.0)
+
+
 def test_system_health_defaults_arm_api_version_when_not_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")

@@ -282,7 +282,11 @@ describe('SystemStatusPage', () => {
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
       dataLayers: DataLayer[];
-      managedContainerJobs: Array<{ name: string; lastModifiedAt?: string | null }>;
+      managedContainerJobs: Array<{
+        name: string;
+        lastModifiedAt?: string | null;
+        signals?: Array<{ name?: string | null; value?: number | null; unit?: string | null }> | null;
+      }>;
       metadataSource?: string | null;
     };
 
@@ -296,6 +300,20 @@ describe('SystemStatusPage', () => {
     ]);
     expect(coverageProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))).toBe(
       true
+    );
+    expect(coverageProps.managedContainerJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'aca-job-market',
+          signals: expect.arrayContaining([
+            expect.objectContaining({
+              name: 'CpuUsage',
+              value: 52.3,
+              unit: 'Percent'
+            })
+          ])
+        })
+      ])
     );
     expect(coverageProps.metadataSource).toBe('persisted-snapshot');
   });

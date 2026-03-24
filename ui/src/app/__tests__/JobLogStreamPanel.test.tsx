@@ -364,6 +364,66 @@ describe('JobLogStreamPanel', () => {
     expect(screen.getByText('2 GiB')).toBeInTheDocument();
   });
 
+  it('prefers derived percent job usage signals when both percent and raw metrics exist', async () => {
+    const job: JobLogStreamTarget = {
+      ...JOBS[1],
+      signals: [
+        {
+          name: 'UsageNanoCores',
+          value: 750000000,
+          unit: 'NanoCores',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        },
+        {
+          name: 'UsageBytes',
+          value: 2147483648,
+          unit: 'Bytes',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'healthy',
+          source: 'metrics'
+        },
+        {
+          name: 'CpuPercent',
+          value: 37.5,
+          unit: 'Percent',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'unknown',
+          source: 'metrics'
+        },
+        {
+          name: 'MemoryPercent',
+          value: 50.0,
+          unit: 'Percent',
+          timestamp: '2026-03-11T12:00:00Z',
+          status: 'unknown',
+          source: 'metrics'
+        }
+      ]
+    };
+
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          tail: ['beta snapshot']
+        }
+      ]
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[job]} />);
+
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    expect(screen.getByText('38%')).toBeInTheDocument();
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.queryByText('0.75 cores')).not.toBeInTheDocument();
+    expect(screen.queryByText('2 GiB')).not.toBeInTheDocument();
+  });
+
   it('hydrates job usage from live system health refreshes when the initial snapshot has no signals', async () => {
     vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
       jobName: 'beta-job',

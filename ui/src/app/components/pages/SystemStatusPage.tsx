@@ -102,7 +102,8 @@ export function SystemStatusPage() {
       items.push({
         name: resource.name,
         runningState: resource.runningState || null,
-        lastModifiedAt: resource.lastModifiedAt || null
+        lastModifiedAt: resource.lastModifiedAt || null,
+        signals: resource.signals || null
       });
     }
     return items;

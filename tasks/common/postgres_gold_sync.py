@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -458,37 +458,49 @@ def bucket_sync_is_current(
         return False
 
 
-def sync_gold_bucket(
+def _sync_gold_bucket_prepared_frames(
     *,
-    domain: str,
+    config: GoldSyncConfig,
     bucket: str,
-    frame: pd.DataFrame,
+    prepared_frames: Iterable[pd.DataFrame],
     scope_symbols: Sequence[str],
     source_commit: Optional[float],
     dsn: Optional[str] = None,
 ) -> GoldSyncResult:
     resolved_dsn = dsn or resolve_postgres_dsn()
-    config = get_sync_config(domain)
-    prepared = _prepare_frame(frame, config=config)
-    current_symbols = _normalize_symbols(prepared.get("symbol", pd.Series(dtype="object")).tolist())
-    normalized_scope_symbols = sorted(set(_normalize_symbols(scope_symbols)).union(current_symbols))
-    min_key = prepared[config.date_column].min() if not prepared.empty else None
-    max_key = prepared[config.date_column].max() if not prepared.empty else None
-
-    result = GoldSyncResult(
-        status="ok",
-        domain=config.domain,
-        bucket=str(bucket or "").strip().upper(),
-        row_count=int(len(prepared)),
-        symbol_count=len(current_symbols),
-        scope_symbol_count=len(normalized_scope_symbols),
-        source_commit=source_commit,
-        min_key=min_key,
-        max_key=max_key,
-    )
+    clean_bucket = str(bucket or "").strip().upper()
+    normalized_scope_symbols = set(_normalize_symbols(scope_symbols))
+    current_symbols: set[str] = set()
+    row_count = 0
+    min_key: Optional[date] = None
+    max_key: Optional[date] = None
+    def _result(*, status: str = "ok", error: Optional[str] = None) -> GoldSyncResult:
+        return GoldSyncResult(
+            status=status,
+            domain=config.domain,
+            bucket=clean_bucket,
+            row_count=row_count,
+            symbol_count=len(current_symbols),
+            scope_symbol_count=len(normalized_scope_symbols),
+            source_commit=source_commit,
+            min_key=min_key,
+            max_key=max_key,
+            error=error,
+        )
 
     if not resolved_dsn:
-        return GoldSyncResult(**{**result.__dict__, "status": "skipped_no_dsn"})
+        for prepared in prepared_frames:
+            if not isinstance(prepared, pd.DataFrame) or prepared.empty:
+                continue
+            current_symbols.update(_normalize_symbols(prepared.get("symbol", pd.Series(dtype="object")).tolist()))
+            row_count += int(len(prepared))
+            frame_min = prepared[config.date_column].min()
+            frame_max = prepared[config.date_column].max()
+            if frame_min is not None and (min_key is None or frame_min < min_key):
+                min_key = frame_min
+            if frame_max is not None and (max_key is None or frame_max > max_key):
+                max_key = frame_max
+        return _result(status="skipped_no_dsn")
 
     try:
         with connect(resolved_dsn) as conn:
@@ -496,9 +508,19 @@ def sync_gold_bucket(
                 if normalized_scope_symbols:
                     cur.execute(
                         f'DELETE FROM {config.table} WHERE "symbol" = ANY(%s)',
-                        (normalized_scope_symbols,),
+                        (sorted(normalized_scope_symbols),),
                     )
-                if not prepared.empty:
+                for prepared in prepared_frames:
+                    if not isinstance(prepared, pd.DataFrame) or prepared.empty:
+                        continue
+                    current_symbols.update(_normalize_symbols(prepared.get("symbol", pd.Series(dtype="object")).tolist()))
+                    row_count += int(len(prepared))
+                    frame_min = prepared[config.date_column].min()
+                    frame_max = prepared[config.date_column].max()
+                    if frame_min is not None and (min_key is None or frame_min < min_key):
+                        min_key = frame_min
+                    if frame_max is not None and (max_key is None or frame_max > max_key):
+                        max_key = frame_max
                     copy_rows(
                         cur,
                         table=config.table,
@@ -508,31 +530,78 @@ def sync_gold_bucket(
                 _upsert_sync_state(
                     cur,
                     domain=config.domain,
-                    bucket=result.bucket,
+                    bucket=clean_bucket,
                     source_commit=source_commit,
                     status="success",
-                    row_count=result.row_count,
-                    symbol_count=result.symbol_count,
+                    row_count=row_count,
+                    symbol_count=len(current_symbols),
                     min_key=min_key,
                     max_key=max_key,
                     error=None,
                 )
-        return result
+        return _result()
     except Exception as exc:
         _record_failed_sync_state(
             resolved_dsn,
             domain=config.domain,
-            bucket=result.bucket,
+            bucket=clean_bucket,
             source_commit=source_commit,
-            row_count=result.row_count,
-            symbol_count=result.symbol_count,
+            row_count=row_count,
+            symbol_count=len(current_symbols),
             min_key=min_key,
             max_key=max_key,
             error=str(exc),
         )
         raise PostgresError(
-            f"Gold Postgres sync failed for domain={config.domain} bucket={result.bucket}: {exc}"
+            f"Gold Postgres sync failed for domain={config.domain} bucket={clean_bucket}: {exc}"
         ) from exc
+
+
+def sync_gold_bucket_chunks(
+    *,
+    domain: str,
+    bucket: str,
+    frames: Iterable[pd.DataFrame],
+    scope_symbols: Sequence[str],
+    source_commit: Optional[float],
+    dsn: Optional[str] = None,
+) -> GoldSyncResult:
+    config = get_sync_config(domain)
+    prepared_frames = (_prepare_frame(frame, config=config) for frame in frames)
+    return _sync_gold_bucket_prepared_frames(
+        config=config,
+        bucket=bucket,
+        prepared_frames=prepared_frames,
+        scope_symbols=scope_symbols,
+        source_commit=source_commit,
+        dsn=dsn,
+    )
+
+
+def sync_gold_bucket(
+    *,
+    domain: str,
+    bucket: str,
+    frame: pd.DataFrame,
+    scope_symbols: Sequence[str],
+    source_commit: Optional[float],
+    dsn: Optional[str] = None,
+) -> GoldSyncResult:
+    config = get_sync_config(domain)
+    prepared = _prepare_frame(frame, config=config)
+    normalized_scope_symbols = set(_normalize_symbols(scope_symbols))
+    if not prepared.empty:
+        normalized_scope_symbols.update(
+            _normalize_symbols(prepared.get("symbol", pd.Series(dtype="object")).tolist())
+        )
+    return _sync_gold_bucket_prepared_frames(
+        config=config,
+        bucket=bucket,
+        prepared_frames=[prepared],
+        scope_symbols=sorted(normalized_scope_symbols),
+        source_commit=source_commit,
+        dsn=dsn,
+    )
 
 
 def _prepare_frame(frame: pd.DataFrame, *, config: GoldSyncConfig) -> pd.DataFrame:

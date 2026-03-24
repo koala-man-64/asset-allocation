@@ -50,10 +50,12 @@ import { formatSystemStatusText } from './systemStatusText';
 const LOG_LINE_LIMIT = 200;
 const LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 16;
 const JOB_USAGE_REFRESH_INTERVAL_MS = 5_000;
-const CPU_SIGNAL_NAMES = ['cpuusage', 'cpupercentage', 'cpupercent', 'usagenanocores'];
+const CPU_SIGNAL_NAMES = ['cpupercent', 'cpupercentage', 'cpuusage', 'usagenanocores'];
 const MEMORY_SIGNAL_NAMES = [
-  'memoryworkingsetbytes',
+  'memorypercent',
+  'memoryusagepercent',
   'memoryusage',
+  'memoryworkingsetbytes',
   'memorybytes',
   'usagebytes',
   'workingsetbytes'
@@ -160,21 +162,30 @@ function findUsageSignal(
     return null;
   }
 
-  const normalizedPreferredNames = preferredNames.map((name) => normalizeSignalName(name));
-  const exactMatch = signals.find((signal) =>
-    normalizedPreferredNames.includes(normalizeSignalName(signal?.name))
-  );
-  if (exactMatch) {
-    return exactMatch;
+  const normalizedSignals = signals.map((signal) => ({
+    signal,
+    name: normalizeSignalName(signal?.name)
+  }));
+
+  for (const preferredName of preferredNames) {
+    const normalizedPreferredName = normalizeSignalName(preferredName);
+    const exactMatch = normalizedSignals.find((entry) => entry.name === normalizedPreferredName);
+    if (exactMatch) {
+      return exactMatch.signal;
+    }
+
+    const broadMatch = normalizedSignals.find(
+      (entry) =>
+        entry.name &&
+        (entry.name.includes(normalizedPreferredName) ||
+          normalizedPreferredName.includes(entry.name))
+    );
+    if (broadMatch) {
+      return broadMatch.signal;
+    }
   }
 
-  const broadMatch = signals.find((signal) => {
-    const signalName = normalizeSignalName(signal?.name);
-    return normalizedPreferredNames.some(
-      (candidate) => signalName.includes(candidate) || candidate.includes(signalName)
-    );
-  });
-  return broadMatch ?? null;
+  return null;
 }
 
 function formatMetricNumber(value: number, maximumFractionDigits = 1): string {

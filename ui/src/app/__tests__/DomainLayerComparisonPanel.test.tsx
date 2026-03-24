@@ -339,6 +339,48 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.getByText('3m (2 runs)')).toBeInTheDocument();
   });
 
+  it('shows live cpu and memory percentages for running jobs in the coverage panel', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      recentJobs: makeJobs('running'),
+      managedContainerJobs: [
+        {
+          name: 'aca-job-market',
+          runningState: 'Running',
+          lastModifiedAt: NOW,
+          signals: [
+            {
+              name: 'CpuPercent',
+              value: 52.3,
+              unit: 'Percent',
+              timestamp: NOW,
+              status: 'unknown',
+              source: 'metrics'
+            },
+            {
+              name: 'MemoryPercent',
+              value: 61.2,
+              unit: 'Percent',
+              timestamp: NOW,
+              status: 'unknown',
+              source: 'metrics'
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(await screen.findByText('cpu 52% | mem 61%')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+
+    expect(screen.getByText('cpu usage:')).toBeInTheDocument();
+    expect(screen.getByText('52%')).toBeInTheDocument();
+    expect(screen.getByText('memory usage:')).toBeInTheDocument();
+    expect(screen.getByText('61%')).toBeInTheDocument();
+  });
+
   it('shows symbols to retry in the expanded job metadata subpanel', async () => {
     const user = userEvent.setup();
 

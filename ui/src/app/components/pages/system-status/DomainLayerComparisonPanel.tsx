@@ -38,7 +38,7 @@ import {
 import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import type { DomainMetadataSnapshotResponse } from '@/services/apiService';
-import type { DataLayer, DomainMetadata } from '@/types/strategy';
+import type { DataDomain, DataLayer, DomainMetadata, JobRun, ResourceSignal } from '@/types/strategy';
 import { StatusTypos } from './StatusTokens';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { getDomainOrderEntries } from './domainOrdering';
@@ -75,7 +75,6 @@ import {
   toJobStatusLabel
 } from './SystemStatusHelpers';
 import { formatMetadataTimestamp } from './systemStatusClock';
-import type { DataDomain, JobRun } from '@/types/strategy';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
@@ -83,6 +82,12 @@ const CHECKPOINT_RESET_LAYERS = new Set<LayerKey>(['silver', 'gold']);
 const DOMAIN_COLUMN_WIDTH_PX = 320;
 const PURGE_POLL_INTERVAL_MS = 1000;
 const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
+const CPU_USAGE_PERCENT_SIGNAL_NAMES = ['cpupercent', 'cpupercentage', 'cpuusagepercent', 'cpuusage'];
+const MEMORY_USAGE_PERCENT_SIGNAL_NAMES = [
+  'memorypercent',
+  'memoryusagepercent',
+  'memoryusage'
+];
 type LayerVisualConfig = {
   accent: string;
   softBg: string;
@@ -235,6 +240,93 @@ function formatStorageBytes(value: number | null | undefined): string {
     unitIndex += 1;
   }
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function normalizeSignalName(value?: string | null): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function formatMetricPercent(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: value >= 10 ? 0 : 1
+  }).format(value) + '%';
+}
+
+function findPreferredSignal(
+  signals: ResourceSignal[] | null | undefined,
+  preferredNames: string[]
+): ResourceSignal | null {
+  if (!Array.isArray(signals) || signals.length === 0) {
+    return null;
+  }
+
+  const normalizedSignals = signals.map((signal) => ({
+    signal,
+    name: normalizeSignalName(signal?.name)
+  }));
+
+  for (const preferredName of preferredNames) {
+    const normalizedPreferredName = normalizeSignalName(preferredName);
+    const exactMatch = normalizedSignals.find((entry) => entry.name === normalizedPreferredName);
+    if (exactMatch) {
+      return exactMatch.signal;
+    }
+
+    const broadMatch = normalizedSignals.find(
+      (entry) =>
+        entry.name &&
+        (entry.name.includes(normalizedPreferredName) ||
+          normalizedPreferredName.includes(entry.name))
+    );
+    if (broadMatch) {
+      return broadMatch.signal;
+    }
+  }
+
+  return null;
+}
+
+function formatUsagePercentSignal(signal: ResourceSignal | null | undefined): string {
+  if (!signal || !hasFiniteNumber(signal.value)) {
+    return 'N/A';
+  }
+
+  const unit = normalizeSignalName(signal.unit);
+  if (!unit.includes('percent')) {
+    return 'N/A';
+  }
+
+  return formatMetricPercent(signal.value);
+}
+
+function buildRunningUsageDisplay(signals: ResourceSignal[] | null | undefined): {
+  cpuDisplay: string;
+  memoryDisplay: string;
+  compactText: string | null;
+} | null {
+  if (!Array.isArray(signals) || signals.length === 0) {
+    return null;
+  }
+
+  const cpuDisplay = formatUsagePercentSignal(
+    findPreferredSignal(signals, CPU_USAGE_PERCENT_SIGNAL_NAMES)
+  );
+  const memoryDisplay = formatUsagePercentSignal(
+    findPreferredSignal(signals, MEMORY_USAGE_PERCENT_SIGNAL_NAMES)
+  );
+  const compactParts = [
+    cpuDisplay !== 'N/A' ? `cpu ${cpuDisplay}` : null,
+    memoryDisplay !== 'N/A' ? `mem ${memoryDisplay}` : null
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    cpuDisplay,
+    memoryDisplay,
+    compactText: compactParts.length > 0 ? compactParts.join(' | ') : null
+  };
 }
 
 function formatDateRangeBoundary(value: string | null | undefined): string {
@@ -1589,6 +1681,7 @@ export function DomainLayerComparisonPanel({
                       const run = jobKey ? jobIndex.get(jobKey) : null;
                       const durationSummary = jobKey ? jobDurationSummaryIndex.get(jobKey) : null;
                       const managedJob = jobKey ? managedJobIndex.get(jobKey) : null;
+                      const liveUsageDisplay = buildRunningUsageDisplay(managedJob?.signals);
                       const lastStartDisplay = (() => {
                         if (!jobName) return 'N/A';
                         if (!run?.startTime) return 'NO RUN';
@@ -1767,6 +1860,7 @@ export function DomainLayerComparisonPanel({
                         previousLabel,
                         blacklistSummary,
                         retrySymbolsSummary,
+                        liveUsageDisplay,
                         financeSubfolderCounts,
                         showFinanceSubfolders,
                         layerVisual,
@@ -1929,6 +2023,14 @@ export function DomainLayerComparisonPanel({
                                         {model.averageRuntimeSummary}
                                       </div>
                                     ) : null}
+                                    {model.isRunning && model.liveUsageDisplay?.compactText ? (
+                                      <div
+                                        className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}
+                                        title="Live job resource usage"
+                                      >
+                                        {model.liveUsageDisplay.compactText}
+                                      </div>
+                                    ) : null}
                                   </div>
                                   <div className="flex items-center gap-2 self-start">
                                     {model.isCellRefreshing ? (
@@ -2031,6 +2133,18 @@ export function DomainLayerComparisonPanel({
                                       >
                                         {model.averageRuntimeDetail}
                                       </dd>
+                                      {model.isRunning ? (
+                                        <>
+                                          <dt className="text-mcm-walnut/70">cpu usage:</dt>
+                                          <dd className="min-w-0 truncate text-right text-mcm-walnut/90">
+                                            {model.liveUsageDisplay?.cpuDisplay || 'N/A'}
+                                          </dd>
+                                          <dt className="text-mcm-walnut/70">memory usage:</dt>
+                                          <dd className="min-w-0 truncate text-right text-mcm-walnut/90">
+                                            {model.liveUsageDisplay?.memoryDisplay || 'N/A'}
+                                          </dd>
+                                        </>
+                                      ) : null}
                                       {model.retrySymbolsSummary ? (
                                         <>
                                           <dt className="self-start text-mcm-walnut/70">

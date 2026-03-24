@@ -312,6 +312,27 @@ def test_bronze_jobs_do_not_automatically_retry_failed_executions() -> None:
         )
 
 
+def test_gold_market_job_uses_remediation_retry_and_memory_settings() -> None:
+    repo_root = _repo_root()
+    path = repo_root / "deploy" / "job_gold_market_data.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+
+    configuration = (doc.get("properties") or {}).get("configuration") or {}
+    assert configuration.get("replicaRetryLimit") == 1, (
+        f"{path}: gold market job remediation must limit replica retries to 1"
+    )
+
+    containers = (((doc.get("properties") or {}).get("template") or {}).get("containers") or [])
+    gold_container = next((container for container in containers if container.get("name") == "gold-market-job"), None)
+    assert gold_container, f"{path}: expected gold-market-job container"
+
+    resources = gold_container.get("resources") or {}
+    assert resources.get("memory") == "8Gi", (
+        f"{path}: gold market job remediation must raise memory to 8Gi"
+    )
+
+
 def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
     repo_root = _repo_root()
     setup_env = repo_root / "scripts" / "setup-env.ps1"

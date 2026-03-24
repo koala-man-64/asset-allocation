@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -13,6 +14,31 @@ logger = logging.getLogger("asset_allocation.monitoring.control_plane")
 _ACTIVE_EXECUTION_STATUS_TOKENS = frozenset(
     {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}
 )
+_MEMORY_QUANTITY_RE = re.compile(r"^\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>[a-zA-Z]*)\s*$")
+_MEMORY_UNIT_FACTORS = {
+    "": 1,
+    "b": 1,
+    "k": 1_000,
+    "kb": 1_000,
+    "m": 1_000_000,
+    "mb": 1_000_000,
+    "g": 1_000_000_000,
+    "gb": 1_000_000_000,
+    "t": 1_000_000_000_000,
+    "tb": 1_000_000_000_000,
+    "p": 1_000_000_000_000_000,
+    "pb": 1_000_000_000_000_000,
+    "ki": 1024,
+    "kib": 1024,
+    "mi": 1024**2,
+    "mib": 1024**2,
+    "gi": 1024**3,
+    "gib": 1024**3,
+    "ti": 1024**4,
+    "tib": 1024**4,
+    "pi": 1024**5,
+    "pib": 1024**5,
+}
 
 
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
@@ -148,6 +174,83 @@ def _extract_resource_last_modified_at(payload: Dict[str, Any]) -> Optional[str]
     return last_modified or None
 
 
+def _parse_positive_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if parsed > 0 else None
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    try:
+        parsed = float(text)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _parse_memory_bytes(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if parsed > 0 else None
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    match = _MEMORY_QUANTITY_RE.match(text)
+    if not match:
+        return None
+
+    try:
+        magnitude = float(match.group("value"))
+    except ValueError:
+        return None
+    if magnitude <= 0:
+        return None
+
+    unit = match.group("unit").strip().lower()
+    factor = _MEMORY_UNIT_FACTORS.get(unit)
+    if factor is None:
+        return None
+    return magnitude * factor
+
+
+def _extract_job_resource_limits(job_props: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+    template = job_props.get("template") if isinstance(job_props.get("template"), dict) else {}
+    containers = template.get("containers") if isinstance(template.get("containers"), list) else []
+
+    cpu_limit_cores = 0.0
+    memory_limit_bytes = 0.0
+    has_cpu_limit = False
+    has_memory_limit = False
+
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        resources = container.get("resources") if isinstance(container.get("resources"), dict) else {}
+
+        cpu = _parse_positive_float(resources.get("cpu"))
+        if cpu is not None:
+            cpu_limit_cores += cpu
+            has_cpu_limit = True
+
+        memory = _parse_memory_bytes(resources.get("memory"))
+        if memory is not None:
+            memory_limit_bytes += memory
+            has_memory_limit = True
+
+    return (
+        cpu_limit_cores if has_cpu_limit else None,
+        memory_limit_bytes if has_memory_limit else None,
+    )
+
+
 @dataclass(frozen=True)
 class ResourceHealthItem:
     name: str
@@ -159,6 +262,8 @@ class ResourceHealthItem:
     running_state: Optional[str] = None
     last_modified_at: Optional[str] = None
     signals: Tuple[Dict[str, Any], ...] = ()
+    cpu_limit_cores: Optional[float] = None
+    memory_limit_bytes: Optional[float] = None
 
     def to_dict(self, *, include_ids: bool) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -258,6 +363,7 @@ def collect_jobs_and_executions(
             job_props = job_payload.get("properties") if isinstance(job_payload.get("properties"), dict) else {}
             provisioning_state = str(job_props.get("provisioningState") or "")
             status, state_text = _resource_status_from_provisioning_state(provisioning_state, has_ready_signal=True)
+            cpu_limit_cores, memory_limit_bytes = _extract_job_resource_limits(job_props)
 
             resource_id = str(job_payload.get("id") or "") or None
             last_modified_at = _extract_resource_last_modified_at(
@@ -285,6 +391,8 @@ def collect_jobs_and_executions(
                     azure_id=resource_id,
                     running_state=running_state,
                     last_modified_at=last_modified_at,
+                    cpu_limit_cores=cpu_limit_cores,
+                    memory_limit_bytes=memory_limit_bytes,
                 )
             )
         except Exception as exc:

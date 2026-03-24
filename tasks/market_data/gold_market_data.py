@@ -15,7 +15,7 @@ import os
 import re
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 import numpy as np
 import pandas as pd
@@ -44,6 +44,7 @@ from tasks.common.postgres_gold_sync import (
     load_domain_sync_state,
     resolve_postgres_dsn,
     sync_gold_bucket,
+    sync_gold_bucket_chunks,
     sync_state_cache_entry,
 )
 
@@ -62,6 +63,34 @@ class BucketExecutionResult:
     status: str
     symbols_written: int
     watermark_updated: bool
+
+
+@dataclass(frozen=True)
+class BucketChunkWriteResult:
+    chunk_number: int
+    rows: int
+    symbols: int
+    columns: int
+    memory_mb: float
+    summary: dict[str, Any]
+
+
+@dataclass
+class BucketStageResult:
+    final_frame: Optional[pd.DataFrame]
+    staging_used: bool
+    staging_root: str
+    staging_delta_path: str
+    staging_chunk_prefix: str
+    final_rows: int
+    final_columns: int
+    final_memory_mb: float
+    bucket_input_symbols: int
+    bucket_output_rows: int
+    bucket_symbol_failures: int
+    bucket_symbol_to_bucket: dict[str, str]
+    critical_compute_failure_symbol: Optional[str]
+    chunk_summaries: list[dict[str, Any]]
 
 
 _SILVER_TO_GOLD_REQUIRED_COLUMNS = {
@@ -84,6 +113,8 @@ _GOLD_MARKET_SILVER_SOURCE_COLUMNS: tuple[str, ...] = (
 )
 _BUCKET_PROGRESS_LOG_INTERVAL = 100
 _REGIME_REQUIRED_MARKET_SYMBOL_SET = frozenset(REGIME_REQUIRED_MARKET_SYMBOLS)
+_MARKET_CHUNK_SYMBOL_LIMIT = 25
+_MARKET_CHUNK_ROW_LIMIT = 100_000
 
 
 def _frame_memory_mb(df: Optional[pd.DataFrame]) -> float:
@@ -461,6 +492,554 @@ def _merge_symbol_to_bucket_map(
     return out
 
 
+def _gold_market_job_run_id() -> str:
+    execution_name = str(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME") or "").strip()
+    if execution_name:
+        return execution_name
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"gold-market-job-{stamp}-{os.getpid()}"
+
+
+def _gold_market_staging_root(*, run_id: str, bucket: str) -> str:
+    clean_bucket = str(bucket or "").strip().upper()
+    return f"system/gold-market-job/runs/{run_id}/market/buckets/{clean_bucket}"
+
+
+def _gold_market_staging_delta_path(*, run_id: str, bucket: str) -> str:
+    return f"{_gold_market_staging_root(run_id=run_id, bucket=bucket)}/delta"
+
+
+def _gold_market_staging_chunk_prefix(*, run_id: str, bucket: str) -> str:
+    return f"{_gold_market_staging_root(run_id=run_id, bucket=bucket)}/chunks"
+
+
+def _gold_market_staging_chunk_blob_path(*, run_id: str, bucket: str, chunk_number: int) -> str:
+    return f"{_gold_market_staging_chunk_prefix(run_id=run_id, bucket=bucket)}/chunk-{int(chunk_number):05d}.parquet"
+
+
+def _get_gold_market_storage_client(gold_container: str):
+    from core import core as mdc
+
+    client = mdc.get_storage_client(gold_container)
+    if client is None:
+        raise RuntimeError(f"Gold market staging requires storage client for container={gold_container}.")
+    return client
+
+
+def _write_staged_market_chunk_blob(
+    *,
+    gold_container: str,
+    blob_path: str,
+    frame: pd.DataFrame,
+) -> None:
+    client = _get_gold_market_storage_client(gold_container)
+    client.write_parquet(blob_path, frame)
+
+
+def _write_staged_market_chunk(
+    *,
+    bucket: str,
+    gold_container: str,
+    staging_delta_path: str,
+    chunk_blob_path: str,
+    chunk_frames: list[pd.DataFrame],
+    chunk_number: int,
+    is_first_chunk: bool,
+) -> BucketChunkWriteResult:
+    from core import delta_core
+
+    if not chunk_frames:
+        raise ValueError("chunk_frames must not be empty")
+
+    chunk_frame = (
+        chunk_frames[0].reset_index(drop=True)
+        if len(chunk_frames) == 1
+        else pd.concat(chunk_frames, ignore_index=True)
+    )
+    chunk_rows = int(len(chunk_frame))
+    chunk_symbols = (
+        int(chunk_frame["symbol"].dropna().astype("string").nunique())
+        if "symbol" in chunk_frame.columns
+        else 0
+    )
+    chunk_columns = int(len(chunk_frame.columns))
+    chunk_memory_mb = _frame_memory_mb(chunk_frame)
+    _log_bucket_progress(
+        bucket=bucket,
+        stage="chunk_flush_started",
+        rows=chunk_rows,
+        symbols=chunk_symbols,
+        columns=chunk_columns,
+        memory_mb=chunk_memory_mb,
+    )
+
+    write_decision = prepare_delta_write_frame(
+        chunk_frame,
+        container=gold_container,
+        path=staging_delta_path,
+    )
+    if write_decision.action == "skip_empty_no_schema":
+        raise RuntimeError(
+            f"Unexpected empty staging write for gold market bucket={bucket} path={staging_delta_path}"
+        )
+
+    staged_frame = write_decision.frame
+    _log_bucket_progress(
+        bucket=bucket,
+        stage="staging_write_started",
+        rows=int(len(staged_frame)),
+        symbols=chunk_symbols,
+        columns=int(len(staged_frame.columns)),
+        memory_mb=_frame_memory_mb(staged_frame),
+    )
+    delta_core.store_delta(
+        staged_frame,
+        gold_container,
+        staging_delta_path,
+        mode="overwrite" if is_first_chunk else "append",
+    )
+    _write_staged_market_chunk_blob(
+        gold_container=gold_container,
+        blob_path=chunk_blob_path,
+        frame=staged_frame,
+    )
+    summary = domain_artifacts.summarize_frame(
+        staged_frame,
+        domain="market",
+        date_column="date",
+    )
+    _log_bucket_progress(
+        bucket=bucket,
+        stage="staging_write_completed",
+        rows=int(len(staged_frame)),
+        symbols=chunk_symbols,
+        columns=int(len(staged_frame.columns)),
+        memory_mb=_frame_memory_mb(staged_frame),
+    )
+    _log_bucket_progress(
+        bucket=bucket,
+        stage="chunk_flush_completed",
+        rows=int(len(staged_frame)),
+        symbols=chunk_symbols,
+        columns=int(len(staged_frame.columns)),
+        memory_mb=_frame_memory_mb(staged_frame),
+    )
+    return BucketChunkWriteResult(
+        chunk_number=chunk_number,
+        rows=int(len(staged_frame)),
+        symbols=chunk_symbols,
+        columns=int(len(staged_frame.columns)),
+        memory_mb=_frame_memory_mb(staged_frame),
+        summary=summary,
+    )
+
+
+def _promote_staged_market_bucket(
+    *,
+    gold_container: str,
+    staging_delta_path: str,
+    gold_path: str,
+) -> int:
+    client = _get_gold_market_storage_client(gold_container)
+    source_prefix = str(staging_delta_path or "").strip().strip("/")
+    destination_prefix = str(gold_path or "").strip().strip("/")
+    if not source_prefix or not destination_prefix:
+        raise ValueError("staging_delta_path and gold_path are required")
+
+    blob_infos = sorted(
+        client.list_blob_infos(name_starts_with=source_prefix),
+        key=lambda item: str(item.get("name") or ""),
+    )
+    if not blob_infos:
+        raise RuntimeError(f"No staged gold market blobs found under {source_prefix}")
+
+    client.delete_prefix(destination_prefix)
+    copied = 0
+    for blob in blob_infos:
+        source_name = str(blob.get("name") or "").strip()
+        if not source_name.startswith(source_prefix):
+            continue
+        suffix = source_name[len(source_prefix):].lstrip("/")
+        destination_name = destination_prefix if not suffix else f"{destination_prefix}/{suffix}"
+        payload = client.download_data(source_name)
+        if payload is None:
+            raise RuntimeError(f"Unable to download staged gold market blob {source_name}")
+        client.upload_data(destination_name, payload, overwrite=True)
+        copied += 1
+    if copied == 0:
+        raise RuntimeError(f"No staged gold market blobs copied from {source_prefix}")
+    return copied
+
+
+def _iter_staged_market_chunk_frames(
+    *,
+    gold_container: str,
+    chunk_prefix: str,
+) -> Iterator[pd.DataFrame]:
+    client = _get_gold_market_storage_client(gold_container)
+    blob_infos = sorted(
+        client.list_blob_infos(name_starts_with=str(chunk_prefix or "").strip().strip("/")),
+        key=lambda item: str(item.get("name") or ""),
+    )
+    for blob in blob_infos:
+        blob_name = str(blob.get("name") or "").strip()
+        if not blob_name.endswith(".parquet"):
+            continue
+        frame = client.read_parquet(blob_name)
+        if frame is None:
+            raise RuntimeError(f"Unable to load staged gold market chunk {blob_name}")
+        yield frame
+
+
+def _cleanup_staged_market_bucket(
+    *,
+    gold_container: str,
+    staging_root: str,
+) -> int:
+    client = _get_gold_market_storage_client(gold_container)
+    return client.delete_prefix(str(staging_root or "").strip().strip("/"))
+
+
+def _write_gold_market_bucket_artifact_from_summaries(
+    *,
+    gold_container: str,
+    bucket: str,
+    summaries: list[dict[str, Any]],
+    symbol_count: int,
+    job_run_id: str,
+    data_path: str,
+) -> Optional[dict[str, Any]]:
+    from core import core as mdc
+
+    storage_client = _get_gold_market_storage_client(gold_container)
+    aggregate_summary = domain_artifacts.aggregate_summaries(
+        summaries,
+        symbol_count_override=symbol_count,
+        date_column="date",
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    artifact_path = domain_artifacts.bucket_artifact_path(
+        layer="gold",
+        domain="market",
+        bucket=bucket,
+    )
+    payload = {
+        "version": domain_artifacts.ARTIFACT_VERSION,
+        "scope": "bucket",
+        "layer": "gold",
+        "domain": "market",
+        "subDomain": None,
+        "bucket": str(bucket).strip().upper(),
+        "rootPath": domain_artifacts.root_prefix(layer="gold", domain="market"),
+        "artifactPath": artifact_path,
+        "updatedAt": now,
+        "computedAt": now,
+        "producerJobName": "gold-market-job",
+        "jobRunId": str(job_run_id or "").strip() or None,
+        "runId": str(job_run_id or "").strip() or None,
+        "manifestPath": None,
+        "activeDataPrefix": None,
+        "dataPath": str(data_path or "").strip() or None,
+        **aggregate_summary,
+    }
+    mdc.save_json_content(payload, artifact_path, client=storage_client)
+    return payload
+
+
+def _persist_gold_market_bucket_checkpoint(
+    *,
+    bucket: str,
+    watermark_key: str,
+    silver_commit: Optional[float],
+    watermarks: dict[str, Any],
+    symbol_to_bucket: dict[str, str],
+    bucket_symbol_to_bucket: dict[str, str],
+) -> tuple[dict[str, str], str]:
+    if silver_commit is None:
+        raise RuntimeError(f"Cannot persist gold market watermark for bucket={bucket}: missing source commit.")
+
+    updated_symbol_to_bucket = _merge_symbol_to_bucket_map(
+        symbol_to_bucket,
+        touched_bucket=bucket,
+        touched_symbol_to_bucket=bucket_symbol_to_bucket,
+    )
+    index_path = layer_bucketing.write_layer_symbol_index(
+        layer="gold",
+        domain="market",
+        symbol_to_bucket=updated_symbol_to_bucket,
+    )
+    if index_path is None:
+        raise RuntimeError(f"Gold market symbol index write returned no path for bucket={bucket}.")
+
+    updated_watermarks = dict(watermarks)
+    updated_watermarks[watermark_key] = {
+        "silver_last_commit": silver_commit,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_watermarks("gold_market_features", updated_watermarks)
+    watermarks.clear()
+    watermarks.update(updated_watermarks)
+    return updated_symbol_to_bucket, index_path
+
+
+def _stage_market_bucket_outputs(
+    *,
+    bucket: str,
+    silver_container: str,
+    gold_container: str,
+    silver_path: str,
+    backfill_start: Optional[pd.Timestamp],
+    run_id: str,
+) -> BucketStageResult:
+    from core import delta_core
+
+    df_silver_bucket = delta_core.load_delta(
+        silver_container,
+        silver_path,
+        columns=list(_GOLD_MARKET_SILVER_SOURCE_COLUMNS),
+    )
+    bucket_input_rows = 0
+    bucket_input_symbols = 0
+    bucket_input_columns = 0
+    if df_silver_bucket is not None and not df_silver_bucket.empty:
+        bucket_input_rows = int(len(df_silver_bucket))
+        bucket_input_columns = int(len(df_silver_bucket.columns))
+        if "symbol" in df_silver_bucket.columns:
+            bucket_input_symbols = int(df_silver_bucket["symbol"].dropna().astype("string").nunique())
+        _log_bucket_progress(
+            bucket=bucket,
+            stage="source_loaded",
+            rows=bucket_input_rows,
+            symbols=bucket_input_symbols,
+            columns=bucket_input_columns,
+            memory_mb=_frame_memory_mb(df_silver_bucket),
+            silver_path=silver_path,
+        )
+
+    try:
+        df_silver_bucket = _validate_silver_to_gold_market_bucket_contract(
+            df_silver_bucket,
+            bucket=bucket,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"contract_validation::{bucket_input_symbols}::{exc}") from exc
+    bucket_symbol_to_bucket: dict[str, str] = {}
+    critical_compute_failure_symbol: Optional[str] = None
+    bucket_symbol_failures = 0
+    bucket_output_rows = 0
+    chunk_frames: list[pd.DataFrame] = []
+    chunk_row_count = 0
+    chunk_number = 0
+    chunk_write_results: list[BucketChunkWriteResult] = []
+    chunk_summaries: list[dict[str, Any]] = []
+    staging_root = _gold_market_staging_root(run_id=run_id, bucket=bucket)
+    staging_delta_path = _gold_market_staging_delta_path(run_id=run_id, bucket=bucket)
+    staging_chunk_prefix = _gold_market_staging_chunk_prefix(run_id=run_id, bucket=bucket)
+
+    try:
+        for processed_symbols, (symbol, group) in enumerate(df_silver_bucket.groupby("symbol"), start=1):
+            ticker = str(symbol or "").strip().upper()
+            if not ticker:
+                continue
+            try:
+                df_features = compute_features(group)
+                df_features, _ = apply_backfill_start_cutoff(
+                    df_features,
+                    date_col="date",
+                    backfill_start=backfill_start,
+                    context=f"gold market alpha26 {ticker}",
+                )
+                if df_features is None or df_features.empty:
+                    if (
+                        processed_symbols == 1
+                        or processed_symbols % _BUCKET_PROGRESS_LOG_INTERVAL == 0
+                        or processed_symbols == bucket_input_symbols
+                    ):
+                        _log_bucket_progress(
+                            bucket=bucket,
+                            stage="symbol_progress",
+                            processed_symbols=processed_symbols,
+                            total_symbols=bucket_input_symbols,
+                            output_symbols=len(bucket_symbol_to_bucket),
+                            output_rows=bucket_output_rows,
+                            failed_symbols=bucket_symbol_failures,
+                        )
+                    continue
+
+                df_projected = project_gold_output_frame(df_features, domain="market")
+                if df_projected is None or df_projected.empty:
+                    if (
+                        processed_symbols == 1
+                        or processed_symbols % _BUCKET_PROGRESS_LOG_INTERVAL == 0
+                        or processed_symbols == bucket_input_symbols
+                    ):
+                        _log_bucket_progress(
+                            bucket=bucket,
+                            stage="symbol_progress",
+                            processed_symbols=processed_symbols,
+                            total_symbols=bucket_input_symbols,
+                            output_symbols=len(bucket_symbol_to_bucket),
+                            output_rows=bucket_output_rows,
+                            failed_symbols=bucket_symbol_failures,
+                        )
+                    continue
+
+                chunk_frames.append(df_projected)
+                chunk_row_count += int(len(df_projected))
+                bucket_output_rows += int(len(df_projected))
+                bucket_symbol_to_bucket[ticker] = bucket
+
+                if len(chunk_frames) >= _MARKET_CHUNK_SYMBOL_LIMIT or chunk_row_count >= _MARKET_CHUNK_ROW_LIMIT:
+                    if chunk_number == 0:
+                        _cleanup_staged_market_bucket(gold_container=gold_container, staging_root=staging_root)
+                    chunk_number += 1
+                    chunk_result = _write_staged_market_chunk(
+                        bucket=bucket,
+                        gold_container=gold_container,
+                        staging_delta_path=staging_delta_path,
+                        chunk_blob_path=_gold_market_staging_chunk_blob_path(
+                            run_id=run_id,
+                            bucket=bucket,
+                            chunk_number=chunk_number,
+                        ),
+                        chunk_frames=chunk_frames,
+                        chunk_number=chunk_number,
+                        is_first_chunk=chunk_number == 1,
+                    )
+                    chunk_write_results.append(chunk_result)
+                    chunk_summaries.append(chunk_result.summary)
+                    chunk_frames.clear()
+                    chunk_row_count = 0
+            except Exception as exc:
+                if _is_regime_required_market_symbol(ticker):
+                    critical_compute_failure_symbol = ticker
+                    bucket_symbol_failures += 1
+                    _log_bucket_progress(
+                        bucket=bucket,
+                        stage="symbol_progress",
+                        processed_symbols=processed_symbols,
+                        total_symbols=bucket_input_symbols,
+                        output_symbols=len(bucket_symbol_to_bucket),
+                        output_rows=bucket_output_rows,
+                        failed_symbols=bucket_symbol_failures,
+                    )
+                    raise RuntimeError(f"critical_symbol::{ticker}::{exc}") from exc
+                bucket_symbol_failures += 1
+                from core import core as mdc
+
+                mdc.write_warning(f"Gold market alpha26 compute failed for {ticker}: {exc}")
+            if (
+                processed_symbols == 1
+                or processed_symbols % _BUCKET_PROGRESS_LOG_INTERVAL == 0
+                or processed_symbols == bucket_input_symbols
+            ):
+                _log_bucket_progress(
+                    bucket=bucket,
+                    stage="symbol_progress",
+                    processed_symbols=processed_symbols,
+                    total_symbols=bucket_input_symbols,
+                    output_symbols=len(bucket_symbol_to_bucket),
+                    output_rows=bucket_output_rows,
+                    failed_symbols=bucket_symbol_failures,
+                )
+
+        if chunk_frames:
+            if chunk_number == 0:
+                _cleanup_staged_market_bucket(gold_container=gold_container, staging_root=staging_root)
+            chunk_number += 1
+            chunk_result = _write_staged_market_chunk(
+                bucket=bucket,
+                gold_container=gold_container,
+                staging_delta_path=staging_delta_path,
+                chunk_blob_path=_gold_market_staging_chunk_blob_path(
+                    run_id=run_id,
+                    bucket=bucket,
+                    chunk_number=chunk_number,
+                ),
+                chunk_frames=chunk_frames,
+                chunk_number=chunk_number,
+                is_first_chunk=chunk_number == 1,
+            )
+            chunk_write_results.append(chunk_result)
+            chunk_summaries.append(chunk_result.summary)
+            chunk_frames.clear()
+            chunk_row_count = 0
+    except RuntimeError as exc:
+        message = str(exc)
+        if message.startswith("critical_symbol::"):
+            _, critical_symbol, detail = message.split("::", 2)
+            critical_compute_failure_symbol = critical_symbol
+            from core import core as mdc
+
+            mdc.write_error(f"Gold market alpha26 compute failed for critical symbol {critical_symbol}: {detail}")
+        else:
+            raise
+    finally:
+        del df_silver_bucket
+
+    _log_bucket_progress(
+        bucket=bucket,
+        stage="compute_complete",
+        processed_symbols=bucket_input_symbols,
+        total_symbols=bucket_input_symbols,
+        output_symbols=len(bucket_symbol_to_bucket),
+        output_rows=bucket_output_rows,
+        failed_symbols=bucket_symbol_failures,
+    )
+
+    if chunk_write_results:
+        final_columns = chunk_write_results[-1].columns
+        final_memory_mb = chunk_write_results[-1].memory_mb
+        final_frame: Optional[pd.DataFrame] = None
+        staging_used = True
+        final_rows = bucket_output_rows
+        _log_bucket_progress(
+            bucket=bucket,
+            stage="bucket_frame_ready",
+            rows=final_rows,
+            symbols=len(bucket_symbol_to_bucket),
+            columns=final_columns,
+            memory_mb=final_memory_mb,
+            output_rows=bucket_output_rows,
+            output_symbols=len(bucket_symbol_to_bucket),
+            failed_symbols=bucket_symbol_failures,
+        )
+    else:
+        final_frame = project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="market")
+        staging_used = False
+        final_rows = int(len(final_frame))
+        final_columns = int(len(final_frame.columns))
+        final_memory_mb = _frame_memory_mb(final_frame)
+        _log_bucket_progress(
+            bucket=bucket,
+            stage="bucket_frame_ready",
+            rows=final_rows,
+            symbols=0,
+            columns=final_columns,
+            memory_mb=final_memory_mb,
+            output_rows=bucket_output_rows,
+            output_symbols=len(bucket_symbol_to_bucket),
+            failed_symbols=bucket_symbol_failures,
+        )
+
+    return BucketStageResult(
+        final_frame=final_frame,
+        staging_used=staging_used,
+        staging_root=staging_root,
+        staging_delta_path=staging_delta_path,
+        staging_chunk_prefix=staging_chunk_prefix,
+        final_rows=final_rows,
+        final_columns=final_columns,
+        final_memory_mb=final_memory_mb,
+        bucket_input_symbols=bucket_input_symbols,
+        bucket_output_rows=bucket_output_rows,
+        bucket_symbol_failures=bucket_symbol_failures,
+        bucket_symbol_to_bucket=bucket_symbol_to_bucket,
+        critical_compute_failure_symbol=critical_compute_failure_symbol,
+        chunk_summaries=chunk_summaries,
+    )
+
+
 def _normalize_market_symbol(value: object) -> str:
     return str(value or "").strip().upper()
 
@@ -604,9 +1183,10 @@ def _run_alpha26_market_gold(
     symbol_to_bucket = _load_existing_gold_symbol_to_bucket_map()
     postgres_dsn = resolve_postgres_dsn()
     sync_state = load_domain_sync_state(postgres_dsn, domain="market") if postgres_dsn else {}
-    pending_watermark_updates: dict[str, dict[str, Any]] = {}
+    run_id = _gold_market_job_run_id()
     watermarks_dirty = False
     bucket_results: list[BucketExecutionResult] = []
+    index_path: Optional[str] = None
 
     # Each bucket maps to one silver source table and one gold destination table.
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
@@ -656,55 +1236,59 @@ def _run_alpha26_market_gold(
         prior_bucket_symbols = sorted(
             symbol for symbol, current_bucket in symbol_to_bucket.items() if current_bucket == bucket
         )
-        bucket_symbol_to_bucket: dict[str, str] = {}
-        critical_compute_failure_symbol: Optional[str] = None
+        scope_symbols = sorted(set(prior_bucket_symbols))
+        stage_result: Optional[BucketStageResult] = None
+        bucket_input_symbols = 0
         bucket_symbol_failures = 0
         bucket_output_rows = 0
+        bucket_symbol_to_bucket: dict[str, str] = {}
+        write_rows = 0
+        write_columns = 0
+        write_memory_mb = 0.0
 
         # Missing source still writes an empty table to keep state deterministic.
         if silver_commit is None:
             skipped_missing_source += 1
-            df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
             _log_bucket_progress(
                 bucket=bucket,
                 stage="missing_source",
                 silver_path=silver_path,
                 gold_path=gold_path,
             )
-        else:
-            df_silver_bucket = delta_core.load_delta(
-                silver_container,
-                silver_path,
-                columns=list(_GOLD_MARKET_SILVER_SOURCE_COLUMNS),
+            final_frame = project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="market")
+            stage_result = BucketStageResult(
+                final_frame=final_frame,
+                staging_used=False,
+                staging_root=_gold_market_staging_root(run_id=run_id, bucket=bucket),
+                staging_delta_path=_gold_market_staging_delta_path(run_id=run_id, bucket=bucket),
+                staging_chunk_prefix=_gold_market_staging_chunk_prefix(run_id=run_id, bucket=bucket),
+                final_rows=int(len(final_frame)),
+                final_columns=int(len(final_frame.columns)),
+                final_memory_mb=_frame_memory_mb(final_frame),
+                bucket_input_symbols=0,
+                bucket_output_rows=0,
+                bucket_symbol_failures=0,
+                bucket_symbol_to_bucket={},
+                critical_compute_failure_symbol=None,
+                chunk_summaries=[],
             )
-            symbol_frames: list[pd.DataFrame] = []
-            bucket_input_rows = 0
-            bucket_input_symbols = 0
-            bucket_input_columns = 0
-
-            # Compute features independently for each symbol in the bucket.
-            if df_silver_bucket is not None and not df_silver_bucket.empty:
-                bucket_input_rows = int(len(df_silver_bucket))
-                bucket_input_columns = int(len(df_silver_bucket.columns))
-                if "symbol" in df_silver_bucket.columns:
-                    bucket_input_symbols = int(df_silver_bucket["symbol"].dropna().astype("string").nunique())
-                _log_bucket_progress(
+        else:
+            try:
+                stage_result = _stage_market_bucket_outputs(
                     bucket=bucket,
-                    stage="source_loaded",
-                    rows=bucket_input_rows,
-                    symbols=bucket_input_symbols,
-                    columns=bucket_input_columns,
-                    memory_mb=_frame_memory_mb(df_silver_bucket),
+                    silver_container=silver_container,
+                    gold_container=gold_container,
                     silver_path=silver_path,
+                    backfill_start=backfill_start,
+                    run_id=run_id,
                 )
-                try:
-                    df_silver_bucket = _validate_silver_to_gold_market_bucket_contract(
-                        df_silver_bucket,
-                        bucket=bucket,
-                    )
-                except Exception as exc:
+            except RuntimeError as exc:
+                message = str(exc)
+                if message.startswith("contract_validation::"):
+                    _, raw_symbol_count, detail = message.split("::", 2)
+                    bucket_input_symbols = int(raw_symbol_count or 0)
                     failed += 1
-                    mdc.write_error(str(exc))
+                    mdc.write_error(detail)
                     mdc.write_line(
                         f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
                         f"reason=contract_validation symbols_in={bucket_input_symbols} symbols_out=0 "
@@ -723,222 +1307,297 @@ def _run_alpha26_market_gold(
                         )
                     )
                     continue
-                for processed_symbols, (symbol, group) in enumerate(df_silver_bucket.groupby("symbol"), start=1):
-                    ticker = str(symbol or "").strip().upper()
-                    if not ticker:
-                        continue
-                    try:
-                        df_features = compute_features(group)
-                        df_features, _ = apply_backfill_start_cutoff(
-                            df_features,
-                            date_col="date",
-                            backfill_start=backfill_start,
-                            context=f"gold market alpha26 {ticker}",
-                        )
-                        if df_features is None or df_features.empty:
-                            if (
-                                processed_symbols == 1
-                                or processed_symbols % _BUCKET_PROGRESS_LOG_INTERVAL == 0
-                                or processed_symbols == bucket_input_symbols
-                            ):
-                                _log_bucket_progress(
-                                    bucket=bucket,
-                                    stage="symbol_progress",
-                                    processed_symbols=processed_symbols,
-                                    total_symbols=bucket_input_symbols,
-                                    output_symbols=len(bucket_symbol_to_bucket),
-                                    output_rows=bucket_output_rows,
-                                    failed_symbols=bucket_symbol_failures,
-                                )
-                            continue
-                        symbol_frames.append(df_features)
-                        bucket_output_rows += int(len(df_features))
-
-                        # Persist symbol->bucket mapping for downstream index generation.
-                        bucket_symbol_to_bucket[ticker] = bucket
-                    except Exception as exc:
-                        failed += 1
-                        bucket_symbol_failures += 1
-                        if _is_regime_required_market_symbol(ticker):
-                            critical_compute_failure_symbol = ticker
-                            mdc.write_error(
-                                f"Gold market alpha26 compute failed for critical symbol {ticker}: {exc}"
-                            )
-                            break
-                        mdc.write_warning(f"Gold market alpha26 compute failed for {ticker}: {exc}")
-                    if (
-                        processed_symbols == 1
-                        or processed_symbols % _BUCKET_PROGRESS_LOG_INTERVAL == 0
-                        or processed_symbols == bucket_input_symbols
-                    ):
-                        _log_bucket_progress(
-                            bucket=bucket,
-                            stage="symbol_progress",
-                            processed_symbols=processed_symbols,
-                            total_symbols=bucket_input_symbols,
-                            output_symbols=len(bucket_symbol_to_bucket),
-                            output_rows=bucket_output_rows,
-                            failed_symbols=bucket_symbol_failures,
-                        )
-                _log_bucket_progress(
-                    bucket=bucket,
-                    stage="compute_complete",
-                    processed_symbols=bucket_input_symbols,
-                    total_symbols=bucket_input_symbols,
-                    output_symbols=len(bucket_symbol_to_bucket),
-                    output_rows=bucket_output_rows,
-                    failed_symbols=bucket_symbol_failures,
-                )
-                del df_silver_bucket
-            if critical_compute_failure_symbol is not None:
+                failed += 1
+                mdc.write_error(f"Gold market alpha26 write failed bucket={bucket}: {exc}")
                 mdc.write_line(
                     f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
-                    f"reason=compute_failure symbols_in={bucket_input_symbols} symbols_out=0 "
-                    f"failures={bucket_symbol_failures} critical_symbol=true symbol={critical_compute_failure_symbol}"
+                    "reason=write_failure symbols_in=0 symbols_out=0 failures=1"
                 )
                 mdc.write_line(
-                    f"watermark_update_status layer=gold domain=market bucket={bucket} "
-                    f"status=blocked reason=compute_failure critical_symbol=true symbol={critical_compute_failure_symbol}"
+                    f"watermark_update_status layer=gold domain=market bucket={bucket} status=blocked reason=write_failure"
                 )
                 bucket_results.append(
                     BucketExecutionResult(
                         bucket=bucket,
-                        status="failed_compute",
+                        status="failed_write",
                         symbols_written=0,
                         watermark_updated=False,
                     )
                 )
+                try:
+                    _cleanup_staged_market_bucket(
+                        gold_container=gold_container,
+                        staging_root=_gold_market_staging_root(run_id=run_id, bucket=bucket),
+                    )
+                except Exception as cleanup_exc:
+                    mdc.write_warning(f"Gold market staging cleanup failed bucket={bucket}: {cleanup_exc}")
+                continue
+            except Exception as exc:
+                failed += 1
+                mdc.write_error(f"Gold market alpha26 write failed bucket={bucket}: {exc}")
+                mdc.write_line(
+                    f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
+                    "reason=write_failure symbols_in=0 symbols_out=0 failures=1"
+                )
+                mdc.write_line(
+                    f"watermark_update_status layer=gold domain=market bucket={bucket} status=blocked reason=write_failure"
+                )
+                bucket_results.append(
+                    BucketExecutionResult(
+                        bucket=bucket,
+                        status="failed_write",
+                        symbols_written=0,
+                        watermark_updated=False,
+                    )
+                )
+                try:
+                    _cleanup_staged_market_bucket(
+                        gold_container=gold_container,
+                        staging_root=_gold_market_staging_root(run_id=run_id, bucket=bucket),
+                    )
+                except Exception as cleanup_exc:
+                    mdc.write_warning(f"Gold market staging cleanup failed bucket={bucket}: {cleanup_exc}")
                 continue
 
-            # Consolidate symbol outputs into one bucket table.
-            if symbol_frames:
-                df_gold_bucket = pd.concat(symbol_frames, ignore_index=True)
-                symbol_frames.clear()
-                df_gold_bucket = project_gold_output_frame(df_gold_bucket, domain="market")
-            else:
-                df_gold_bucket = project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="market")
-            _log_bucket_progress(
-                bucket=bucket,
-                stage="bucket_frame_ready",
-                rows=int(len(df_gold_bucket)),
-                symbols=(
-                    int(df_gold_bucket["symbol"].dropna().astype("string").nunique())
-                    if "symbol" in df_gold_bucket.columns
-                    else 0
-                ),
-                columns=int(len(df_gold_bucket.columns)),
-                memory_mb=_frame_memory_mb(df_gold_bucket),
-                output_rows=bucket_output_rows,
-                output_symbols=len(bucket_symbol_to_bucket),
-                failed_symbols=bucket_symbol_failures,
-            )
+        bucket_input_symbols = stage_result.bucket_input_symbols
+        bucket_symbol_failures = stage_result.bucket_symbol_failures
+        bucket_output_rows = stage_result.bucket_output_rows
+        bucket_symbol_to_bucket = stage_result.bucket_symbol_to_bucket
+        scope_symbols = sorted(set(scope_symbols).union(bucket_symbol_to_bucket.keys()))
+        failed += bucket_symbol_failures
 
-        write_decision = prepare_delta_write_frame(
-            df_gold_bucket,
-            container=gold_container,
-            path=gold_path,
-        )
-        del df_gold_bucket
-        _log_bucket_progress(
-            bucket=bucket,
-            stage="write_ready",
-            rows=int(len(write_decision.frame)),
-            columns=int(len(write_decision.frame.columns)),
-            memory_mb=_frame_memory_mb(write_decision.frame),
-            output_symbols=len(bucket_symbol_to_bucket),
-        )
-        mdc.write_line(
-            "delta_write_decision layer=gold domain=market "
-            f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
-            f"reason={write_decision.reason} path={gold_path}"
-        )
-        if write_decision.action == "skip_empty_no_schema":
-            mdc.write_line(f"Skipping Gold market empty bucket write for {gold_path}: no existing Delta schema.")
+        critical_compute_failure_symbol = stage_result.critical_compute_failure_symbol
+        if critical_compute_failure_symbol is not None:
             mdc.write_line(
-                f"layer_handoff_status transition=silver_to_gold status=skipped bucket={bucket} "
-                "reason=empty_bucket_no_existing_schema symbols_in=0 symbols_out=0 failures=0"
+                f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
+                f"reason=compute_failure symbols_in={bucket_input_symbols} symbols_out=0 "
+                f"failures={bucket_symbol_failures} critical_symbol=true symbol={critical_compute_failure_symbol}"
             )
             mdc.write_line(
                 f"watermark_update_status layer=gold domain=market bucket={bucket} "
-                "status=blocked reason=empty_bucket_no_existing_schema"
+                f"status=blocked reason=compute_failure critical_symbol=true symbol={critical_compute_failure_symbol}"
             )
             bucket_results.append(
                 BucketExecutionResult(
                     bucket=bucket,
-                    status="skipped_empty_no_schema",
+                    status="failed_compute",
                     symbols_written=0,
                     watermark_updated=False,
                 )
             )
-            _log_bucket_progress(
-                bucket=bucket,
-                stage="skipped_empty_no_schema",
-                rows=int(len(write_decision.frame)),
-                output_symbols=0,
-            )
+            if silver_commit is not None:
+                try:
+                    _cleanup_staged_market_bucket(
+                        gold_container=gold_container,
+                        staging_root=_gold_market_staging_root(run_id=run_id, bucket=bucket),
+                    )
+                except Exception as exc:
+                    mdc.write_warning(f"Gold market staging cleanup failed bucket={bucket}: {exc}")
             continue
 
-        # Persist bucket output and watermark after successful write.
+        # Persist bucket output and checkpoint after successful write/sync.
         try:
-            delta_core.store_delta(write_decision.frame, gold_container, gold_path, mode="overwrite")
-            if backfill_start is not None:
-                delta_core.vacuum_delta_table(
-                    gold_container,
-                    gold_path,
-                    retention_hours=0,
-                    dry_run=False,
-                    enforce_retention_duration=False,
-                    full=True,
-                )
-            try:
-                domain_artifacts.write_bucket_artifact(
-                    layer="gold",
-                    domain="market",
+            if stage_result.staging_used:
+                write_rows = stage_result.final_rows
+                write_columns = stage_result.final_columns
+                write_memory_mb = stage_result.final_memory_mb
+                _log_bucket_progress(
                     bucket=bucket,
-                    df=write_decision.frame,
-                    date_column="date",
-                    job_name="gold-market-job",
+                    stage="write_ready",
+                    rows=write_rows,
+                    columns=write_columns,
+                    memory_mb=write_memory_mb,
+                    output_symbols=len(bucket_symbol_to_bucket),
                 )
-            except Exception as exc:
-                mdc.write_warning(f"Gold market metadata bucket artifact write failed bucket={bucket}: {exc}")
-            if postgres_dsn:
-                sync_result = sync_gold_bucket(
-                    domain="market",
-                    bucket=bucket,
-                    frame=write_decision.frame,
-                    scope_symbols=sorted(set(prior_bucket_symbols).union(bucket_symbol_to_bucket.keys())),
-                    source_commit=silver_commit,
-                    dsn=postgres_dsn,
-                )
-                sync_state[bucket] = sync_state_cache_entry(sync_result)
                 mdc.write_line(
-                    "postgres_gold_sync_status "
-                    f"domain=market bucket={bucket} status={sync_result.status} "
-                    f"rows_out={sync_result.row_count} symbols_out={sync_result.symbol_count} "
-                    f"scope_symbols={sync_result.scope_symbol_count} source_commit={silver_commit}"
+                    "delta_write_decision layer=gold domain=market "
+                    f"bucket={bucket} action=write reason=chunked_staged_publish path={gold_path}"
                 )
-            processed += 1
-            symbol_to_bucket = _merge_symbol_to_bucket_map(
-                symbol_to_bucket,
-                touched_bucket=bucket,
-                touched_symbol_to_bucket=bucket_symbol_to_bucket,
-            )
-            symbols_written = len(bucket_symbol_to_bucket)
+                _promote_staged_market_bucket(
+                    gold_container=gold_container,
+                    staging_delta_path=stage_result.staging_delta_path,
+                    gold_path=gold_path,
+                )
+                if backfill_start is not None:
+                    delta_core.vacuum_delta_table(
+                        gold_container,
+                        gold_path,
+                        retention_hours=0,
+                        dry_run=False,
+                        enforce_retention_duration=False,
+                        full=True,
+                    )
+                try:
+                    _write_gold_market_bucket_artifact_from_summaries(
+                        gold_container=gold_container,
+                        bucket=bucket,
+                        summaries=stage_result.chunk_summaries,
+                        symbol_count=len(bucket_symbol_to_bucket),
+                        job_run_id=run_id,
+                        data_path=gold_path,
+                    )
+                except Exception as exc:
+                    mdc.write_warning(f"Gold market metadata bucket artifact write failed bucket={bucket}: {exc}")
+                if postgres_dsn:
+                    sync_result = sync_gold_bucket_chunks(
+                        domain="market",
+                        bucket=bucket,
+                        frames=_iter_staged_market_chunk_frames(
+                            gold_container=gold_container,
+                            chunk_prefix=stage_result.staging_chunk_prefix,
+                        ),
+                        scope_symbols=scope_symbols,
+                        source_commit=silver_commit,
+                        dsn=postgres_dsn,
+                    )
+                    sync_state[bucket] = sync_state_cache_entry(sync_result)
+                    mdc.write_line(
+                        "postgres_gold_sync_status "
+                        f"domain=market bucket={bucket} status={sync_result.status} "
+                        f"rows_out={sync_result.row_count} symbols_out={sync_result.symbol_count} "
+                        f"scope_symbols={sync_result.scope_symbol_count} source_commit={silver_commit}"
+                    )
+            else:
+                write_decision = prepare_delta_write_frame(
+                    stage_result.final_frame,
+                    container=gold_container,
+                    path=gold_path,
+                )
+                write_rows = int(len(write_decision.frame))
+                write_columns = int(len(write_decision.frame.columns))
+                write_memory_mb = _frame_memory_mb(write_decision.frame)
+                _log_bucket_progress(
+                    bucket=bucket,
+                    stage="write_ready",
+                    rows=write_rows,
+                    columns=write_columns,
+                    memory_mb=write_memory_mb,
+                    output_symbols=len(bucket_symbol_to_bucket),
+                )
+                mdc.write_line(
+                    "delta_write_decision layer=gold domain=market "
+                    f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+                    f"reason={write_decision.reason} path={gold_path}"
+                )
+                if write_decision.action == "skip_empty_no_schema":
+                    mdc.write_line(f"Skipping Gold market empty bucket write for {gold_path}: no existing Delta schema.")
+                    mdc.write_line(
+                        f"layer_handoff_status transition=silver_to_gold status=skipped bucket={bucket} "
+                        "reason=empty_bucket_no_existing_schema symbols_in=0 symbols_out=0 failures=0"
+                    )
+                    mdc.write_line(
+                        f"watermark_update_status layer=gold domain=market bucket={bucket} "
+                        "status=blocked reason=empty_bucket_no_existing_schema"
+                    )
+                    bucket_results.append(
+                        BucketExecutionResult(
+                            bucket=bucket,
+                            status="skipped_empty_no_schema",
+                            symbols_written=0,
+                            watermark_updated=False,
+                        )
+                    )
+                    _log_bucket_progress(
+                        bucket=bucket,
+                        stage="skipped_empty_no_schema",
+                        rows=write_rows,
+                        output_symbols=0,
+                    )
+                    continue
+
+                delta_core.store_delta(write_decision.frame, gold_container, gold_path, mode="overwrite")
+                if backfill_start is not None:
+                    delta_core.vacuum_delta_table(
+                        gold_container,
+                        gold_path,
+                        retention_hours=0,
+                        dry_run=False,
+                        enforce_retention_duration=False,
+                        full=True,
+                    )
+                try:
+                    domain_artifacts.write_bucket_artifact(
+                        layer="gold",
+                        domain="market",
+                        bucket=bucket,
+                        df=write_decision.frame,
+                        date_column="date",
+                        job_name="gold-market-job",
+                        job_run_id=run_id,
+                        run_id=run_id,
+                        data_path=gold_path,
+                    )
+                except Exception as exc:
+                    mdc.write_warning(f"Gold market metadata bucket artifact write failed bucket={bucket}: {exc}")
+                if postgres_dsn:
+                    sync_result = sync_gold_bucket(
+                        domain="market",
+                        bucket=bucket,
+                        frame=write_decision.frame,
+                        scope_symbols=scope_symbols,
+                        source_commit=silver_commit,
+                        dsn=postgres_dsn,
+                    )
+                    sync_state[bucket] = sync_state_cache_entry(sync_result)
+                    mdc.write_line(
+                        "postgres_gold_sync_status "
+                        f"domain=market bucket={bucket} status={sync_result.status} "
+                        f"rows_out={sync_result.row_count} symbols_out={sync_result.symbol_count} "
+                        f"scope_symbols={sync_result.scope_symbol_count} source_commit={silver_commit}"
+                    )
+
             watermark_updated = False
-            if silver_commit is not None:
-                pending_watermark_updates[watermark_key] = {
-                    "silver_last_commit": silver_commit,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+            if silver_commit is not None and bucket_symbol_failures == 0:
+                try:
+                    symbol_to_bucket, index_path = _persist_gold_market_bucket_checkpoint(
+                        bucket=bucket,
+                        watermark_key=watermark_key,
+                        silver_commit=silver_commit,
+                        watermarks=watermarks,
+                        symbol_to_bucket=symbol_to_bucket,
+                        bucket_symbol_to_bucket=bucket_symbol_to_bucket,
+                    )
+                except Exception as exc:
+                    failed += 1
+                    mdc.write_error(f"Gold market alpha26 checkpoint failed bucket={bucket}: {exc}")
+                    mdc.write_line(
+                        f"watermark_update_status layer=gold domain=market bucket={bucket} "
+                        "status=blocked reason=checkpoint_failure"
+                    )
+                    bucket_results.append(
+                        BucketExecutionResult(
+                            bucket=bucket,
+                            status="failed_checkpoint",
+                            symbols_written=0,
+                            watermark_updated=False,
+                        )
+                    )
+                    _log_bucket_progress(
+                        bucket=bucket,
+                        stage="checkpoint_failed",
+                        output_symbols=len(bucket_symbol_to_bucket),
+                        output_rows=bucket_output_rows,
+                        failed_symbols=bucket_symbol_failures,
+                    )
+                    continue
+                watermarks_dirty = True
                 watermark_updated = True
                 mdc.write_line(
                     f"watermark_update_status layer=gold domain=market bucket={bucket} status=updated reason=success"
+                )
+            elif silver_commit is not None:
+                mdc.write_line(
+                    f"watermark_update_status layer=gold domain=market bucket={bucket} "
+                    "status=blocked reason=symbol_compute_failures"
                 )
             else:
                 mdc.write_line(
                     f"watermark_update_status layer=gold domain=market bucket={bucket} "
                     "status=blocked reason=missing_source_commit"
                 )
+
+            processed += 1
+            symbols_written = len(bucket_symbol_to_bucket)
             bucket_status = "ok" if bucket_symbol_failures == 0 else "ok_with_failures"
             mdc.write_line(
                 f"layer_handoff_status transition=silver_to_gold status={bucket_status} bucket={bucket} "
@@ -956,10 +1615,10 @@ def _run_alpha26_market_gold(
             _log_bucket_progress(
                 bucket=bucket,
                 stage="write_completed",
-                rows=int(len(write_decision.frame)),
+                rows=write_rows,
                 symbols=symbols_written,
-                columns=int(len(write_decision.frame.columns)),
-                memory_mb=_frame_memory_mb(write_decision.frame),
+                columns=write_columns,
+                memory_mb=write_memory_mb,
                 output_rows=bucket_output_rows,
                 failed_symbols=bucket_symbol_failures,
             )
@@ -989,6 +1648,15 @@ def _run_alpha26_market_gold(
                 output_rows=bucket_output_rows,
                 failed_symbols=bucket_symbol_failures,
             )
+        finally:
+            if silver_commit is not None:
+                try:
+                    _cleanup_staged_market_bucket(
+                        gold_container=gold_container,
+                        staging_root=_gold_market_staging_root(run_id=run_id, bucket=bucket),
+                    )
+                except Exception as exc:
+                    mdc.write_warning(f"Gold market staging cleanup failed bucket={bucket}: {exc}")
 
     status_counts: dict[str, int] = {}
     for result in bucket_results:
@@ -998,7 +1666,6 @@ def _run_alpha26_market_gold(
         f"bucket_statuses={status_counts} failed={failed}"
     )
 
-    index_path: Optional[str] = None
     publication_reason: Optional[str] = None
     if failed == 0 and postgres_dsn:
         try:
@@ -1008,19 +1675,18 @@ def _run_alpha26_market_gold(
             publication_reason = "critical_symbol_verification_failed"
             mdc.write_error(str(exc))
 
-    if failed > 0 and publication_reason is None:
-        publication_reason = "failed_buckets"
-    elif failed == 0:
-        try:
-            index_path = layer_bucketing.write_layer_symbol_index(
-                layer="gold",
-                domain="market",
-                symbol_to_bucket=symbol_to_bucket,
-            )
-        except Exception as exc:
-            failed += 1
-            publication_reason = "index_write_failed"
-            mdc.write_error(f"Gold market symbol index write failed: {exc}")
+    if failed == 0:
+        if index_path is None:
+            try:
+                index_path = layer_bucketing.write_layer_symbol_index(
+                    layer="gold",
+                    domain="market",
+                    symbol_to_bucket=symbol_to_bucket,
+                )
+            except Exception as exc:
+                failed += 1
+                publication_reason = "index_write_failed"
+                mdc.write_error(f"Gold market symbol index write failed: {exc}")
 
         if index_path is not None:
             try:
@@ -1031,14 +1697,16 @@ def _run_alpha26_market_gold(
                     symbol_count_override=len(symbol_to_bucket),
                     symbol_index_path=index_path,
                     job_name="gold-market-job",
+                    job_run_id=run_id,
+                    run_id=run_id,
                 )
             except Exception as exc:
                 mdc.write_warning(f"Gold market metadata artifact write failed: {exc}")
-            if pending_watermark_updates:
-                watermarks.update(pending_watermark_updates)
-                watermarks_dirty = True
         elif publication_reason is None:
             publication_reason = "index_unavailable"
+
+    if failed > 0 and publication_reason is None:
+        publication_reason = "failed_buckets"
 
     if publication_reason is None:
         mdc.write_line(
@@ -1135,7 +1803,7 @@ if __name__ == "__main__":
 
     job_name = "gold-market-job"
 
-    with mdc.JobLock(job_name, conflict_policy="fail"):
+    with mdc.JobLock(job_name, conflict_policy="wait_then_fail", wait_timeout_seconds=90):
         # Ensure the API dependency is awake before running the batch job.
         ensure_api_awake_from_env(required=True)
         raise SystemExit(

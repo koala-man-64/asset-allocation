@@ -133,6 +133,57 @@ def test_sync_gold_bucket_deletes_scope_symbols_copies_rows_and_updates_state(
     assert any("INSERT INTO core.gold_sync_state" in sql for sql, _params in cursor.executed)
 
 
+def test_sync_gold_bucket_chunks_streams_multiple_prepared_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _FakeCursor()
+    copied_batches: list[list[tuple[object, ...]]] = []
+
+    monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(cursor))
+
+    def _fake_copy_rows(cur, *, table, columns, rows) -> None:
+        assert cur is cursor
+        assert table == "gold.market_data"
+        assert '"symbol"' in columns
+        copied_batches.append(list(rows))
+
+    monkeypatch.setattr(sync, "copy_rows", _fake_copy_rows)
+
+    result = sync.sync_gold_bucket_chunks(
+        domain="market",
+        bucket="a",
+        frames=[
+            pd.DataFrame(
+                {
+                    "date": [pd.Timestamp("2026-01-02")],
+                    "symbol": ["aapl"],
+                    "close": [101.5],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "date": [pd.Timestamp("2026-01-03")],
+                    "symbol": ["msft"],
+                    "close": [202.5],
+                }
+            ),
+        ],
+        scope_symbols=["AAPL", "MSFT", "OLD"],
+        source_commit=123.0,
+        dsn="postgresql://test",
+    )
+
+    assert result.status == "ok"
+    assert result.bucket == "A"
+    assert result.row_count == 2
+    assert result.symbol_count == 2
+    assert result.scope_symbol_count == 3
+    assert len(copied_batches) == 2
+    assert copied_batches[0][0][1] == "AAPL"
+    assert copied_batches[1][0][1] == "MSFT"
+    assert any("DELETE FROM gold.market_data" in sql for sql, _params in cursor.executed)
+
+
 def test_sync_gold_bucket_records_failure_state(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: dict[str, object] = {}
     monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(_FakeCursor(fail_on_execute=True)))

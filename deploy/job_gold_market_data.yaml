@@ -16,7 +16,7 @@ properties:
     manualTriggerConfig:
       parallelism: 1
       replicaCompletionCount: 1
-    replicaRetryLimit: 2
+    replicaRetryLimit: 1
     replicaTimeout: 14400
     registries:
     - server: assetallocationacr.azurecr.io
@@ -83,5 +83,5 @@ properties:
       command: ["python", "-m", "tasks.market_data.gold_market_data"]
       resources:
         cpu: 2.0
-        memory: 4Gi
+        memory: 8Gi
   workloadProfileName: Consumption

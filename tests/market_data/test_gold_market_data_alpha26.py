@@ -79,6 +79,70 @@ def _capture_log_messages(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return messages
 
 
+@pytest.fixture(autouse=True)
+def _install_fake_gold_market_staging(monkeypatch: pytest.MonkeyPatch) -> None:
+    staged_chunks: dict[str, pd.DataFrame] = {}
+
+    def _concat_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+        if not frames:
+            return pd.DataFrame()
+        if len(frames) == 1:
+            return frames[0].reset_index(drop=True).copy()
+        return pd.concat(frames, ignore_index=True)
+
+    def _frames_for_prefix(prefix: str) -> list[pd.DataFrame]:
+        clean_prefix = str(prefix or "").strip().strip("/")
+        return [staged_chunks[path].copy() for path in sorted(staged_chunks) if path.startswith(clean_prefix)]
+
+    def _fake_write_staged_market_chunk(**kwargs):
+        frame = _concat_frames(list(kwargs["chunk_frames"]))
+        chunk_blob_path = str(kwargs["chunk_blob_path"])
+        staged_chunks[chunk_blob_path] = frame.copy()
+        return gold.BucketChunkWriteResult(
+            chunk_number=int(kwargs["chunk_number"]),
+            rows=int(len(frame)),
+            symbols=int(frame["symbol"].astype("string").nunique()) if "symbol" in frame.columns else 0,
+            columns=int(len(frame.columns)),
+            memory_mb=gold._frame_memory_mb(frame),
+            summary=gold.domain_artifacts.summarize_frame(frame, domain="market", date_column="date"),
+        )
+
+    def _fake_iter_staged_market_chunk_frames(*, gold_container: str, chunk_prefix: str):
+        del gold_container
+        for frame in _frames_for_prefix(chunk_prefix):
+            yield frame
+
+    def _fake_promote_staged_market_bucket(*, gold_container: str, staging_delta_path: str, gold_path: str) -> int:
+        chunk_prefix = str(staging_delta_path).rstrip("/")
+        if chunk_prefix.endswith("/delta"):
+            chunk_prefix = f"{chunk_prefix[:-len('/delta')]}/chunks"
+        frames = _frames_for_prefix(chunk_prefix)
+        promoted = _concat_frames(frames)
+        delta_core_module.store_delta(promoted, gold_container, gold_path, mode="overwrite")
+        return len(frames)
+
+    def _fake_cleanup_staged_market_bucket(*, gold_container: str, staging_root: str) -> int:
+        del gold_container
+        clean_root = str(staging_root or "").strip().strip("/")
+        to_delete = [path for path in staged_chunks if path.startswith(clean_root)]
+        for path in to_delete:
+            staged_chunks.pop(path, None)
+        return len(to_delete)
+
+    def _fake_sync_gold_bucket_chunks(**kwargs):
+        frames = list(kwargs.pop("frames"))
+        frame = _concat_frames([df.copy() for df in frames])
+        return gold.sync_gold_bucket(frame=frame, **kwargs)
+
+    monkeypatch.setattr(gold, "_write_staged_market_chunk", _fake_write_staged_market_chunk)
+    monkeypatch.setattr(gold, "_iter_staged_market_chunk_frames", _fake_iter_staged_market_chunk_frames)
+    monkeypatch.setattr(gold, "_promote_staged_market_bucket", _fake_promote_staged_market_bucket)
+    monkeypatch.setattr(gold, "_cleanup_staged_market_bucket", _fake_cleanup_staged_market_bucket)
+    monkeypatch.setattr(gold, "sync_gold_bucket_chunks", _fake_sync_gold_bucket_chunks)
+    monkeypatch.setattr(gold, "_write_gold_market_bucket_artifact_from_summaries", lambda **_kwargs: None)
+    monkeypatch.setattr(gold, "save_watermarks", lambda *_args, **_kwargs: None)
+
+
 def test_run_alpha26_market_gold_hard_fails_on_critical_symbol_compute_failure(monkeypatch):
     watermarks: dict = {}
     captured_index: dict = {}
@@ -201,6 +265,57 @@ def test_run_alpha26_market_gold_logs_bucket_progress_and_loads_required_columns
     assert any("status=ok bucket=A symbols_in=1 symbols_out=1 failures=0" in message for message in messages)
 
 
+def test_run_alpha26_market_gold_chunked_publish_preserves_rows_symbols_and_contract_columns(monkeypatch):
+    watermarks: dict = {}
+    written: dict[str, pd.DataFrame] = {}
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    monkeypatch.setattr(gold, "_MARKET_CHUNK_SYMBOL_LIMIT", 1)
+    monkeypatch.setattr(gold, "_MARKET_CHUNK_ROW_LIMIT", 1)
+
+    def _fake_last_commit(_container: str, path: str):
+        if path == DataPaths.get_silver_market_bucket_path("A"):
+            return 100.0
+        return None
+
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", _fake_last_commit)
+    monkeypatch.setattr(delta_core_module, "load_delta", lambda *_args, **_kwargs: _bucket_df("AAPL", "AMZN"))
+    monkeypatch.setattr(
+        gold,
+        "compute_features",
+        lambda df: _gold_feature_df(str(df["symbol"].iloc[0]).strip().upper()),
+    )
+    monkeypatch.setattr(
+        delta_core_module,
+        "store_delta",
+        lambda df, _container, path, **_kwargs: written.update({str(path): df.copy()}),
+    )
+
+    (
+        processed,
+        _skipped_unchanged,
+        _skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        _alpha26_symbols,
+        _index_path,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks=watermarks,
+    )
+
+    expected_columns = list(projected.columns) if (projected := gold.project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="market")) is not None else []
+    assert processed == 1
+    assert failed == 0
+    assert watermarks_dirty is True
+    assert written["market/buckets/A"]["symbol"].tolist() == ["AAPL", "AMZN"]
+    assert list(written["market/buckets/A"].columns) == expected_columns
+
+
 def test_run_alpha26_market_gold_writes_healthy_symbols_and_blocks_publication_on_ordinary_failures(monkeypatch):
     watermarks: dict = {}
     captured_index: dict = {}
@@ -273,6 +388,83 @@ def test_run_alpha26_market_gold_writes_healthy_symbols_and_blocks_publication_o
         for message in messages
     )
     assert any("bucket_statuses={'ok_with_failures': 1} failed=1" in message for message in messages)
+
+
+def test_run_alpha26_market_gold_rerun_skips_checkpointed_bucket_and_recomputes_failed_bucket(monkeypatch):
+    watermarks: dict = {}
+    symbol_index_map: dict[str, str] = {}
+    gold_commits: dict[str, float] = {}
+    run_state = {"attempt": 1}
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A", "B"])
+
+    def _fake_load_layer_symbol_index(**_kwargs):
+        if not symbol_index_map:
+            return pd.DataFrame()
+        return pd.DataFrame(
+            {
+                "symbol": list(symbol_index_map.keys()),
+                "bucket": list(symbol_index_map.values()),
+            }
+        )
+
+    def _fake_write_layer_symbol_index(**kwargs):
+        symbol_index_map.clear()
+        symbol_index_map.update(kwargs["symbol_to_bucket"])
+        return "system/gold-index/market/latest.parquet"
+
+    def _fake_last_commit(_container: str, path: str):
+        if path == DataPaths.get_silver_market_bucket_path("A"):
+            return 100.0
+        if path == DataPaths.get_silver_market_bucket_path("B"):
+            return 100.0
+        return gold_commits.get(path)
+
+    def _fake_load_delta(_container: str, path: str, **_kwargs):
+        if path == DataPaths.get_silver_market_bucket_path("A"):
+            return _bucket_df("AAPL")
+        if path == DataPaths.get_silver_market_bucket_path("B"):
+            return _bucket_df("BABA")
+        return pd.DataFrame()
+
+    def _fake_compute_features(df: pd.DataFrame) -> pd.DataFrame:
+        symbol = str(df["symbol"].iloc[0]).strip().upper()
+        if symbol == "BABA" and run_state["attempt"] == 1:
+            raise ValueError("transient failure")
+        return _gold_feature_df(symbol)
+
+    def _fake_store_delta(df: pd.DataFrame, _container: str, path: str, **_kwargs):
+        if str(path).startswith("market/buckets/"):
+            gold_commits[str(path)] = 100.0 if not df.empty else 0.0
+
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", _fake_load_layer_symbol_index)
+    monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", _fake_write_layer_symbol_index)
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", _fake_last_commit)
+    monkeypatch.setattr(delta_core_module, "load_delta", _fake_load_delta)
+    monkeypatch.setattr(delta_core_module, "store_delta", _fake_store_delta)
+    monkeypatch.setattr(gold, "compute_features", _fake_compute_features)
+
+    first = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks=watermarks,
+    )
+    watermarks_after_first = dict(watermarks)
+    run_state["attempt"] = 2
+    second = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks=watermarks,
+    )
+
+    assert first[:4] == (1, 0, 0, 1)
+    assert watermarks_after_first["bucket::A"]["silver_last_commit"] == 100.0
+    assert "bucket::B" not in watermarks_after_first
+    assert second[:4] == (1, 1, 0, 0)
+    assert watermarks["bucket::B"]["silver_last_commit"] == 100.0
+    assert symbol_index_map == {"AAPL": "A", "BABA": "B"}
 
 
 def test_run_alpha26_market_gold_contract_failure_logs_real_symbol_counts(monkeypatch):
@@ -511,6 +703,55 @@ def test_run_alpha26_market_gold_blocks_watermark_when_postgres_sync_fails(monke
     assert written_paths == ["market/buckets/A"]
 
 
+def test_run_alpha26_market_gold_blocks_watermark_on_checkpoint_failure(monkeypatch):
+    watermarks: dict = {}
+    written_paths: list[str] = []
+    messages = _capture_log_messages(monkeypatch)
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(
+        gold.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("index write boom")),
+    )
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", lambda *_args, **_kwargs: 100.0)
+    monkeypatch.setattr(delta_core_module, "load_delta", lambda *_args, **_kwargs: _silver_bucket_df("AAPL"))
+    monkeypatch.setattr(
+        gold,
+        "compute_features",
+        lambda df: _gold_feature_df(str(df["symbol"].iloc[0]).strip().upper()),
+    )
+    monkeypatch.setattr(
+        delta_core_module,
+        "store_delta",
+        lambda _df, _container, path, **_kwargs: written_paths.append(str(path)),
+    )
+
+    (
+        processed,
+        _skipped_unchanged,
+        _skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        _alpha26_symbols,
+        index_path,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks=watermarks,
+    )
+
+    assert processed == 0
+    assert failed == 1
+    assert watermarks_dirty is False
+    assert index_path is None
+    assert watermarks == {}
+    assert written_paths == ["market/buckets/A"]
+    assert any("stage=checkpoint_failed" in message for message in messages)
+
+
 def test_run_alpha26_market_gold_aligns_empty_bucket_to_existing_schema(monkeypatch):
     target_path = DataPaths.get_gold_market_bucket_path("A")
     existing_cols = ["date", "symbol", "close", "return_1d"]
@@ -612,6 +853,71 @@ def test_run_alpha26_market_gold_does_not_advance_watermark_for_empty_bucket_wit
     assert captured["checked_paths"] == [target_path]
 
 
+def test_run_alpha26_market_gold_rebuilds_domain_artifact_when_all_buckets_are_skipped(monkeypatch):
+    watermarks = {"bucket::A": {"silver_last_commit": 100.0}}
+    domain_artifact_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(
+        gold.layer_bucketing,
+        "load_layer_symbol_index",
+        lambda **_kwargs: pd.DataFrame({"symbol": ["AAPL"], "bucket": ["A"]}),
+    )
+    monkeypatch.setattr(
+        gold.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **_kwargs: "system/gold-index/market/latest.parquet",
+    )
+
+    def _fake_last_commit(_container: str, path: str):
+        if path == DataPaths.get_silver_market_bucket_path("A"):
+            return 100.0
+        if path == DataPaths.get_gold_market_bucket_path("A"):
+            return 99.0
+        return None
+
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", _fake_last_commit)
+    monkeypatch.setattr(
+        delta_core_module,
+        "load_delta",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("load_delta should not be called")),
+    )
+    monkeypatch.setattr(
+        delta_core_module,
+        "store_delta",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("store_delta should not be called")),
+    )
+    monkeypatch.setattr(
+        gold.domain_artifacts,
+        "write_domain_artifact",
+        lambda **kwargs: domain_artifact_calls.append(kwargs) or {"artifactPath": "system/domain.json"},
+    )
+
+    (
+        processed,
+        skipped_unchanged,
+        _skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        _alpha26_symbols,
+        index_path,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks=watermarks,
+    )
+
+    assert processed == 0
+    assert skipped_unchanged == 1
+    assert failed == 0
+    assert watermarks_dirty is False
+    assert index_path == "system/gold-index/market/latest.parquet"
+    assert len(domain_artifact_calls) == 1
+    assert domain_artifact_calls[0]["symbol_index_path"] == "system/gold-index/market/latest.parquet"
+    assert domain_artifact_calls[0]["symbol_count_override"] == 1
+
+
 def test_run_alpha26_market_gold_blocks_publication_when_critical_symbol_verification_fails(monkeypatch):
     watermarks: dict = {}
     captured_index: dict = {}
@@ -690,10 +996,11 @@ def test_run_alpha26_market_gold_blocks_publication_when_critical_symbol_verific
 
     assert processed == 2
     assert failed == 1
-    assert watermarks_dirty is False
-    assert index_path is None
-    assert watermarks == {}
-    assert captured_index == {}
+    assert watermarks_dirty is True
+    assert index_path == "system/gold-index/market/latest.parquet"
+    assert watermarks["bucket::S"]["silver_last_commit"] == 100.0
+    assert watermarks["bucket::V"]["silver_last_commit"] == 100.0
+    assert captured_index["symbol_to_bucket"] == {"SPY": "S", "^VIX": "V", "^VIX3M": "V"}
     assert set(written_paths) == {"market/buckets/S", "market/buckets/V"}
     assert any("postgres_gold_critical_symbol_status domain=market status=failed" in message for message in messages)
     assert any(

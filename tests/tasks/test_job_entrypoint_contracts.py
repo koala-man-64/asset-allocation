@@ -29,7 +29,10 @@ _ENTRYPOINT_LOCK_CASES: list[tuple[str, list[str]]] = [
         ],
     ),
     ("tasks/price_target_data/silver_price_target_data.py", ['with mdc.JobLock(job_name, conflict_policy="fail")']),
-    ("tasks/market_data/gold_market_data.py", ['with mdc.JobLock(job_name, conflict_policy="fail")']),
+    (
+        "tasks/market_data/gold_market_data.py",
+        ['with mdc.JobLock(job_name, conflict_policy="wait_then_fail", wait_timeout_seconds=90)'],
+    ),
     ("tasks/earnings_data/gold_earnings_data.py", ['with mdc.JobLock(job_name, conflict_policy="fail")']),
     ("tasks/finance_data/gold_finance_data.py", ['with mdc.JobLock(job_name, conflict_policy="fail")']),
     ("tasks/price_target_data/gold_price_target_data.py", ['with mdc.JobLock(job_name, conflict_policy="fail")']),
