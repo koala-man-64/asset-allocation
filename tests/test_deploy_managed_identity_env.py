@@ -183,18 +183,42 @@ def test_deploy_workflow_deploys_jobs_from_yaml_without_pre_mutating_job_identit
     )
 
 
-def test_deploy_workflow_only_requires_preprovisioned_shared_resources() -> None:
+def test_deploy_workflow_reconciles_shared_resources_before_rollout() -> None:
     repo_root = _repo_root()
     deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
     deploy_job_helper = repo_root / "scripts" / "deploy_containerapp_job.sh"
     workflow_text = deploy_workflow.read_text(encoding="utf-8")
     helper_text = deploy_job_helper.read_text(encoding="utf-8")
 
-    assert "Validate Pre-Provisioned Deploy Targets" in workflow_text, (
-        "deploy workflow must validate infrastructure was provisioned outside GitHub Actions"
+    assert "Prepare Provisioning Env File" in workflow_text, (
+        "deploy workflow must prepare a temporary env file for provisioning reconciliation"
     )
-    assert "Provision it outside GitHub Actions before running deploy." in workflow_text, (
-        "deploy workflow must fail fast when prerequisite infrastructure is missing"
+    assert "Reconcile Shared Azure Provisioning" in workflow_text, (
+        "deploy workflow must reconcile shared Azure resources before rollout"
+    )
+    assert "scripts/provision_azure.ps1" in workflow_text, (
+        "deploy workflow must route shared-resource reconciliation through provision_azure.ps1"
+    )
+    assert "Reconcile Postgres Provisioning" in workflow_text, (
+        "deploy workflow must reconcile Postgres state before rollout"
+    )
+    assert "scripts/provision_azure_postgres.ps1" in workflow_text, (
+        "deploy workflow must route Postgres reconciliation through provision_azure_postgres.ps1"
+    )
+    assert "-ResetBeforeMigrations:$false" in workflow_text, (
+        "deploy workflow must apply Postgres migrations without resetting the database"
+    )
+    assert "Validate Provisioned Deploy Targets" in workflow_text, (
+        "deploy workflow must validate storage targets after provisioning reconciliation"
+    )
+    assert "after provisioning reconciliation" in workflow_text, (
+        "deploy workflow must fail closed when reconciliation did not provision required storage"
+    )
+    assert "Provision it outside GitHub Actions before running deploy." not in workflow_text, (
+        "deploy workflow should no longer require shared infrastructure to be provisioned out of band"
+    )
+    assert "apply_postgres_migrations.ps1" not in workflow_text, (
+        "deploy workflow should reconcile Postgres through the dedicated provisioner instead of the raw migration helper"
     )
     assert "Container App Job '" not in workflow_text, (
         "deploy workflow should no longer fail fast when a managed Container App job is absent"
@@ -213,12 +237,6 @@ def test_deploy_workflow_only_requires_preprovisioned_shared_resources() -> None
     )
     assert "Creating job from YAML (image + identity + registry)..." in helper_text, (
         "job deploy helper must create missing jobs using the rendered manifest"
-    )
-    assert "Apply Repo-Owned Postgres Migrations" not in workflow_text, (
-        "deploy workflow must not apply repo-owned Postgres migrations"
-    )
-    assert "apply_postgres_migrations.ps1" not in workflow_text, (
-        "deploy workflow must not invoke the migration script"
     )
 
 

@@ -364,7 +364,7 @@ describe('JobLogStreamPanel', () => {
     expect(screen.getByText('2 GiB')).toBeInTheDocument();
   });
 
-  it('prefers derived percent job usage signals when both percent and raw metrics exist', async () => {
+  it('prefers raw job usage values when both raw and percent signals exist', async () => {
     const job: JobLogStreamTarget = {
       ...JOBS[1],
       signals: [
@@ -418,10 +418,10 @@ describe('JobLogStreamPanel', () => {
     renderWithProviders(<JobLogStreamPanel jobs={[job]} />);
 
     expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
-    expect(screen.getByText('38%')).toBeInTheDocument();
-    expect(screen.getByText('50%')).toBeInTheDocument();
-    expect(screen.queryByText('0.75 cores')).not.toBeInTheDocument();
-    expect(screen.queryByText('2 GiB')).not.toBeInTheDocument();
+    expect(screen.getByText('0.75 cores')).toBeInTheDocument();
+    expect(screen.getByText('2 GiB')).toBeInTheDocument();
+    expect(screen.queryByText('38%')).not.toBeInTheDocument();
+    expect(screen.queryByText('50%')).not.toBeInTheDocument();
   });
 
   it('hydrates job usage from live system health refreshes when the initial snapshot has no signals', async () => {

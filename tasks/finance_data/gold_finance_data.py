@@ -26,6 +26,7 @@ from tasks.common.postgres_gold_sync import (
     resolve_postgres_dsn,
     sync_gold_bucket,
     sync_state_cache_entry,
+    validate_sync_target_schema,
 )
 
 @dataclass(frozen=True)
@@ -102,6 +103,10 @@ _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
 _GOLD_FINANCE_FLOAT_COLUMNS: Tuple[str, ...] = tuple(VALUATION_FINANCE_COLUMNS)
 _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS: Tuple[str, ...] = tuple(
     column for column in _GOLD_FINANCE_PIOTROSKI_COLUMNS if column.startswith("piotroski_")
+)
+_FINANCE_POSTGRES_SCHEMA_REMEDIATION_HINT = (
+    "Apply deploy/sql/postgres/migrations/0033_add_gold_finance_ratio_columns.sql "
+    "or rerun scripts/apply_postgres_migrations.ps1 against the target database."
 )
 
 
@@ -610,6 +615,24 @@ def _run_alpha26_finance_gold(
     watermarks_dirty = False
     symbol_to_bucket = _load_existing_gold_finance_symbol_to_bucket_map()
     postgres_dsn = resolve_postgres_dsn()
+    if postgres_dsn:
+        try:
+            validate_sync_target_schema(
+                postgres_dsn,
+                domain="finance",
+                remediation_hint=_FINANCE_POSTGRES_SCHEMA_REMEDIATION_HINT,
+            )
+        except Exception as exc:
+            mdc.write_error(str(exc))
+            mdc.write_line(
+                "layer_handoff_status transition=silver_to_gold status=blocked "
+                "bucket_statuses={'postgres_schema_drift': 1} failed=1"
+            )
+            mdc.write_line(
+                "artifact_publication_status layer=gold domain=finance "
+                "status=blocked reason=postgres_schema_drift processed=0"
+            )
+            return 0, 0, 0, 1, False, 0, None
     sync_state = load_domain_sync_state(postgres_dsn, domain="finance") if postgres_dsn else {}
     pending_watermark_updates: dict[str, dict[str, Any]] = {}
     bucket_results: list[BucketExecutionResult] = []

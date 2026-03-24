@@ -3,6 +3,7 @@ import pytest
 
 from core import core as core_module
 from core import delta_core
+from core.postgres import PostgresError
 from core.pipeline import DataPaths
 from tasks.finance_data import gold_finance_data
 
@@ -406,6 +407,57 @@ def test_run_alpha26_finance_gold_preflight_blocks_missing_required_inputs(monke
     assert alpha26_symbols == 0
     assert index_path is None
     assert compute_calls["count"] == 0
+    assert index_calls["count"] == 0
+
+
+def test_run_alpha26_finance_gold_fails_closed_on_postgres_schema_drift(monkeypatch):
+    index_calls = {"count": 0}
+    store_calls = {"count": 0}
+
+    monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
+    monkeypatch.setattr(gold_finance_data.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(
+        gold_finance_data.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **_kwargs: index_calls.__setitem__("count", int(index_calls["count"]) + 1) or "index",
+    )
+    monkeypatch.setattr(gold_finance_data, "resolve_postgres_dsn", lambda: "postgresql://test")
+    monkeypatch.setattr(
+        gold_finance_data,
+        "validate_sync_target_schema",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PostgresError("schema drift")),
+    )
+    monkeypatch.setattr(core_module, "write_error", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(core_module, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        delta_core,
+        "store_delta",
+        lambda *_args, **_kwargs: store_calls.__setitem__("count", int(store_calls["count"]) + 1),
+    )
+
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        index_path,
+    ) = gold_finance_data._run_alpha26_finance_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks={},
+    )
+
+    assert processed == 0
+    assert skipped_unchanged == 0
+    assert skipped_missing_source == 0
+    assert failed == 1
+    assert watermarks_dirty is False
+    assert alpha26_symbols == 0
+    assert index_path is None
+    assert store_calls["count"] == 0
     assert index_calls["count"] == 0
 
 

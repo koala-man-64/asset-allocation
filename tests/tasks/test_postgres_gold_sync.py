@@ -9,8 +9,9 @@ from tasks.common import postgres_gold_sync as sync
 
 
 class _FakeCursor:
-    def __init__(self, *, fetchall_rows=None, fail_on_execute: bool = False) -> None:
+    def __init__(self, *, fetchall_rows=None, fetchone_rows=None, fail_on_execute: bool = False) -> None:
         self.fetchall_rows = list(fetchall_rows or [])
+        self.fetchone_rows = list(fetchone_rows or [])
         self.fail_on_execute = fail_on_execute
         self.executed: list[tuple[str, object]] = []
 
@@ -27,6 +28,11 @@ class _FakeCursor:
 
     def fetchall(self):
         return list(self.fetchall_rows)
+
+    def fetchone(self):
+        if not self.fetchone_rows:
+            return None
+        return self.fetchone_rows.pop(0)
 
 
 class _FakeConnection:
@@ -202,6 +208,35 @@ def test_sync_gold_bucket_records_failure_state(monkeypatch: pytest.MonkeyPatch)
     assert recorded["domain"] == "finance"
     assert recorded["bucket"] == "A"
     assert recorded["source_commit"] == 321.0
+
+
+def test_validate_sync_target_schema_raises_for_missing_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    cursor = _FakeCursor(
+        fetchone_rows=[("gold.finance_data",)],
+        fetchall_rows=[("date",), ("symbol",), ("market_cap",), ("pe_ratio",)],
+    )
+    monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(cursor))
+
+    with pytest.raises(sync.PostgresError, match="missing columns=.*price_to_book"):
+        sync.validate_sync_target_schema(
+            "postgresql://test",
+            domain="finance",
+            remediation_hint="Run finance schema migrations.",
+        )
+
+
+def test_validate_sync_target_schema_raises_when_target_table_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _FakeCursor(fetchone_rows=[(None,)])
+    monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(cursor))
+
+    with pytest.raises(sync.PostgresError, match="target table does not exist"):
+        sync.validate_sync_target_schema(
+            "postgresql://test",
+            domain="finance",
+            remediation_hint="Run finance schema migrations.",
+        )
 
 
 def test_prepare_frame_preserves_earnings_calendar_text_and_dates() -> None:

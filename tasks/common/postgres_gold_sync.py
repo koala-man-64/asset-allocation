@@ -403,6 +403,71 @@ def get_sync_config(domain: str) -> GoldSyncConfig:
     return config
 
 
+def _split_qualified_table_name(table: str) -> tuple[str, str]:
+    schema_name, separator, table_name = str(table or "").partition(".")
+    if not separator or not schema_name or not table_name:
+        raise ValueError(f"Expected schema-qualified table name, got {table!r}")
+    return schema_name, table_name
+
+
+def validate_sync_target_schema(
+    dsn: Optional[str],
+    *,
+    domain: str,
+    remediation_hint: Optional[str] = None,
+) -> tuple[str, ...]:
+    if not dsn:
+        return tuple()
+
+    config = get_sync_config(domain)
+    schema_name, table_name = _split_qualified_table_name(config.table)
+
+    try:
+        with connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regclass(%s)", (config.table,))
+                table_row = cur.fetchone()
+                if not table_row or table_row[0] is None:
+                    message = (
+                        f"Gold Postgres sync schema drift for domain={config.domain} "
+                        f"table={config.table}: target table does not exist."
+                    )
+                    if remediation_hint:
+                        message = f"{message} {remediation_hint}"
+                    raise PostgresError(message)
+
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                    ORDER BY ordinal_position
+                    """,
+                    (schema_name, table_name),
+                )
+                observed_columns = tuple(str(row[0]) for row in cur.fetchall())
+    except PostgresError:
+        raise
+    except Exception as exc:
+        raise PostgresError(
+            f"Gold Postgres sync schema validation failed for domain={config.domain} "
+            f"table={config.table}: {exc}"
+        ) from exc
+
+    observed_column_set = set(observed_columns)
+    missing_columns = [column for column in config.columns if column not in observed_column_set]
+    if missing_columns:
+        message = (
+            f"Gold Postgres sync schema drift for domain={config.domain} "
+            f"table={config.table}: missing columns={missing_columns}"
+        )
+        if remediation_hint:
+            message = f"{message}. {remediation_hint}"
+        raise PostgresError(message)
+
+    return observed_columns
+
+
 def load_domain_sync_state(dsn: Optional[str], *, domain: str) -> dict[str, dict[str, Any]]:
     if not dsn:
         return {}

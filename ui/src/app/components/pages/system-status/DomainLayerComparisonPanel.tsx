@@ -94,7 +94,14 @@ const CPU_USAGE_PERCENT_SIGNAL_NAMES = [
   'cpuusagepercent',
   'cpuusage'
 ];
+const CPU_USAGE_RAW_SIGNAL_NAMES = ['usagenanocores'];
 const MEMORY_USAGE_PERCENT_SIGNAL_NAMES = ['memorypercent', 'memoryusagepercent', 'memoryusage'];
+const MEMORY_USAGE_RAW_SIGNAL_NAMES = [
+  'usagebytes',
+  'memoryworkingsetbytes',
+  'workingsetbytes',
+  'memorybytes'
+];
 type LayerVisualConfig = {
   accent: string;
   softBg: string;
@@ -264,6 +271,59 @@ function formatMetricPercent(value: number): string {
   );
 }
 
+function formatMetricNumber(value: number, maximumFractionDigits = 1): string {
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits
+  }).format(value);
+}
+
+function formatBinaryBytes(value: number): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  const sign = value < 0 ? -1 : 1;
+  let scaled = Math.abs(value);
+  let unitIndex = 0;
+
+  while (scaled >= 1024 && unitIndex < units.length - 1) {
+    scaled /= 1024;
+    unitIndex += 1;
+  }
+
+  const maximumFractionDigits = scaled >= 100 || unitIndex === 0 ? 0 : scaled >= 10 ? 1 : 2;
+  return `${formatMetricNumber(sign * scaled, maximumFractionDigits)} ${units[unitIndex]}`;
+}
+
+function formatCpuCoresFromNanocores(value: number): string {
+  const cores = value / 1_000_000_000;
+  const maximumFractionDigits = cores >= 10 ? 1 : cores >= 1 ? 2 : 3;
+  return `${formatMetricNumber(cores, maximumFractionDigits)} cores`;
+}
+
+function formatUsageSignal(
+  signal: ResourceSignal | null | undefined,
+  metric: 'cpu' | 'memory'
+): string {
+  if (!signal || !hasFiniteNumber(signal.value)) {
+    return 'N/A';
+  }
+
+  const unit = normalizeSignalName(signal.unit);
+  if (unit.includes('percent')) {
+    return formatMetricPercent(signal.value);
+  }
+
+  if (metric === 'cpu' && unit.includes('nanocore')) {
+    return formatCpuCoresFromNanocores(signal.value);
+  }
+
+  if (metric === 'memory' && unit.includes('byte')) {
+    return formatBinaryBytes(signal.value);
+  }
+
+  const suffix = String(signal.unit || '').trim();
+  const valueText = formatMetricNumber(signal.value);
+  return suffix ? `${valueText} ${suffix}` : valueText;
+}
+
 function findPreferredSignal(
   signals: ResourceSignal[] | null | undefined,
   preferredNames: string[]
@@ -298,19 +358,6 @@ function findPreferredSignal(
   return null;
 }
 
-function formatUsagePercentSignal(signal: ResourceSignal | null | undefined): string {
-  if (!signal || !hasFiniteNumber(signal.value)) {
-    return 'N/A';
-  }
-
-  const unit = normalizeSignalName(signal.unit);
-  if (!unit.includes('percent')) {
-    return 'N/A';
-  }
-
-  return formatMetricPercent(signal.value);
-}
-
 function buildRunningUsageDisplay(signals: ResourceSignal[] | null | undefined): {
   cpuDisplay: string;
   memoryDisplay: string;
@@ -320,11 +367,19 @@ function buildRunningUsageDisplay(signals: ResourceSignal[] | null | undefined):
     return null;
   }
 
-  const cpuDisplay = formatUsagePercentSignal(
-    findPreferredSignal(signals, CPU_USAGE_PERCENT_SIGNAL_NAMES)
+  const cpuDisplay = formatUsageSignal(
+    findPreferredSignal(signals, [
+      ...CPU_USAGE_RAW_SIGNAL_NAMES,
+      ...CPU_USAGE_PERCENT_SIGNAL_NAMES
+    ]),
+    'cpu'
   );
-  const memoryDisplay = formatUsagePercentSignal(
-    findPreferredSignal(signals, MEMORY_USAGE_PERCENT_SIGNAL_NAMES)
+  const memoryDisplay = formatUsageSignal(
+    findPreferredSignal(signals, [
+      ...MEMORY_USAGE_RAW_SIGNAL_NAMES,
+      ...MEMORY_USAGE_PERCENT_SIGNAL_NAMES
+    ]),
+    'memory'
   );
   const compactParts = [
     cpuDisplay !== 'N/A' ? `cpu ${cpuDisplay}` : null,

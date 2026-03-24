@@ -50,15 +50,15 @@ import { formatSystemStatusText } from './systemStatusText';
 const LOG_LINE_LIMIT = 200;
 const LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 16;
 const JOB_USAGE_REFRESH_INTERVAL_MS = 5_000;
-const CPU_SIGNAL_NAMES = ['cpupercent', 'cpupercentage', 'cpuusage', 'usagenanocores'];
+const CPU_SIGNAL_NAMES = ['usagenanocores', 'cpupercent', 'cpupercentage', 'cpuusage'];
 const MEMORY_SIGNAL_NAMES = [
+  'usagebytes',
+  'memoryworkingsetbytes',
+  'memorybytes',
+  'workingsetbytes',
   'memorypercent',
   'memoryusagepercent',
   'memoryusage',
-  'memoryworkingsetbytes',
-  'memorybytes',
-  'usagebytes',
-  'workingsetbytes'
 ];
 
 export type JobLogStreamTarget = {

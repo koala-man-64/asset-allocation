@@ -378,6 +378,76 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Prepare Provisioning Env File
+        env:
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+
+          provision_env="$RUNNER_TEMP/deploy-provision.env"
+          azure_location="$(az group show --name "${{ env.RESOURCE_GROUP }}" --query location -o tsv --only-show-errors 2>/dev/null | tr -d '\r' || true)"
+          azure_location="${azure_location:-eastus}"
+
+          cat > "$provision_env" <<EOF
+          AZURE_SUBSCRIPTION_ID=${{ env.AZURE_SUBSCRIPTION_ID }}
+          RESOURCE_GROUP=${{ env.RESOURCE_GROUP }}
+          AZURE_LOCATION=$azure_location
+          AZURE_STORAGE_ACCOUNT_NAME=${{ env.AZURE_STORAGE_ACCOUNT_NAME }}
+          AZURE_CONTAINER_BRONZE=${{ env.AZURE_CONTAINER_BRONZE }}
+          AZURE_CONTAINER_SILVER=${{ env.AZURE_CONTAINER_SILVER }}
+          AZURE_CONTAINER_GOLD=${{ env.AZURE_CONTAINER_GOLD }}
+          AZURE_CONTAINER_PLATINUM=${{ env.AZURE_CONTAINER_PLATINUM }}
+          AZURE_CONTAINER_COMMON=${{ env.AZURE_CONTAINER_COMMON }}
+          ACR_PULL_IDENTITY_NAME=${{ env.ACR_PULL_IDENTITY_NAME }}
+          POSTGRES_DSN=${POSTGRES_DSN}
+          POSTGRES_RESET_BEFORE_MIGRATIONS=false
+          EOF
+
+          {
+            echo "PROVISION_ENV_FILE=$provision_env"
+            echo "DEPLOY_AZURE_LOCATION=$azure_location"
+          } >> "$GITHUB_ENV"
+
+      - name: Reconcile Shared Azure Provisioning
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $storageContainers = @(
+            "${{ env.AZURE_CONTAINER_BRONZE }}",
+            "${{ env.AZURE_CONTAINER_SILVER }}",
+            "${{ env.AZURE_CONTAINER_GOLD }}",
+            "${{ env.AZURE_CONTAINER_PLATINUM }}",
+            "${{ env.AZURE_CONTAINER_COMMON }}"
+          )
+
+          & ./scripts/provision_azure.ps1 `
+            -SubscriptionId "${{ env.AZURE_SUBSCRIPTION_ID }}" `
+            -Location "${{ env.DEPLOY_AZURE_LOCATION }}" `
+            -ResourceGroup "${{ env.RESOURCE_GROUP }}" `
+            -StorageAccountName "${{ env.AZURE_STORAGE_ACCOUNT_NAME }}" `
+            -StorageContainers $storageContainers `
+            -AcrName "${{ env.ACR_NAME }}" `
+            -AcrPullIdentityName "${{ env.ACR_PULL_IDENTITY_NAME }}" `
+            -ContainerAppsEnvironmentName "asset-allocation-env" `
+            -LogAnalyticsWorkspaceName "asset-allocation-law" `
+            -ServiceAccountName "${{ env.SERVICE_ACCOUNT_NAME }}" `
+            -SkipPostgresPrompt `
+            -NonInteractive `
+            -EnvFile $env:PROVISION_ENV_FILE
+
+      - name: Reconcile Postgres Provisioning
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & ./scripts/provision_azure_postgres.ps1 `
+            -SubscriptionId "${{ env.AZURE_SUBSCRIPTION_ID }}" `
+            -Location "${{ env.DEPLOY_AZURE_LOCATION }}" `
+            -ResourceGroup "${{ env.RESOURCE_GROUP }}" `
+            -ApplyMigrations `
+            -ResetBeforeMigrations:$false `
+            -UseDockerPsql `
+            -EnvFile $env:PROVISION_ENV_FILE
+
       - name: Ensure Azure Container Apps CLI (built-in only)
         run: |
           set -euo pipefail
@@ -436,7 +506,7 @@ jobs:
         run: |
            echo "CONTAINER_APPS_ENVIRONMENT_ID=/subscriptions/${{ env.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.App/managedEnvironments/asset-allocation-env" >> "$GITHUB_ENV"
 
-      - name: Validate Pre-Provisioned Deploy Targets
+      - name: Validate Provisioned Deploy Targets
         run: |
           set -euo pipefail
 
@@ -451,7 +521,7 @@ jobs:
               -o tsv \
               --only-show-errors | tr -d '\r')"
             if [ "$exists" != "true" ]; then
-              echo "::error::Storage container '$container_name' is not provisioned in account '${{ env.AZURE_STORAGE_ACCOUNT_NAME }}'. Provision it outside GitHub Actions before running deploy."
+              echo "::error::Storage container '$container_name' is not provisioned in account '${{ env.AZURE_STORAGE_ACCOUNT_NAME }}' after provisioning reconciliation."
               exit 1
             fi
           }

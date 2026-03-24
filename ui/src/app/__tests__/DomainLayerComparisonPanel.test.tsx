@@ -381,6 +381,108 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.getByText('61%')).toBeInTheDocument();
   });
 
+  it('shows live raw cpu and memory usage for running jobs when percent signals are unavailable', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      recentJobs: makeJobs('running'),
+      managedContainerJobs: [
+        {
+          name: 'aca-job-market',
+          runningState: 'Running',
+          lastModifiedAt: NOW,
+          signals: [
+            {
+              name: 'UsageNanoCores',
+              value: 750000000,
+              unit: 'NanoCores',
+              timestamp: NOW,
+              status: 'healthy',
+              source: 'metrics'
+            },
+            {
+              name: 'UsageBytes',
+              value: 2147483648,
+              unit: 'Bytes',
+              timestamp: NOW,
+              status: 'healthy',
+              source: 'metrics'
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(await screen.findByText('cpu 0.75 cores | mem 2 GiB')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+
+    expect(screen.getByText('cpu usage:')).toBeInTheDocument();
+    expect(screen.getByText('0.75 cores')).toBeInTheDocument();
+    expect(screen.getByText('memory usage:')).toBeInTheDocument();
+    expect(screen.getByText('2 GiB')).toBeInTheDocument();
+  });
+
+  it('prefers live raw cpu and memory usage when raw and percent signals both exist', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      recentJobs: makeJobs('running'),
+      managedContainerJobs: [
+        {
+          name: 'aca-job-market',
+          runningState: 'Running',
+          lastModifiedAt: NOW,
+          signals: [
+            {
+              name: 'UsageNanoCores',
+              value: 750000000,
+              unit: 'NanoCores',
+              timestamp: NOW,
+              status: 'healthy',
+              source: 'metrics'
+            },
+            {
+              name: 'UsageBytes',
+              value: 2147483648,
+              unit: 'Bytes',
+              timestamp: NOW,
+              status: 'healthy',
+              source: 'metrics'
+            },
+            {
+              name: 'CpuPercent',
+              value: 52.3,
+              unit: 'Percent',
+              timestamp: NOW,
+              status: 'unknown',
+              source: 'metrics'
+            },
+            {
+              name: 'MemoryPercent',
+              value: 61.2,
+              unit: 'Percent',
+              timestamp: NOW,
+              status: 'unknown',
+              source: 'metrics'
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(await screen.findByText('cpu 0.75 cores | mem 2 GiB')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+
+    expect(screen.getByText('cpu usage:')).toBeInTheDocument();
+    expect(screen.getByText('0.75 cores')).toBeInTheDocument();
+    expect(screen.getByText('memory usage:')).toBeInTheDocument();
+    expect(screen.getByText('2 GiB')).toBeInTheDocument();
+    expect(screen.queryByText('52%')).not.toBeInTheDocument();
+    expect(screen.queryByText('61%')).not.toBeInTheDocument();
+  });
+
   it('shows symbols to retry in the expanded job metadata subpanel', async () => {
     const user = userEvent.setup();
 
