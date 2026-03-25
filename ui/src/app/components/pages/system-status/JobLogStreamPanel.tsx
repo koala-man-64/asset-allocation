@@ -58,7 +58,7 @@ const MEMORY_SIGNAL_NAMES = [
   'workingsetbytes',
   'memorypercent',
   'memoryusagepercent',
-  'memoryusage',
+  'memoryusage'
 ];
 
 export type JobLogStreamTarget = {
