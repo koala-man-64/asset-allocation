@@ -24,8 +24,20 @@ CREATE TABLE IF NOT EXISTS core.purge_rules (
   updated_by TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_purge_rules_enabled_next_run
-  ON core.purge_rules (enabled, next_run_at);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'core'
+      AND table_name = 'purge_rules'
+      AND column_name = 'enabled'
+  ) THEN
+    CREATE INDEX IF NOT EXISTS idx_purge_rules_enabled_next_run
+      ON core.purge_rules (enabled, next_run_at);
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_purge_rules_layer_domain
   ON core.purge_rules (layer, domain);
 CREATE INDEX IF NOT EXISTS idx_purge_rules_next_run
