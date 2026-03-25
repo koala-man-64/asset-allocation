@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import csv
+import importlib.util
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -37,6 +39,16 @@ def _deploy_validation_env(**overrides: str) -> dict[str, str]:
     }
     env.update(overrides)
     return env
+
+
+def _load_deploy_validation_module():
+    repo_root = _repo_root()
+    module_path = repo_root / "scripts" / "validate_deploy_inputs.py"
+    spec = importlib.util.spec_from_file_location("validate_deploy_inputs", module_path)
+    assert spec and spec.loader, f"unable to load module from {module_path}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_deploy_validation(**overrides: str) -> subprocess.CompletedProcess[str]:
@@ -346,9 +358,49 @@ def test_gold_market_job_uses_remediation_retry_and_memory_settings() -> None:
     assert gold_container, f"{path}: expected gold-market-job container"
 
     resources = gold_container.get("resources") or {}
+    assert resources.get("cpu") == 4.0, (
+        f"{path}: gold market job remediation must use a valid Consumption CPU/memory pair"
+    )
     assert resources.get("memory") == "8Gi", (
         f"{path}: gold market job remediation must raise memory to 8Gi"
     )
+
+
+def test_all_consumption_job_manifests_use_valid_resource_pairs() -> None:
+    module = _load_deploy_validation_module()
+    module.validate_job_manifest_resources(_repo_root() / "deploy")
+
+
+def test_deploy_validation_rejects_invalid_consumption_resource_pair(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_deploy_validation_module()
+    manifest = tmp_path / "job_invalid.yaml"
+    manifest.write_text(
+        "\n".join(
+            (
+                "name: invalid-job",
+                "properties:",
+                "  template:",
+                "    containers:",
+                "    - name: invalid-job",
+                "      resources:",
+                "        cpu: 2.0",
+                "        memory: 8Gi",
+                "  workloadProfileName: Consumption",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit):
+        module.validate_job_manifest_resources(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "job_invalid.yaml" in output
+    assert "cpu=2 memory=8Gi" in output
 
 
 def test_setup_env_seeds_job_defaults_for_github_sync() -> None:

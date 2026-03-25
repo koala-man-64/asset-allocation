@@ -82,6 +82,6 @@ properties:
       name: gold-market-job
       command: ["python", "-m", "tasks.market_data.gold_market_data"]
       resources:
-        cpu: 2.0
+        cpu: 4.0
         memory: 8Gi
   workloadProfileName: Consumption

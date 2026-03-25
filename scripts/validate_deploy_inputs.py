@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -16,6 +19,13 @@ REQUIRED_ENV_NAMES = (
     "SERVICE_ACCOUNT_NAME",
     "ASSET_ALLOCATION_API_BASE_URL",
 )
+REPO_ROOT = Path(__file__).resolve().parents[1]
+_WORKLOAD_PROFILE_PATTERN = re.compile(r"^\s*workloadProfileName:\s*(.+?)\s*$")
+_CPU_PATTERN = re.compile(r"^\s*cpu:\s*(.+?)\s*$")
+_MEMORY_PATTERN = re.compile(r"^\s*memory:\s*(.+?)\s*$")
+_CONSUMPTION_CPU_STEP = Decimal("0.25")
+_CONSUMPTION_MAX_CPU = Decimal("4.0")
+_CONSUMPTION_MAX_MEMORY_GI = Decimal("8.0")
 
 
 def fail(message: str) -> None:
@@ -32,6 +42,115 @@ def require_value(name: str) -> str:
 
 def optional_value(name: str) -> str:
     return (os.environ.get(name) or "").strip()
+
+
+def _strip_yaml_scalar(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if "#" in value:
+        value = value.split("#", 1)[0].rstrip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1].strip()
+    return value
+
+
+def _parse_decimal_value(raw: str, *, field_name: str, manifest_path: Path) -> Decimal:
+    value = _strip_yaml_scalar(raw)
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        fail(f"{manifest_path}: {field_name} must be numeric, got {value!r}.")
+
+
+def _parse_memory_gib(raw: str, *, manifest_path: Path) -> Decimal:
+    value = _strip_yaml_scalar(raw)
+    if not value.endswith("Gi"):
+        fail(f"{manifest_path}: Consumption job memory must use Gi units, got {value!r}.")
+    try:
+        return Decimal(value[:-2])
+    except InvalidOperation:
+        fail(f"{manifest_path}: memory must be numeric Gi units, got {value!r}.")
+
+
+def _is_multiple_of(value: Decimal, step: Decimal) -> bool:
+    if step <= 0:
+        return False
+    steps = value / step
+    return steps == steps.to_integral_value()
+
+
+def _format_decimal(value: Decimal) -> str:
+    normalized = format(value.normalize(), "f")
+    if "." not in normalized:
+        return normalized
+    normalized = normalized.rstrip("0").rstrip(".")
+    return normalized or "0"
+
+
+def validate_job_manifest_resources(manifest_root: Path | None = None) -> None:
+    root = Path(manifest_root) if manifest_root is not None else (REPO_ROOT / "deploy")
+    manifests = sorted(root.glob("job_*.yaml"))
+    if not manifests:
+        fail(f"No job manifests found under {root}.")
+
+    for manifest_path in manifests:
+        workload_profile = ""
+        cpu_values: list[Decimal] = []
+        memory_values: list[Decimal] = []
+
+        for line in manifest_path.read_text(encoding="utf-8").splitlines():
+            workload_match = _WORKLOAD_PROFILE_PATTERN.match(line)
+            if workload_match:
+                workload_profile = _strip_yaml_scalar(workload_match.group(1))
+                continue
+
+            cpu_match = _CPU_PATTERN.match(line)
+            if cpu_match:
+                cpu_values.append(
+                    _parse_decimal_value(cpu_match.group(1), field_name="cpu", manifest_path=manifest_path)
+                )
+                continue
+
+            memory_match = _MEMORY_PATTERN.match(line)
+            if memory_match:
+                memory_values.append(_parse_memory_gib(memory_match.group(1), manifest_path=manifest_path))
+
+        if workload_profile != "Consumption":
+            continue
+
+        if not cpu_values or not memory_values or len(cpu_values) != len(memory_values):
+            fail(
+                f"{manifest_path}: Consumption job manifests must define matching cpu/memory entries for each "
+                "container resource block."
+            )
+
+        total_cpu = sum(cpu_values, Decimal("0"))
+        total_memory_gi = sum(memory_values, Decimal("0"))
+        expected_memory_gi = total_cpu * Decimal("2")
+
+        if total_cpu < _CONSUMPTION_CPU_STEP or total_cpu > _CONSUMPTION_MAX_CPU:
+            fail(
+                f"{manifest_path}: Consumption total CPU must be between "
+                f"{_format_decimal(_CONSUMPTION_CPU_STEP)} and {_format_decimal(_CONSUMPTION_MAX_CPU)}, "
+                f"got cpu={_format_decimal(total_cpu)}."
+            )
+        if total_memory_gi <= 0 or total_memory_gi > _CONSUMPTION_MAX_MEMORY_GI:
+            fail(
+                f"{manifest_path}: Consumption total memory must be between 0.5Gi and "
+                f"{_format_decimal(_CONSUMPTION_MAX_MEMORY_GI)}Gi, got memory={_format_decimal(total_memory_gi)}Gi."
+            )
+        if not _is_multiple_of(total_cpu, _CONSUMPTION_CPU_STEP):
+            fail(
+                f"{manifest_path}: Consumption total CPU must use 0.25-vCPU increments, "
+                f"got cpu={_format_decimal(total_cpu)}."
+            )
+        if total_memory_gi != expected_memory_gi:
+            fail(
+                f"{manifest_path}: Consumption workloads require memory to equal 2x total CPU. "
+                f"Got cpu={_format_decimal(total_cpu)} memory={_format_decimal(total_memory_gi)}Gi; "
+                f"expected {_format_decimal(expected_memory_gi)}Gi."
+            )
 
 
 def parse_float(name: str, *, default: float, min_value: float = 0.0, max_value: float = 86400.0) -> float:
@@ -189,6 +308,7 @@ def main() -> int:
         require_value(name)
 
     parse_postgres_url("POSTGRES_DSN")
+    validate_job_manifest_resources()
     validate_api_base_url()
     validate_log_level()
     validate_log_analytics()
