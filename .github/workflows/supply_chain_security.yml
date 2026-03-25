@@ -59,7 +59,8 @@ jobs:
       - name: Audit development dependencies
         run: |
           set -euo pipefail
-          pip-audit --strict -r requirements-dev.lock.txt
+          # Temporary waiver: upstream Pygments has not published a fix for GHSA-5239-wwwm-4pmq / CVE-2026-4539.
+          pip-audit --strict --ignore-vuln GHSA-5239-wwwm-4pmq -r requirements-dev.lock.txt
 
       - name: Upload Python audit artifacts
         if: always()
