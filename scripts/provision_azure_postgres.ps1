@@ -481,8 +481,19 @@ BEGIN
   END IF;
 
   IF to_regclass('core.runtime_config') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS idx_runtime_config_scope_enabled
-      ON core.runtime_config(scope, enabled);
+    CREATE INDEX IF NOT EXISTS idx_runtime_config_key
+      ON core.runtime_config(key);
+
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'core'
+        AND table_name = 'runtime_config'
+        AND column_name = 'enabled'
+    ) THEN
+      CREATE INDEX IF NOT EXISTS idx_runtime_config_scope_enabled
+        ON core.runtime_config(scope, enabled);
+    END IF;
   END IF;
 
   IF to_regclass('core.symbols') IS NOT NULL THEN
