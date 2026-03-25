@@ -345,6 +345,62 @@ function Test-AzAlreadyExistsError {
   )
 }
 
+function Test-AzAuthorizationFailedError {
+  param([string]$Text)
+  if (-not $Text) { return $false }
+  return (
+    ($Text -match "(?i)authorizationfailed") -or
+    ($Text -match "(?i)does not have authorization to perform action")
+  )
+}
+
+function Get-AzProviderRegistrationState {
+  param([Parameter(Mandatory = $true)][string]$Namespace)
+
+  $providerShow = Invoke-AzCapture -Label "provider show $Namespace" -Args @(
+    "provider", "show",
+    "--namespace", $Namespace,
+    "--query", "registrationState",
+    "--only-show-errors",
+    "-o", "tsv"
+  )
+  if (-not $providerShow.Success) {
+    return $null
+  }
+
+  return $providerShow.Output.Trim()
+}
+
+function Ensure-AzProviderRegistered {
+  param([Parameter(Mandatory = $true)][string]$Namespace)
+
+  $registrationState = Get-AzProviderRegistrationState -Namespace $Namespace
+  if ($registrationState -eq "Registered") {
+    Write-Host "Provider already registered: $Namespace"
+    return
+  }
+
+  $registerResult = Invoke-AzCapture -Label "provider register $Namespace" -Args @(
+    "provider", "register",
+    "--namespace", $Namespace,
+    "--only-show-errors",
+    "-o", "none"
+  )
+  if ($registerResult.Success) {
+    return
+  }
+
+  if (Test-AzAuthorizationFailedError -Text $registerResult.Output) {
+    $registrationState = Get-AzProviderRegistrationState -Namespace $Namespace
+    if ($registrationState -eq "Registered") {
+      Write-Warning "Azure CLI cannot register provider '$Namespace', but it is already registered. Continuing."
+      return
+    }
+  }
+
+  throw ("Azure CLI command failed: provider register $Namespace`n$($registerResult.Output)")
+}
+
 function New-RandomPassword {
   param([int]$Length = 32)
   $bytes = New-Object byte[] ($Length)
@@ -528,7 +584,7 @@ $providers = @(
   "Microsoft.Network"
 )
 foreach ($p in $providers) {
-  Invoke-Az -Label "provider register $p" -Args @("provider", "register", "--namespace", $p, "--only-show-errors", "-o", "none")
+  Ensure-AzProviderRegistered -Namespace $p
 }
 
 Write-Host "Ensuring resource group exists: $ResourceGroup ($Location)"
