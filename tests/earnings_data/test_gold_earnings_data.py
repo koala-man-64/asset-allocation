@@ -6,6 +6,15 @@ from core.pipeline import DataPaths
 from tasks.earnings_data import gold_earnings_data as gold
 from tasks.common.gold_output_contracts import GOLD_EARNINGS_OUTPUT_COLUMNS
 
+
+def _capture_log_messages(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    messages: list[str] = []
+    monkeypatch.setattr(core_module, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(core_module, "write_warning", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(core_module, "write_error", lambda msg: messages.append(str(msg)))
+    return messages
+
+
 def test_build_job_config_reads_required_containers(monkeypatch):
     monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver")
     monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold")
@@ -234,6 +243,7 @@ def test_run_alpha26_earnings_gold_projects_contract_before_write(monkeypatch):
 
     monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
     monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    monkeypatch.setattr(gold, "save_watermarks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         delta_core,
         "get_delta_last_commit",
@@ -317,6 +327,7 @@ def test_run_alpha26_earnings_gold_blocks_publication_when_bucket_fails(monkeypa
         "write_layer_symbol_index",
         lambda **_kwargs: index_calls.__setitem__("count", int(index_calls["count"]) + 1) or "index",
     )
+    monkeypatch.setattr(gold, "save_watermarks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         delta_core,
         "get_delta_last_commit",
@@ -362,6 +373,101 @@ def test_run_alpha26_earnings_gold_blocks_publication_when_bucket_fails(monkeypa
     assert alpha26_symbols == 0
     assert index_path is None
     assert index_calls["count"] == 0
+
+
+def test_run_alpha26_earnings_gold_uses_checkpoint_helper_and_final_log_contract(monkeypatch):
+    messages = _capture_log_messages(monkeypatch)
+    domain_artifact_calls: list[dict[str, object]] = []
+    saved_watermarks: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    monkeypatch.setattr(
+        gold.domain_artifacts,
+        "write_domain_artifact",
+        lambda **kwargs: domain_artifact_calls.append(dict(kwargs)) or {"artifactPath": "earnings/_metadata/domain.json"},
+    )
+    monkeypatch.setattr(gold.domain_artifacts, "write_bucket_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(gold, "save_watermarks", lambda key, items: saved_watermarks.append((key, dict(items))))
+    monkeypatch.setattr(gold, "resolve_postgres_dsn", lambda: None)
+    monkeypatch.setattr(
+        delta_core,
+        "get_delta_last_commit",
+        lambda _container, path: 1 if path == DataPaths.get_silver_earnings_bucket_path("A") else None,
+    )
+    monkeypatch.setattr(delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        delta_core,
+        "load_delta",
+        lambda _container, path: pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-03-01")],
+                "symbol": ["AAPL"],
+                "record_type": ["actual"],
+            }
+        )
+        if path == DataPaths.get_silver_earnings_bucket_path("A")
+        else pd.DataFrame(),
+    )
+    monkeypatch.setattr(
+        gold,
+        "compute_features",
+        lambda _df: pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-03-01")],
+                "symbol": ["AAPL"],
+                "reported_eps": [1.23],
+                "eps_estimate": [1.11],
+                "calendar_time_of_day": [pd.NA],
+                "calendar_currency": [pd.NA],
+                "next_earnings_time_of_day": ["post-market"],
+                "has_upcoming_earnings": [1],
+                "is_scheduled_earnings_day": [0],
+            }
+        ),
+    )
+    monkeypatch.setattr(delta_core, "store_delta", lambda *_args, **_kwargs: None)
+
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        index_path,
+    ) = gold._run_alpha26_earnings_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks={},
+    )
+
+    assert processed == 1
+    assert skipped_unchanged == 0
+    assert skipped_missing_source == 0
+    assert failed == 0
+    assert watermarks_dirty is True
+    assert alpha26_symbols == 1
+    assert index_path == "index"
+    assert len(saved_watermarks) == 1
+    assert saved_watermarks[0][0] == "gold_earnings_features"
+    assert saved_watermarks[0][1]["bucket::A"]["silver_last_commit"] == 1
+    assert len(domain_artifact_calls) == 1
+    assert domain_artifact_calls[0]["symbol_index_path"] == "index"
+    assert domain_artifact_calls[0]["symbol_count_override"] == 1
+    assert any(
+        "gold_checkpoint_aggregate_publication layer=gold domain=earnings bucket=A status=published" in message
+        for message in messages
+    )
+    assert any("artifact_status=skipped" in message for message in messages)
+    assert any(
+        "artifact_publication_status layer=gold domain=earnings status=published reason=none "
+        "failure_mode=none buckets_ok=1 failed=0 failed_symbols=0 failed_buckets=0 "
+        "failed_finalization=0 processed=1 skipped_unchanged=0 skipped_missing_source=0" in message
+        for message in messages
+    )
 
 
 def test_main_runs_earnings_reconciliation_and_persists_watermarks(monkeypatch):

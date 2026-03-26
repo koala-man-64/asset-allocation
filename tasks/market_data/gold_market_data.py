@@ -24,6 +24,7 @@ from core.postgres import connect
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common import domain_artifacts
+from tasks.common import gold_checkpoint_publication
 from tasks.common import layer_bucketing
 from tasks.common.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
 from tasks.technical_analysis.market_structure import add_market_structure_features
@@ -754,32 +755,25 @@ def _persist_gold_market_bucket_checkpoint(
     watermarks: dict[str, Any],
     symbol_to_bucket: dict[str, str],
     bucket_symbol_to_bucket: dict[str, str],
+    run_id: Optional[str],
 ) -> tuple[dict[str, str], str]:
-    if silver_commit is None:
-        raise RuntimeError(f"Cannot persist gold market watermark for bucket={bucket}: missing source commit.")
-
-    updated_symbol_to_bucket = _merge_symbol_to_bucket_map(
-        symbol_to_bucket,
-        touched_bucket=bucket,
-        touched_symbol_to_bucket=bucket_symbol_to_bucket,
-    )
-    index_path = layer_bucketing.write_layer_symbol_index(
-        layer="gold",
+    checkpoint = gold_checkpoint_publication.publish_gold_checkpoint_aggregate(
         domain="market",
-        symbol_to_bucket=updated_symbol_to_bucket,
+        bucket=bucket,
+        symbol_to_bucket=symbol_to_bucket,
+        touched_symbol_to_bucket=bucket_symbol_to_bucket,
+        watermarks=watermarks,
+        watermarks_key="gold_market_features",
+        watermark_key=watermark_key,
+        source_commit=silver_commit,
+        date_column="date",
+        job_name="gold-market-job",
+        save_watermarks_fn=save_watermarks,
+        job_run_id=run_id,
+        run_id=run_id,
+        publish_domain_artifact=False,
     )
-    if index_path is None:
-        raise RuntimeError(f"Gold market symbol index write returned no path for bucket={bucket}.")
-
-    updated_watermarks = dict(watermarks)
-    updated_watermarks[watermark_key] = {
-        "silver_last_commit": silver_commit,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    save_watermarks("gold_market_features", updated_watermarks)
-    watermarks.clear()
-    watermarks.update(updated_watermarks)
-    return updated_symbol_to_bucket, index_path
+    return checkpoint.symbol_to_bucket, checkpoint.index_path
 
 
 def _stage_market_bucket_outputs(
@@ -1177,6 +1171,9 @@ def _run_alpha26_market_gold(
 
     # Track per-run outcomes for caller status and logging.
     failed = 0
+    failed_symbols = 0
+    failed_buckets = 0
+    failed_finalization = 0
     processed = 0
     skipped_unchanged = 0
     skipped_missing_source = 0
@@ -1288,6 +1285,7 @@ def _run_alpha26_market_gold(
                     _, raw_symbol_count, detail = message.split("::", 2)
                     bucket_input_symbols = int(raw_symbol_count or 0)
                     failed += 1
+                    failed_buckets += 1
                     mdc.write_error(detail)
                     mdc.write_line(
                         f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
@@ -1308,6 +1306,7 @@ def _run_alpha26_market_gold(
                     )
                     continue
                 failed += 1
+                failed_buckets += 1
                 mdc.write_error(f"Gold market alpha26 write failed bucket={bucket}: {exc}")
                 mdc.write_line(
                     f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
@@ -1334,6 +1333,7 @@ def _run_alpha26_market_gold(
                 continue
             except Exception as exc:
                 failed += 1
+                failed_buckets += 1
                 mdc.write_error(f"Gold market alpha26 write failed bucket={bucket}: {exc}")
                 mdc.write_line(
                     f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
@@ -1365,6 +1365,7 @@ def _run_alpha26_market_gold(
         bucket_symbol_to_bucket = stage_result.bucket_symbol_to_bucket
         scope_symbols = sorted(set(scope_symbols).union(bucket_symbol_to_bucket.keys()))
         failed += bucket_symbol_failures
+        failed_symbols += bucket_symbol_failures
 
         critical_compute_failure_symbol = stage_result.critical_compute_failure_symbol
         if critical_compute_failure_symbol is not None:
@@ -1547,6 +1548,11 @@ def _run_alpha26_market_gold(
                     )
 
             watermark_updated = False
+            updated_symbol_to_bucket = layer_bucketing.merge_symbol_to_bucket_map(
+                symbol_to_bucket,
+                touched_buckets={bucket},
+                touched_symbol_to_bucket=bucket_symbol_to_bucket,
+            )
             if silver_commit is not None and bucket_symbol_failures == 0:
                 try:
                     symbol_to_bucket, index_path = _persist_gold_market_bucket_checkpoint(
@@ -1556,9 +1562,11 @@ def _run_alpha26_market_gold(
                         watermarks=watermarks,
                         symbol_to_bucket=symbol_to_bucket,
                         bucket_symbol_to_bucket=bucket_symbol_to_bucket,
+                        run_id=run_id,
                     )
                 except Exception as exc:
                     failed += 1
+                    failed_buckets += 1
                     mdc.write_error(f"Gold market alpha26 checkpoint failed bucket={bucket}: {exc}")
                     mdc.write_line(
                         f"watermark_update_status layer=gold domain=market bucket={bucket} "
@@ -1591,6 +1599,7 @@ def _run_alpha26_market_gold(
                     "status=blocked reason=symbol_compute_failures"
                 )
             else:
+                symbol_to_bucket = updated_symbol_to_bucket
                 mdc.write_line(
                     f"watermark_update_status layer=gold domain=market bucket={bucket} "
                     "status=blocked reason=missing_source_commit"
@@ -1624,6 +1633,7 @@ def _run_alpha26_market_gold(
             )
         except Exception as exc:
             failed += 1
+            failed_buckets += 1
             mdc.write_error(f"Gold market alpha26 write failed bucket={bucket}: {exc}")
             mdc.write_line(
                 f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
@@ -1661,73 +1671,47 @@ def _run_alpha26_market_gold(
     status_counts: dict[str, int] = {}
     for result in bucket_results:
         status_counts[result.status] = int(status_counts.get(result.status, 0)) + 1
-    mdc.write_line(
-        "layer_handoff_status transition=silver_to_gold status=complete "
-        f"bucket_statuses={status_counts} failed={failed}"
-    )
-
     publication_reason: Optional[str] = None
     if failed == 0 and postgres_dsn:
         try:
             _verify_postgres_critical_market_symbols(dsn=postgres_dsn, sync_state=sync_state)
         except Exception as exc:
             failed += 1
+            failed_finalization += 1
             publication_reason = "critical_symbol_verification_failed"
             mdc.write_error(str(exc))
 
-    if failed == 0:
-        if index_path is None:
-            try:
-                index_path = layer_bucketing.write_layer_symbol_index(
-                    layer="gold",
-                    domain="market",
-                    symbol_to_bucket=symbol_to_bucket,
-                )
-            except Exception as exc:
-                failed += 1
-                publication_reason = "index_write_failed"
-                mdc.write_error(f"Gold market symbol index write failed: {exc}")
-
-        if index_path is not None:
-            try:
-                domain_artifacts.write_domain_artifact(
-                    layer="gold",
-                    domain="market",
-                    date_column="date",
-                    symbol_count_override=len(symbol_to_bucket),
-                    symbol_index_path=index_path,
-                    job_name="gold-market-job",
-                    job_run_id=run_id,
-                    run_id=run_id,
-                )
-            except Exception as exc:
-                mdc.write_warning(f"Gold market metadata artifact write failed: {exc}")
-        elif publication_reason is None:
-            publication_reason = "index_unavailable"
-
-    if failed > 0 and publication_reason is None:
-        publication_reason = "failed_buckets"
-
-    if publication_reason is None:
-        mdc.write_line(
-            "artifact_publication_status "
-            f"layer=gold domain=market status=published buckets_ok={processed}"
-        )
-    else:
-        mdc.write_line(
-            "artifact_publication_status "
-            f"layer=gold domain=market status=blocked reason={publication_reason} "
-            f"failed={failed} processed={processed}"
-        )
+    finalization = gold_checkpoint_publication.finalize_gold_publication(
+        domain="market",
+        symbol_to_bucket=symbol_to_bucket,
+        date_column="date",
+        job_name="gold-market-job",
+        processed=processed,
+        skipped_unchanged=skipped_unchanged,
+        skipped_missing_source=skipped_missing_source,
+        failed_symbols=failed_symbols,
+        failed_buckets=failed_buckets,
+        failed_finalization=failed_finalization,
+        publication_reason=publication_reason,
+        index_path=index_path,
+        job_run_id=run_id,
+        run_id=run_id,
+    )
+    mdc.write_line(
+        "layer_handoff_status transition=silver_to_gold status=complete "
+        f"bucket_statuses={status_counts} failed={finalization.failed} "
+        f"failed_symbols={finalization.failed_symbols} failed_buckets={finalization.failed_buckets} "
+        f"failed_finalization={finalization.failed_finalization}"
+    )
 
     return (
         processed,
         skipped_unchanged,
         skipped_missing_source,
-        failed,
+        finalization.failed,
         watermarks_dirty,
         len(symbol_to_bucket),
-        index_path,
+        finalization.index_path,
     )
 
 

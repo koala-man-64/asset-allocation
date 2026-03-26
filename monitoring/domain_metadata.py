@@ -244,6 +244,40 @@ def _load_alpha26_index_symbols(*, layer_key: str, domain_key: str) -> set[str]:
     return set()
 
 
+def _load_alpha26_bucket_artifact_symbol_count(
+    *,
+    layer_key: str,
+    domain_key: str,
+    client: BlobStorageClient,
+) -> Optional[int]:
+    if layer_key != "gold":
+        return None
+    if domain_key not in {"market", "finance", "earnings", "price-target"}:
+        return None
+
+    symbol_count = 0
+    found_artifact = False
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        payload = domain_artifacts.load_bucket_artifact(
+            layer=layer_key,
+            domain=domain_key,
+            bucket=bucket,
+            client=client,
+        )
+        if not isinstance(payload, dict):
+            continue
+        found_artifact = True
+        raw_count = payload.get("symbolCount")
+        if isinstance(raw_count, int):
+            symbol_count += raw_count
+            continue
+        try:
+            symbol_count += int(raw_count or 0)
+        except Exception:
+            continue
+    return symbol_count if found_artifact else None
+
+
 def _normalize_finance_subfolder_counts(raw: Any) -> Optional[Dict[FinanceSubfolderKey, int]]:
     if not isinstance(raw, dict):
         return None
@@ -943,9 +977,31 @@ def collect_domain_metadata(*, layer: str, domain: str, force_refresh: bool = Fa
                 index_symbols = _load_alpha26_index_symbols(layer_key=layer_key, domain_key=index_domain_key)
             if isinstance(files, int):
                 prefix_is_empty = files == 0
+                raw_symbol_count = symbol_count
                 # If the target prefix has no blobs, report zero symbols even when the alpha26
                 # index still contains stale entries.
-                symbol_count = 0 if prefix_is_empty else len(index_symbols)
+                if prefix_is_empty:
+                    symbol_count = 0
+                elif index_symbols:
+                    symbol_count = len(index_symbols)
+                else:
+                    bucket_artifact_symbol_count = _load_alpha26_bucket_artifact_symbol_count(
+                        layer_key=layer_key,
+                        domain_key=index_domain_key,
+                        client=client,
+                    )
+                    if bucket_artifact_symbol_count is not None:
+                        symbol_count = bucket_artifact_symbol_count
+                        warnings.append(
+                            f"{layer_key.title()} alpha26 index empty or unavailable for domain={index_domain_key}; "
+                            "symbol count derived from bucket artifacts."
+                        )
+                    else:
+                        symbol_count = raw_symbol_count
+                        warnings.append(
+                            f"{layer_key.title()} alpha26 index empty or unavailable for domain={index_domain_key}; "
+                            "symbol count may be incomplete."
+                        )
                 if domain_key == "finance" and finance_subfolder_symbol_counts:
                     if layer_key == "silver":
                         finance_subfolder_symbol_counts = {
@@ -954,10 +1010,6 @@ def collect_domain_metadata(*, layer: str, domain: str, force_refresh: bool = Fa
                         }
                     if not prefix_is_empty and sum(int(v) for v in finance_subfolder_symbol_counts.values()) == 0:
                         finance_subfolder_symbol_counts = None
-                if not prefix_is_empty and not index_symbols:
-                    warnings.append(
-                        f"{layer_key.title()} alpha26 index empty or unavailable for domain={index_domain_key}; symbol count may be incomplete."
-                    )
             else:
                 warnings.append(
                     f"{layer_key.title()} blob listing unavailable for prefix={prefix}; symbol count set to unknown."

@@ -676,6 +676,115 @@ def test_collect_domain_metadata_uses_alpha26_index_for_silver_market(monkeypatc
     assert payload["symbolCount"] == 3
 
 
+def test_collect_domain_metadata_falls_back_to_bucket_artifacts_for_gold_finance(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "finance/"
+            return [
+                _Blob("finance/buckets/A/_delta_log/00000000000000000000.json", 10),
+                _Blob("finance/buckets/B/_delta_log/00000000000000000000.json", 11),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr("monitoring.domain_metadata.layer_bucketing.gold_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.domain_artifacts.load_domain_artifact",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.layer_bucketing.load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: set(),
+    )
+    monkeypatch.setattr("monitoring.domain_metadata.bronze_bucketing.ALPHABET_BUCKETS", ("A", "B"))
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.domain_artifacts.load_bucket_artifact",
+        lambda *, layer, domain, bucket, client=None, sub_domain=None: (
+            {"symbolCount": 2}
+            if bucket == "A"
+            else {"symbolCount": 3}
+            if bucket == "B"
+            else None
+        ),
+    )
+
+    payload = collect_domain_metadata(layer="gold", domain="finance")
+
+    assert payload["fileCount"] == 2
+    assert payload["symbolCount"] == 5
+    assert payload["financeSubfolderSymbolCounts"] is None
+    assert any("symbol count derived from bucket artifacts" in warning for warning in payload["warnings"])
+
+
+def test_collect_domain_metadata_falls_back_to_bucket_artifacts_for_gold_market(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "market/"
+            return [
+                _Blob("market/buckets/A/_delta_log/00000000000000000000.json", 10),
+                _Blob("market/buckets/B/_delta_log/00000000000000000000.json", 11),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr("monitoring.domain_metadata.layer_bucketing.gold_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.domain_artifacts.load_domain_artifact",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.layer_bucketing.load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: set(),
+    )
+    monkeypatch.setattr("monitoring.domain_metadata.bronze_bucketing.ALPHABET_BUCKETS", ("A", "B"))
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.domain_artifacts.load_bucket_artifact",
+        lambda *, layer, domain, bucket, client=None, sub_domain=None: (
+            {"symbolCount": 4}
+            if bucket == "A"
+            else {"symbolCount": 6}
+            if bucket == "B"
+            else None
+        ),
+    )
+
+    payload = collect_domain_metadata(layer="gold", domain="market")
+
+    assert payload["fileCount"] == 2
+    assert payload["symbolCount"] == 10
+    assert any("symbol count derived from bucket artifacts" in warning for warning in payload["warnings"])
+
+
 def test_collect_domain_metadata_prefers_writer_artifact(monkeypatch) -> None:
     class _FakeBlobStorageClient:
         def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
@@ -741,6 +850,44 @@ def test_collect_domain_metadata_reports_zero_symbols_when_target_prefix_is_empt
     )
 
     payload = collect_domain_metadata(layer="silver", domain="market")
+
+    assert payload["fileCount"] == 0
+    assert payload["symbolCount"] == 0
+
+
+def test_collect_domain_metadata_does_not_use_bucket_artifacts_when_gold_prefix_is_empty(monkeypatch) -> None:
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "finance/"
+            return []
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr("monitoring.domain_metadata.layer_bucketing.gold_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.domain_artifacts.load_domain_artifact",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.layer_bucketing.load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: set(),
+    )
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.domain_artifacts.load_bucket_artifact",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("bucket artifacts should not be loaded")),
+    )
+
+    payload = collect_domain_metadata(layer="gold", domain="finance")
 
     assert payload["fileCount"] == 0
     assert payload["symbolCount"] == 0

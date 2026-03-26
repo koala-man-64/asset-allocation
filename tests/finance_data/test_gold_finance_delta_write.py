@@ -185,6 +185,7 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    monkeypatch.setattr(gold_finance_data, "save_watermarks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         delta_core,
         "get_delta_last_commit",
@@ -314,6 +315,171 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
     assert captured["df"].loc[0, "current_ratio"] == 1.4
 
 
+def test_run_alpha26_finance_gold_checkpoint_persists_index_and_defers_root_artifact(monkeypatch):
+    messages: list[str] = []
+    domain_artifact_calls: list[dict[str, object]] = []
+    saved_watermarks: list[tuple[str, dict[str, object]]] = []
+    index_calls = {"count": 0}
+    date_value = pd.Timestamp("2024-01-01")
+    ticker = "AAPL"
+
+    monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
+    monkeypatch.setattr(gold_finance_data.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+
+    def _fake_write_layer_symbol_index(**_kwargs):
+        index_calls["count"] += 1
+        return "system/gold-index/finance/latest.parquet"
+
+    monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", _fake_write_layer_symbol_index)
+    monkeypatch.setattr(gold_finance_data, "resolve_postgres_dsn", lambda: None)
+    monkeypatch.setattr(
+        gold_finance_data.domain_artifacts,
+        "load_domain_artifact",
+        lambda **_kwargs: {"totalBytes": 1024, "fileCount": 9},
+    )
+    monkeypatch.setattr(
+        gold_finance_data.domain_artifacts,
+        "write_domain_artifact",
+        lambda **kwargs: domain_artifact_calls.append(dict(kwargs)) or {"artifactPath": "finance/_metadata/domain.json"},
+    )
+    monkeypatch.setattr(gold_finance_data.domain_artifacts, "write_bucket_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        gold_finance_data,
+        "save_watermarks",
+        lambda key, items: saved_watermarks.append((key, dict(items))),
+    )
+    monkeypatch.setattr(core_module, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(core_module, "write_warning", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(core_module, "write_error", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(
+        delta_core,
+        "get_delta_last_commit",
+        lambda _container, path: 1 if "finance-data/" in path else None,
+    )
+    monkeypatch.setattr(delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
+
+    income_df = pd.DataFrame(
+        {
+            "date": [date_value],
+            "symbol": [ticker],
+            "total_revenue": [100.0],
+            "gross_profit": [40.0],
+            "net_income": [10.0],
+            "shares_outstanding": [100.0],
+        }
+    )
+    balance_df = pd.DataFrame(
+        {
+            "date": [date_value],
+            "symbol": [ticker],
+            "long_term_debt": [250.0],
+            "total_assets": [1_000.0],
+            "current_assets": [500.0],
+            "current_liabilities": [250.0],
+        }
+    )
+    cashflow_df = pd.DataFrame(
+        {
+            "date": [date_value],
+            "symbol": [ticker],
+            "operating_cash_flow": [25.0],
+        }
+    )
+    valuation_df = pd.DataFrame(
+        {
+            "date": [date_value],
+            "symbol": [ticker],
+            "market_cap": [1_000_000.0],
+            "pe_ratio": [20.0],
+            "price_to_book": [5.0],
+            "current_ratio": [1.4],
+        }
+    )
+
+    def _fake_load_delta(_container: str, path: str):
+        if "income_statement" in path:
+            return income_df
+        if "balance_sheet" in path:
+            return balance_df
+        if "cash_flow" in path:
+            return cashflow_df
+        if "valuation" in path:
+            return valuation_df
+        return pd.DataFrame()
+
+    monkeypatch.setattr(delta_core, "load_delta", _fake_load_delta)
+    monkeypatch.setattr(
+        gold_finance_data,
+        "compute_features",
+        lambda _merged: pd.DataFrame(
+            [
+                {
+                    "date": date_value,
+                    "symbol": ticker,
+                    "market_cap": 1_000_000.0,
+                    "pe_ratio": 20.0,
+                    "price_to_book": 5.0,
+                    "current_ratio": 1.4,
+                    "piotroski_roa_pos": 1,
+                    "piotroski_cfo_pos": 1,
+                    "piotroski_delta_roa_pos": 1,
+                    "piotroski_accruals_pos": 1,
+                    "piotroski_leverage_decrease": 1,
+                    "piotroski_liquidity_increase": 1,
+                    "piotroski_no_new_shares": 1,
+                    "piotroski_gross_margin_increase": 1,
+                    "piotroski_asset_turnover_increase": 1,
+                    "piotroski_f_score": 9,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(delta_core, "store_delta", lambda *_args, **_kwargs: None)
+
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        index_path,
+    ) = gold_finance_data._run_alpha26_finance_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks={},
+    )
+
+    assert processed == 1
+    assert skipped_unchanged == 0
+    assert skipped_missing_source == 0
+    assert failed == 0
+    assert watermarks_dirty is True
+    assert alpha26_symbols == 1
+    assert index_path == "system/gold-index/finance/latest.parquet"
+    assert index_calls["count"] == 1
+    assert len(saved_watermarks) == 1
+    assert saved_watermarks[0][0] == "gold_finance_features"
+    assert saved_watermarks[0][1]["bucket::A"]["silver_last_commit"] == 1
+    assert len(domain_artifact_calls) == 1
+    assert domain_artifact_calls[0]["symbol_count_override"] == 1
+    assert domain_artifact_calls[0]["symbol_index_path"] == "system/gold-index/finance/latest.parquet"
+    assert "total_bytes_override" not in domain_artifact_calls[0]
+    assert "file_count_override" not in domain_artifact_calls[0]
+    assert any(
+        "gold_checkpoint_aggregate_publication layer=gold domain=finance bucket=A status=published" in message
+        for message in messages
+    )
+    assert any("artifact_status=skipped" in message for message in messages)
+    assert any(
+        "artifact_publication_status layer=gold domain=finance status=published reason=none "
+        "failure_mode=none buckets_ok=1 failed=0 failed_symbols=0 failed_buckets=0 "
+        "failed_finalization=0 processed=1 skipped_unchanged=0 skipped_missing_source=0" in message
+        for message in messages
+    )
+
+
 def test_run_alpha26_finance_gold_preflight_blocks_missing_required_inputs(monkeypatch):
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
     index_calls = {"count": 0}
@@ -413,6 +579,7 @@ def test_run_alpha26_finance_gold_preflight_blocks_missing_required_inputs(monke
 def test_run_alpha26_finance_gold_fails_closed_on_postgres_schema_drift(monkeypatch):
     index_calls = {"count": 0}
     store_calls = {"count": 0}
+    messages: list[str] = []
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
@@ -427,8 +594,8 @@ def test_run_alpha26_finance_gold_fails_closed_on_postgres_schema_drift(monkeypa
         "validate_sync_target_schema",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(PostgresError("schema drift")),
     )
-    monkeypatch.setattr(core_module, "write_error", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(core_module, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(core_module, "write_error", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(core_module, "write_line", lambda msg: messages.append(str(msg)))
     monkeypatch.setattr(
         delta_core,
         "store_delta",
@@ -459,6 +626,13 @@ def test_run_alpha26_finance_gold_fails_closed_on_postgres_schema_drift(monkeypa
     assert index_path is None
     assert store_calls["count"] == 0
     assert index_calls["count"] == 0
+    assert any(
+        "artifact_publication_status layer=gold domain=finance status=blocked "
+        "reason=postgres_schema_drift failure_mode=finalization failed=1 failed_symbols=0 "
+        "failed_buckets=0 failed_finalization=1 processed=0 skipped_unchanged=0 "
+        "skipped_missing_source=0" in message
+        for message in messages
+    )
 
 
 def test_main_runs_finance_reconciliation_and_persists_watermarks(monkeypatch: pytest.MonkeyPatch) -> None:

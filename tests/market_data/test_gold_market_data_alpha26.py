@@ -316,6 +316,85 @@ def test_run_alpha26_market_gold_chunked_publish_preserves_rows_symbols_and_cont
     assert list(written["market/buckets/A"].columns) == expected_columns
 
 
+def test_run_alpha26_market_gold_checkpoint_defers_root_domain_artifact_until_finalization(monkeypatch):
+    watermarks: dict = {}
+    messages = _capture_log_messages(monkeypatch)
+    saved_watermarks: list[tuple[str, dict[str, object]]] = []
+    domain_artifact_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(
+        gold.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **_kwargs: "system/gold-index/market/latest.parquet",
+    )
+    monkeypatch.setattr(
+        gold.domain_artifacts,
+        "load_domain_artifact",
+        lambda **_kwargs: {"totalBytes": 2048, "fileCount": 7},
+    )
+    monkeypatch.setattr(
+        gold.domain_artifacts,
+        "write_domain_artifact",
+        lambda **kwargs: domain_artifact_calls.append(dict(kwargs)) or {"artifactPath": "market/_metadata/domain.json"},
+    )
+    monkeypatch.setattr(gold, "save_watermarks", lambda key, items: saved_watermarks.append((key, dict(items))))
+
+    def _fake_last_commit(_container: str, path: str):
+        if path == DataPaths.get_silver_market_bucket_path("A"):
+            return 100.0
+        return None
+
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", _fake_last_commit)
+    monkeypatch.setattr(delta_core_module, "load_delta", lambda *_args, **_kwargs: _silver_bucket_df("AAPL"))
+    monkeypatch.setattr(
+        gold,
+        "compute_features",
+        lambda df: _gold_feature_df(str(df["symbol"].iloc[0]).strip().upper()),
+    )
+    monkeypatch.setattr(delta_core_module, "store_delta", lambda *_args, **_kwargs: None)
+
+    (
+        processed,
+        _skipped_unchanged,
+        _skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        _alpha26_symbols,
+        index_path,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks=watermarks,
+    )
+
+    assert processed == 1
+    assert failed == 0
+    assert watermarks_dirty is True
+    assert index_path == "system/gold-index/market/latest.parquet"
+    assert watermarks["bucket::A"]["silver_last_commit"] == 100.0
+    assert len(saved_watermarks) == 1
+    assert saved_watermarks[0][0] == "gold_market_features"
+    assert len(domain_artifact_calls) == 1
+    assert domain_artifact_calls[0]["symbol_index_path"] == "system/gold-index/market/latest.parquet"
+    assert domain_artifact_calls[0]["symbol_count_override"] == 1
+    assert "total_bytes_override" not in domain_artifact_calls[0]
+    assert "file_count_override" not in domain_artifact_calls[0]
+    assert any(
+        "gold_checkpoint_aggregate_publication layer=gold domain=market bucket=A status=published" in message
+        for message in messages
+    )
+    assert any("artifact_status=skipped" in message for message in messages)
+    assert any(
+        "artifact_publication_status layer=gold domain=market status=published reason=none "
+        "failure_mode=none buckets_ok=1 failed=0 failed_symbols=0 failed_buckets=0 "
+        "failed_finalization=0 processed=1 skipped_unchanged=0 skipped_missing_source=0" in message
+        for message in messages
+    )
+
+
 def test_run_alpha26_market_gold_writes_healthy_symbols_and_blocks_publication_on_ordinary_failures(monkeypatch):
     watermarks: dict = {}
     captured_index: dict = {}
@@ -387,7 +466,17 @@ def test_run_alpha26_market_gold_writes_healthy_symbols_and_blocks_publication_o
         "status=ok_with_failures bucket=A symbols_in=2 symbols_out=1 failures=1" in message
         for message in messages
     )
-    assert any("bucket_statuses={'ok_with_failures': 1} failed=1" in message for message in messages)
+    assert any(
+        "artifact_publication_status layer=gold domain=market status=blocked reason=failed_buckets "
+        "failure_mode=symbol failed=1 failed_symbols=1 failed_buckets=0 failed_finalization=0 "
+        "processed=1 skipped_unchanged=0 skipped_missing_source=0" in message
+        for message in messages
+    )
+    assert any(
+        "bucket_statuses={'ok_with_failures': 1} failed=1 failed_symbols=1 failed_buckets=0 "
+        "failed_finalization=0" in message
+        for message in messages
+    )
 
 
 def test_run_alpha26_market_gold_rerun_skips_checkpointed_bucket_and_recomputes_failed_bucket(monkeypatch):
@@ -1005,7 +1094,9 @@ def test_run_alpha26_market_gold_blocks_publication_when_critical_symbol_verific
     assert any("postgres_gold_critical_symbol_status domain=market status=failed" in message for message in messages)
     assert any(
         "artifact_publication_status layer=gold domain=market status=blocked "
-        "reason=critical_symbol_verification_failed" in message
+        "reason=critical_symbol_verification_failed failure_mode=finalization failed=1 "
+        "failed_symbols=0 failed_buckets=0 failed_finalization=1 processed=2 "
+        "skipped_unchanged=0 skipped_missing_source=0" in message
         for message in messages
     )
 
