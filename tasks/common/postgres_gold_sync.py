@@ -356,6 +356,8 @@ class PostgresWriteTargetUnavailableError(RuntimeError):
 
 _TRANSIENT_SYNC_MAX_ATTEMPTS = 3
 _TRANSIENT_SYNC_RETRY_BASE_SECONDS = 2.0
+_TEMP_STAGE_NAME = "gold_sync_stage"
+_TEMP_STAGE_TABLE = f"pg_temp.{_TEMP_STAGE_NAME}"
 
 
 def sync_state_cache_entry(result: GoldSyncResult) -> dict[str, Any]:
@@ -561,16 +563,20 @@ def _sync_gold_bucket_prepared_frames(
         current_symbols: set[str],
         min_key: Optional[date],
         max_key: Optional[date],
+        scope_symbol_count: Optional[int] = None,
         status: str = "ok",
         error: Optional[str] = None,
     ) -> GoldSyncResult:
+        effective_scope_symbol_count = (
+            len(normalized_scope_symbols) if scope_symbol_count is None else int(scope_symbol_count)
+        )
         return GoldSyncResult(
             status=status,
             domain=config.domain,
             bucket=clean_bucket,
             row_count=row_count,
             symbol_count=len(current_symbols),
-            scope_symbol_count=len(normalized_scope_symbols),
+            scope_symbol_count=effective_scope_symbol_count,
             source_commit=source_commit,
             min_key=min_key,
             max_key=max_key,
@@ -593,11 +599,14 @@ def _sync_gold_bucket_prepared_frames(
                 min_key = frame_min
             if frame_max is not None and (max_key is None or frame_max > max_key):
                 max_key = frame_max
+        effective_scope_symbols = set(normalized_scope_symbols)
+        effective_scope_symbols.update(current_symbols)
         return _result(
             row_count=row_count,
             current_symbols=current_symbols,
             min_key=min_key,
             max_key=max_key,
+            scope_symbol_count=len(effective_scope_symbols),
             status="skipped_no_dsn",
         )
 
@@ -611,19 +620,19 @@ def _sync_gold_bucket_prepared_frames(
         min_key: Optional[date] = None
         max_key: Optional[date] = None
         failure_stage = "connect"
+        effective_scope_symbols = set(normalized_scope_symbols)
+        deleted_rows = 0
+        upserted_rows = 0
 
         try:
+            attempt_started_at = time.perf_counter()
             with connect(resolved_dsn) as conn:
                 failure_stage = "open_cursor"
                 with conn.cursor() as cur:
                     failure_stage = "verify_write_target"
                     _ensure_connection_is_writable(cur)
-                    if normalized_scope_symbols:
-                        failure_stage = "delete_scope_symbols"
-                        cur.execute(
-                            f'DELETE FROM {config.table} WHERE "symbol" = ANY(%s)',
-                            (sorted(normalized_scope_symbols),),
-                        )
+                    failure_stage = "stage_copy"
+                    _create_temp_stage(cur, config=config)
                     for prepared in prepared_frames_factory():
                         if not isinstance(prepared, pd.DataFrame) or prepared.empty:
                             continue
@@ -637,14 +646,24 @@ def _sync_gold_bucket_prepared_frames(
                             min_key = frame_min
                         if frame_max is not None and (max_key is None or frame_max > max_key):
                             max_key = frame_max
-                        failure_stage = "copy_rows"
                         copy_rows(
                             cur,
-                            table=config.table,
+                            table=_TEMP_STAGE_TABLE,
                             columns=_quote_columns(config.columns),
                             rows=_copy_rows(prepared),
                         )
-                    failure_stage = "record_sync_state"
+                    _analyze_temp_stage(cur)
+                    effective_scope_symbols.update(current_symbols)
+                    failure_stage = "delete_missing"
+                    deleted_rows = _delete_missing_target_rows(
+                        cur,
+                        config=config,
+                        scope_symbols=sorted(effective_scope_symbols),
+                    )
+                    failure_stage = "upsert_stage"
+                    upserted_rows = _upsert_staged_rows(cur, config=config)
+                    unchanged_rows = max(row_count - upserted_rows, 0)
+                    failure_stage = "sync_state"
                     _upsert_sync_state(
                         cur,
                         domain=config.domain,
@@ -657,11 +676,20 @@ def _sync_gold_bucket_prepared_frames(
                         max_key=max_key,
                         error=None,
                     )
+            duration_ms = int(round((time.perf_counter() - attempt_started_at) * 1000.0))
+            mdc.write_line(
+                "postgres_gold_sync_apply_stats "
+                f"domain={config.domain} bucket={clean_bucket} staged_rows={row_count} "
+                f"deleted_rows={deleted_rows} upserted_rows={upserted_rows} "
+                f"unchanged_rows={unchanged_rows} scope_symbols={len(effective_scope_symbols)} "
+                f"duration_ms={duration_ms}"
+            )
             return _result(
                 row_count=row_count,
                 current_symbols=current_symbols,
                 min_key=min_key,
                 max_key=max_key,
+                scope_symbol_count=len(effective_scope_symbols),
             )
         except Exception as exc:
             failure = classify_sync_failure(stage=failure_stage, exc=exc)
@@ -687,7 +715,7 @@ def _sync_gold_bucket_prepared_frames(
                 "postgres_gold_sync_failure "
                 f"domain={config.domain} bucket={clean_bucket} stage={failure.stage} "
                 f"category={failure.category} transient={str(failure.transient).lower()} "
-                f"error_class={failure.error_class} scope_symbols={len(normalized_scope_symbols)} "
+                f"error_class={failure.error_class} scope_symbols={len(effective_scope_symbols)} "
                 f"rows_attempted={row_count} symbols_attempted={len(current_symbols)} "
                 f"detail={_coerce_log_token(failure.detail)}"
             )
@@ -843,6 +871,86 @@ def _ensure_connection_is_writable(cur: Any) -> None:
         )
 
 
+def _sync_key_columns(config: GoldSyncConfig) -> tuple[str, str]:
+    return ("symbol", config.date_column)
+
+
+def _create_temp_stage(cur: Any, *, config: GoldSyncConfig) -> None:
+    quoted_key_columns = ", ".join(_quote_identifier(column) for column in _sync_key_columns(config))
+    cur.execute(
+        f"CREATE TEMP TABLE {_TEMP_STAGE_NAME} (LIKE {config.table} INCLUDING DEFAULTS) ON COMMIT DROP"
+    )
+    cur.execute(f"CREATE UNIQUE INDEX gold_sync_stage_key_idx ON {_TEMP_STAGE_NAME} ({quoted_key_columns})")
+
+
+def _analyze_temp_stage(cur: Any) -> None:
+    cur.execute(f"ANALYZE {_TEMP_STAGE_NAME}")
+
+
+def _delete_missing_target_rows(
+    cur: Any,
+    *,
+    config: GoldSyncConfig,
+    scope_symbols: Sequence[str],
+) -> int:
+    if not scope_symbols:
+        return 0
+
+    quoted_date_column = _quote_identifier(config.date_column)
+    cur.execute(
+        f"""
+        DELETE FROM {config.table} AS target
+        WHERE target."symbol" = ANY(%s)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM {_TEMP_STAGE_TABLE} AS stage
+              WHERE stage."symbol" = target."symbol"
+                AND stage.{quoted_date_column} = target.{quoted_date_column}
+          )
+        """,
+        (list(scope_symbols),),
+    )
+    return _cursor_rowcount(cur)
+
+
+def _upsert_staged_rows(cur: Any, *, config: GoldSyncConfig) -> int:
+    key_columns = _sync_key_columns(config)
+    quoted_insert_columns = ", ".join(_quote_identifier(column) for column in config.columns)
+    quoted_select_columns = ", ".join(f'stage.{_quote_identifier(column)}' for column in config.columns)
+    quoted_conflict_columns = ", ".join(_quote_identifier(column) for column in key_columns)
+    update_columns = [column for column in config.columns if column not in key_columns]
+
+    if update_columns:
+        assignments = ", ".join(
+            f'{_quote_identifier(column)} = EXCLUDED.{_quote_identifier(column)}'
+            for column in update_columns
+        )
+        changed_predicate = " OR ".join(
+            f'target.{_quote_identifier(column)} IS DISTINCT FROM EXCLUDED.{_quote_identifier(column)}'
+            for column in update_columns
+        )
+        cur.execute(
+            f"""
+            INSERT INTO {config.table} AS target ({quoted_insert_columns})
+            SELECT {quoted_select_columns}
+            FROM {_TEMP_STAGE_TABLE} AS stage
+            ON CONFLICT ({quoted_conflict_columns}) DO UPDATE
+            SET {assignments}
+            WHERE {changed_predicate}
+            """
+        )
+    else:
+        cur.execute(
+            f"""
+            INSERT INTO {config.table} ({quoted_insert_columns})
+            SELECT {quoted_select_columns}
+            FROM {_TEMP_STAGE_TABLE} AS stage
+            ON CONFLICT ({quoted_conflict_columns}) DO NOTHING
+            """
+        )
+    return _cursor_rowcount(cur)
+
+
 def _transient_sync_retry_delay_seconds(attempt: int) -> float:
     safe_attempt = max(int(attempt), 1)
     return float(_TRANSIENT_SYNC_RETRY_BASE_SECONDS * (2 ** (safe_attempt - 1)))
@@ -894,6 +1002,14 @@ def _quote_columns(columns: Sequence[str]) -> list[str]:
 def _quote_identifier(identifier: str) -> str:
     escaped = str(identifier or "").replace('"', '""')
     return f'"{escaped}"'
+
+
+def _cursor_rowcount(cur: Any) -> int:
+    try:
+        value = int(getattr(cur, "rowcount", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(value, 0)
 
 
 def _upsert_sync_state(

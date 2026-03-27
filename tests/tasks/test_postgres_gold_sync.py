@@ -9,11 +9,20 @@ from tasks.common import postgres_gold_sync as sync
 
 
 class _FakeCursor:
-    def __init__(self, *, fetchall_rows=None, fetchone_rows=None, fail_on_execute: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fetchall_rows=None,
+        fetchone_rows=None,
+        fail_on_execute: bool = False,
+        rowcount_map: dict[str, int] | None = None,
+    ) -> None:
         self.fetchall_rows = list(fetchall_rows or [])
         self.fetchone_rows = list(fetchone_rows or [])
         self.fail_on_execute = fail_on_execute
+        self.rowcount_map = dict(rowcount_map or {})
         self.executed: list[tuple[str, object]] = []
+        self.rowcount = 0
 
     def __enter__(self):
         return self
@@ -23,6 +32,11 @@ class _FakeCursor:
 
     def execute(self, sql: str, params=None) -> None:
         self.executed.append((sql, params))
+        self.rowcount = 0
+        for pattern, value in self.rowcount_map.items():
+            if pattern in sql:
+                self.rowcount = int(value)
+                break
         if self.fail_on_execute:
             raise RuntimeError("boom")
 
@@ -105,13 +119,20 @@ def test_bucket_sync_is_current_requires_successful_matching_commit() -> None:
     )
 
 
-def test_sync_gold_bucket_deletes_scope_symbols_copies_rows_and_updates_state(
+def test_sync_gold_bucket_stages_rows_deletes_missing_scope_rows_and_updates_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cursor = _FakeCursor()
+    cursor = _FakeCursor(
+        rowcount_map={
+            "DELETE FROM gold.market_data AS target": 1,
+            "INSERT INTO gold.market_data AS target": 1,
+        }
+    )
     copied: dict[str, object] = {}
+    messages: list[str] = []
 
     monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(cursor))
+    monkeypatch.setattr(sync.mdc, "write_line", lambda msg: messages.append(str(msg)))
 
     def _fake_copy_rows(cur, *, table, columns, rows) -> None:
         copied["cursor"] = cur
@@ -144,25 +165,40 @@ def test_sync_gold_bucket_deletes_scope_symbols_copies_rows_and_updates_state(
     assert result.symbol_count == 1
     assert result.scope_symbol_count == 2
     assert result.min_key == date(2026, 1, 2)
-    assert copied["table"] == "gold.market_data"
+    assert copied["table"] == "pg_temp.gold_sync_stage"
     assert '"range"' in copied["columns"]
     assert copied["rows"][0][0] == date(2026, 1, 2)
     assert copied["rows"][0][1] == "AAPL"
-    assert any("DELETE FROM gold.market_data" in sql for sql, _params in cursor.executed)
+    assert any("CREATE TEMP TABLE gold_sync_stage" in sql for sql, _params in cursor.executed)
+    assert any("DELETE FROM gold.market_data AS target" in sql for sql, _params in cursor.executed)
+    assert any("INSERT INTO gold.market_data AS target" in sql for sql, _params in cursor.executed)
+    assert any("IS DISTINCT FROM" in sql for sql, _params in cursor.executed)
+    assert all("LOCK TABLE" not in sql and "pg_advisory_lock" not in sql for sql, _params in cursor.executed)
     assert any("INSERT INTO core.gold_sync_state" in sql for sql, _params in cursor.executed)
+    assert any(
+        "postgres_gold_sync_apply_stats domain=market bucket=A staged_rows=1 "
+        "deleted_rows=1 upserted_rows=1 unchanged_rows=0 scope_symbols=2"
+        in message
+        for message in messages
+    )
 
 
 def test_sync_gold_bucket_chunks_streams_multiple_prepared_frames(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cursor = _FakeCursor()
+    cursor = _FakeCursor(
+        rowcount_map={
+            "DELETE FROM gold.market_data AS target": 1,
+            "INSERT INTO gold.market_data AS target": 2,
+        }
+    )
     copied_batches: list[list[tuple[object, ...]]] = []
 
     monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(cursor))
 
     def _fake_copy_rows(cur, *, table, columns, rows) -> None:
         assert cur is cursor
-        assert table == "gold.market_data"
+        assert table == "pg_temp.gold_sync_stage"
         assert '"symbol"' in columns
         copied_batches.append(list(rows))
 
@@ -187,7 +223,7 @@ def test_sync_gold_bucket_chunks_streams_multiple_prepared_frames(
                 }
             ),
         ],
-        scope_symbols=["AAPL", "MSFT", "OLD"],
+        scope_symbols=["OLD"],
         source_commit=123.0,
         dsn="postgresql://test",
     )
@@ -200,7 +236,11 @@ def test_sync_gold_bucket_chunks_streams_multiple_prepared_frames(
     assert len(copied_batches) == 2
     assert copied_batches[0][0][1] == "AAPL"
     assert copied_batches[1][0][1] == "MSFT"
-    assert any("DELETE FROM gold.market_data" in sql for sql, _params in cursor.executed)
+    delete_sql, delete_params = next(
+        (sql, params) for sql, params in cursor.executed if "DELETE FROM gold.market_data AS target" in sql
+    )
+    assert "pg_temp.gold_sync_stage AS stage" in delete_sql
+    assert delete_params == (["AAPL", "MSFT", "OLD"],)
 
 
 def test_sync_gold_bucket_records_failure_state(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,6 +282,7 @@ def test_sync_gold_bucket_retries_transient_read_only_delete_failures_until_succ
             self.executed.append((sql, params))
             if "DELETE FROM" in sql and self.fail_delete:
                 raise ReadOnlySqlTransaction("cannot execute DELETE in a read-only transaction")
+            self.rowcount = 0
 
     def _fake_connect(_dsn: str):
         connect_calls["count"] = int(connect_calls["count"]) + 1
@@ -278,13 +319,14 @@ def test_sync_gold_bucket_classifies_read_only_delete_failures(monkeypatch: pyte
             self.executed.append((sql, params))
             if "DELETE FROM" in sql:
                 raise ReadOnlySqlTransaction("cannot execute DELETE in a read-only transaction")
+            self.rowcount = 0
 
     monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(_ReadOnlyCursor()))
     monkeypatch.setattr(sync, "_record_failed_sync_state", lambda *args, **kwargs: recorded.update(kwargs))
     monkeypatch.setattr(sync.mdc, "write_line", lambda msg: messages.append(str(msg)))
     monkeypatch.setattr(sync.time, "sleep", lambda _seconds: None)
 
-    with pytest.raises(sync.PostgresError, match="stage=delete_scope_symbols category=read_only_transaction"):
+    with pytest.raises(sync.PostgresError, match="stage=delete_missing category=read_only_transaction"):
         sync.sync_gold_bucket(
             domain="market",
             bucket="A",
@@ -295,12 +337,12 @@ def test_sync_gold_bucket_classifies_read_only_delete_failures(monkeypatch: pyte
         )
 
     assert recorded["error"] == (
-        "stage=delete_scope_symbols category=read_only_transaction "
+        "stage=delete_missing category=read_only_transaction "
         "error_class=ReadOnlySqlTransaction transient=true "
         "detail=cannot execute DELETE in a read-only transaction"
     )
     assert any(
-        "postgres_gold_sync_failure domain=market bucket=A stage=delete_scope_symbols "
+        "postgres_gold_sync_failure domain=market bucket=A stage=delete_missing "
         "category=read_only_transaction transient=true error_class=ReadOnlySqlTransaction"
         in message
         for message in messages
@@ -359,6 +401,7 @@ def test_sync_gold_bucket_chunks_retries_with_callable_frame_supplier(
 
         def execute(self, sql: str, params=None) -> None:
             self.executed.append((sql, params))
+            self.rowcount = 0
 
         def copy(self, _statement: str):
             class _FailingCopy:
@@ -408,6 +451,49 @@ def test_sync_gold_bucket_chunks_retries_with_callable_frame_supplier(
     assert connect_calls["count"] == 2
     assert frame_supplier_calls["count"] == 2
     assert retry_sleeps == [2.0]
+
+
+def test_sync_gold_bucket_empty_frame_deletes_stale_scope_rows_and_records_zero_row_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _FakeCursor(
+        rowcount_map={
+            "DELETE FROM gold.finance_data AS target": 2,
+            "INSERT INTO gold.finance_data AS target": 0,
+        }
+    )
+    messages: list[str] = []
+    copied_tables: list[str] = []
+
+    monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(cursor))
+    monkeypatch.setattr(sync.mdc, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(
+        sync,
+        "copy_rows",
+        lambda _cur, *, table, columns, rows: copied_tables.append(str(table)),
+    )
+
+    result = sync.sync_gold_bucket(
+        domain="finance",
+        bucket="A",
+        frame=pd.DataFrame({"date": [], "symbol": []}),
+        scope_symbols=["AAPL", "MSFT"],
+        source_commit=321.0,
+        dsn="postgresql://test",
+    )
+
+    assert result.status == "ok"
+    assert result.row_count == 0
+    assert result.symbol_count == 0
+    assert result.scope_symbol_count == 2
+    assert copied_tables == []
+    assert any("DELETE FROM gold.finance_data AS target" in sql for sql, _params in cursor.executed)
+    assert any(
+        "postgres_gold_sync_apply_stats domain=finance bucket=A staged_rows=0 "
+        "deleted_rows=2 upserted_rows=0 unchanged_rows=0 scope_symbols=2"
+        in message
+        for message in messages
+    )
 
 
 def test_validate_sync_target_schema_raises_for_missing_columns(monkeypatch: pytest.MonkeyPatch) -> None:

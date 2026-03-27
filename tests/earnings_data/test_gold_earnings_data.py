@@ -424,7 +424,7 @@ def test_run_alpha26_earnings_gold_logs_structured_failure_counter_for_postgres_
     monkeypatch.setattr(delta_core, "store_delta", lambda *_args, **_kwargs: None)
 
     failure = PostgresError("Gold Postgres sync failed")
-    setattr(failure, "failure_stage", "delete_scope_symbols")
+    setattr(failure, "failure_stage", "delete_missing")
     setattr(failure, "failure_category", "read_only_transaction")
     setattr(failure, "failure_error_class", "ReadOnlySqlTransaction")
     setattr(failure, "failure_transient", True)
@@ -453,7 +453,7 @@ def test_run_alpha26_earnings_gold_logs_structured_failure_counter_for_postgres_
     assert alpha26_symbols == 0
     assert index_path is None
     assert any(
-        "gold_earnings_failure_counter stage=bucket_write failure_source=delete_scope_symbols "
+        "gold_earnings_failure_counter stage=bucket_write failure_source=delete_missing "
         "failure_category=read_only_transaction bucket=A ticker=n/a "
         "exception_type=ReadOnlySqlTransaction transient=true counter_value=1 "
         "failed_symbols=0 failed_buckets=1 failed_finalization=0" in message

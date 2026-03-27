@@ -33,10 +33,16 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
   - `core.gold_sync_state` shows a successful Postgres sync for that same bucket and source commit
 - On a changed bucket, the job:
   - overwrites the Delta bucket
-  - deletes Postgres rows for all symbols previously or currently assigned to that bucket
-  - bulk inserts the current bucket rows into the matching Postgres table
+  - creates a session-local temp stage table that mirrors the serving table columns
+  - bulk loads the current bucket rows into that temp stage
+  - deletes only stale serving-table rows for symbols in the bucket scope that are absent from stage
+  - upserts only new or changed staged rows into the matching Postgres table
   - upserts `core.gold_sync_state`
   - advances the bucket watermark only after Postgres sync succeeds
+- Gold jobs can write to Postgres concurrently across domains:
+  - each domain writes only its own serving table
+  - each sync uses a session-local temp stage table
+  - same-domain overlap is still prevented by the existing job locks
 
 ## Failure Telemetry
 
@@ -47,6 +53,15 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
   - `category`
   - `error_class`
   - `transient`
+- Successful applies emit `postgres_gold_sync_apply_stats` with:
+  - `domain`
+  - `bucket`
+  - `staged_rows`
+  - `deleted_rows`
+  - `upserted_rows`
+  - `unchanged_rows`
+  - `scope_symbols`
+  - `duration_ms`
 - Gold earnings now emits `gold_earnings_failure_counter` whenever it increments a failure counter.
 - Final publication logs now use category-accurate blocked reasons:
   - `failed_symbols`
@@ -70,6 +85,14 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
   - `layer_handoff_status ... status=ok_with_failures` for ordinary-symbol partial success
   - `layer_handoff_status ... status=failed ... critical_symbol=true symbol=<ticker>` for regime-critical hard failures
   - `postgres_gold_critical_symbol_status` for the final Postgres presence/sync verification step
+
+## Gold Regime Notes
+
+- `gold-regime-job` does not use the shared bucket sync helper because it writes domain-wide regime tables rather than bucketed symbol tables.
+- Its Postgres write path now uses the same staged-apply principle:
+  - `gold.regime_inputs_daily` is reconciled against the full staged input set
+  - `gold.regime_history`, `gold.regime_latest`, and `gold.regime_transitions` are reconciled only for the active model scope
+- Successful regime applies emit `gold_regime_postgres_apply_stats` for each target table with staged, deleted, upserted, unchanged, and scope counts.
 
 ## Bootstrap
 
@@ -100,6 +123,10 @@ The first successful run seeds `core.gold_sync_state`. After that, unchanged buc
 - Full rebuild: apply migrations, clear the Gold Delta layer, rerun the gold jobs.
 - Single-domain rebuild: clear the matching Gold bucket path, rerun the matching gold job.
 - If a job wrote Delta but failed Postgres sync, rerun the same job. Watermarks stay blocked, so the bucket will be retried.
+- Rollback for the staged-apply refactor is code-only:
+  - revert the shared Postgres sync helper to the prior delete/copy implementation
+  - rerun the affected gold job or bucket
+  - no serving-table or `core.gold_sync_state` schema rollback is expected
 
 ## Verification
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import sqrt
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Sequence
 
 import pandas as pd
 
@@ -64,6 +66,43 @@ _TRANSITIONS_COLUMNS = (
     "trigger_rule_id",
     "computed_at",
 )
+_ACTIVE_MODELS_SCOPE_TABLE = "pg_temp.regime_active_models_scope"
+
+
+@dataclass(frozen=True)
+class _RegimeApplyConfig:
+    table: str
+    columns: tuple[str, ...]
+    key_columns: tuple[str, ...]
+    scope: str
+
+
+_REGIME_APPLY_CONFIGS: tuple[_RegimeApplyConfig, ...] = (
+    _RegimeApplyConfig(
+        table="gold.regime_inputs_daily",
+        columns=_INPUTS_COLUMNS,
+        key_columns=("as_of_date",),
+        scope="all_rows",
+    ),
+    _RegimeApplyConfig(
+        table="gold.regime_history",
+        columns=_HISTORY_COLUMNS,
+        key_columns=("as_of_date", "model_name", "model_version"),
+        scope="active_models",
+    ),
+    _RegimeApplyConfig(
+        table="gold.regime_latest",
+        columns=_HISTORY_COLUMNS,
+        key_columns=("model_name", "model_version"),
+        scope="active_models",
+    ),
+    _RegimeApplyConfig(
+        table="gold.regime_transitions",
+        columns=_TRANSITIONS_COLUMNS,
+        key_columns=("model_name", "model_version", "effective_from_date"),
+        scope="active_models",
+    ),
+)
 
 
 def _require_postgres_dsn() -> str:
@@ -92,6 +131,194 @@ def _frame_rows(frame: pd.DataFrame, columns: tuple[str, ...]) -> list[tuple[Any
         tuple(_coerce_cell(row.get(column)) for column in columns)
         for row in frame.loc[:, list(columns)].to_dict("records")
     ]
+
+
+def _quote_identifier(identifier: str) -> str:
+    escaped = str(identifier or "").replace('"', '""')
+    return f'"{escaped}"'
+
+
+def _cursor_rowcount(cur: Any) -> int:
+    try:
+        value = int(getattr(cur, "rowcount", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(value, 0)
+
+
+def _ensure_connection_is_writable(cur: Any) -> None:
+    cur.execute("SHOW transaction_read_only")
+    read_only_row = cur.fetchone()
+    if read_only_row and str(read_only_row[0]).strip().lower() == "on":
+        raise RuntimeError("Postgres write target unavailable: transaction_read_only=on")
+
+    cur.execute("SELECT pg_is_in_recovery()")
+    recovery_row = cur.fetchone()
+    if recovery_row and bool(recovery_row[0]):
+        raise RuntimeError("Postgres write target unavailable: pg_is_in_recovery=true")
+
+
+def _table_stage_name(table: str) -> str:
+    return f"regime_stage_{str(table or '').split('.')[-1]}"
+
+
+def _create_regime_stage(cur: Any, *, config: _RegimeApplyConfig) -> str:
+    stage_name = _table_stage_name(config.table)
+    quoted_key_columns = ", ".join(_quote_identifier(column) for column in config.key_columns)
+    cur.execute(
+        f"CREATE TEMP TABLE {stage_name} (LIKE {config.table} INCLUDING DEFAULTS) ON COMMIT DROP"
+    )
+    cur.execute(f"CREATE UNIQUE INDEX {stage_name}_key_idx ON {stage_name} ({quoted_key_columns})")
+    return f"pg_temp.{stage_name}"
+
+
+def _create_active_models_scope(cur: Any, *, active_models: Sequence[tuple[str, int]]) -> None:
+    cur.execute(
+        """
+        CREATE TEMP TABLE regime_active_models_scope (
+            model_name TEXT NOT NULL,
+            model_version INTEGER NOT NULL
+        ) ON COMMIT DROP
+        """
+    )
+    cur.execute(
+        "CREATE UNIQUE INDEX regime_active_models_scope_key_idx "
+        "ON regime_active_models_scope (model_name, model_version)"
+    )
+    if active_models:
+        copy_rows(
+            cur,
+            table=_ACTIVE_MODELS_SCOPE_TABLE,
+            columns=("model_name", "model_version"),
+            rows=active_models,
+        )
+        cur.execute("ANALYZE regime_active_models_scope")
+
+
+def _build_key_match_sql(*, left_alias: str, right_alias: str, key_columns: Sequence[str]) -> str:
+    return " AND ".join(
+        f'{left_alias}.{_quote_identifier(column)} = {right_alias}.{_quote_identifier(column)}'
+        for column in key_columns
+    )
+
+
+def _delete_missing_regime_rows(
+    cur: Any,
+    *,
+    config: _RegimeApplyConfig,
+    stage_table: str,
+    active_models_count: int,
+) -> int:
+    key_match_sql = _build_key_match_sql(
+        left_alias="stage",
+        right_alias="target",
+        key_columns=config.key_columns,
+    )
+    if config.scope == "all_rows":
+        cur.execute(
+            f"""
+            DELETE FROM {config.table} AS target
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM {stage_table} AS stage
+                WHERE {key_match_sql}
+            )
+            """
+        )
+        return _cursor_rowcount(cur)
+
+    if active_models_count <= 0:
+        return 0
+
+    cur.execute(
+        f"""
+        DELETE FROM {config.table} AS target
+        WHERE EXISTS (
+            SELECT 1
+            FROM {_ACTIVE_MODELS_SCOPE_TABLE} AS scope
+            WHERE scope.model_name = target.model_name
+              AND scope.model_version = target.model_version
+        )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM {stage_table} AS stage
+              WHERE {key_match_sql}
+          )
+        """
+    )
+    return _cursor_rowcount(cur)
+
+
+def _upsert_regime_stage_rows(cur: Any, *, config: _RegimeApplyConfig, stage_table: str) -> int:
+    quoted_insert_columns = ", ".join(_quote_identifier(column) for column in config.columns)
+    quoted_select_columns = ", ".join(f'stage.{_quote_identifier(column)}' for column in config.columns)
+    quoted_conflict_columns = ", ".join(_quote_identifier(column) for column in config.key_columns)
+    update_columns = [column for column in config.columns if column not in config.key_columns]
+    if not update_columns:
+        cur.execute(
+            f"""
+            INSERT INTO {config.table} ({quoted_insert_columns})
+            SELECT {quoted_select_columns}
+            FROM {stage_table} AS stage
+            ON CONFLICT ({quoted_conflict_columns}) DO NOTHING
+            """
+        )
+        return _cursor_rowcount(cur)
+
+    assignments = ", ".join(
+        f'{_quote_identifier(column)} = EXCLUDED.{_quote_identifier(column)}'
+        for column in update_columns
+    )
+    changed_predicate = " OR ".join(
+        f'target.{_quote_identifier(column)} IS DISTINCT FROM EXCLUDED.{_quote_identifier(column)}'
+        for column in update_columns
+    )
+    cur.execute(
+        f"""
+        INSERT INTO {config.table} AS target ({quoted_insert_columns})
+        SELECT {quoted_select_columns}
+        FROM {stage_table} AS stage
+        ON CONFLICT ({quoted_conflict_columns}) DO UPDATE
+        SET {assignments}
+        WHERE {changed_predicate}
+        """
+    )
+    return _cursor_rowcount(cur)
+
+
+def _apply_regime_table(
+    cur: Any,
+    *,
+    config: _RegimeApplyConfig,
+    frame: pd.DataFrame,
+    active_models_count: int,
+) -> None:
+    stage_table = _create_regime_stage(cur, config=config)
+    rows = _frame_rows(frame, config.columns)
+    started_at = time.perf_counter()
+    if rows:
+        copy_rows(
+            cur,
+            table=stage_table,
+            columns=config.columns,
+            rows=rows,
+        )
+    cur.execute(f"ANALYZE {_table_stage_name(config.table)}")
+    deleted_rows = _delete_missing_regime_rows(
+        cur,
+        config=config,
+        stage_table=stage_table,
+        active_models_count=active_models_count,
+    )
+    upserted_rows = _upsert_regime_stage_rows(cur, config=config, stage_table=stage_table)
+    unchanged_rows = max(len(rows) - upserted_rows, 0)
+    duration_ms = int(round((time.perf_counter() - started_at) * 1000.0))
+    mdc.write_line(
+        "gold_regime_postgres_apply_stats "
+        f"table={config.table} staged_rows={len(rows)} deleted_rows={deleted_rows} "
+        f"upserted_rows={upserted_rows} unchanged_rows={unchanged_rows} "
+        f"scope={config.scope} scope_models={active_models_count} duration_ms={duration_ms}"
+    )
 
 
 def _normalize_market_series(frame: pd.DataFrame) -> pd.DataFrame:
@@ -286,46 +513,32 @@ def _replace_postgres_tables(
 ) -> None:
     with connect(dsn) as conn:
         with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE gold.regime_inputs_daily")
-            input_rows = _frame_rows(inputs, _INPUTS_COLUMNS)
-            if input_rows:
-                copy_rows(
-                    cur,
-                    table="gold.regime_inputs_daily",
-                    columns=_INPUTS_COLUMNS,
-                    rows=input_rows,
-                )
-
-            if active_models:
-                cur.executemany(
-                    "DELETE FROM gold.regime_history WHERE model_name = %s AND model_version = %s",
-                    active_models,
-                )
-                cur.executemany(
-                    "DELETE FROM gold.regime_latest WHERE model_name = %s AND model_version = %s",
-                    active_models,
-                )
-                cur.executemany(
-                    "DELETE FROM gold.regime_transitions WHERE model_name = %s AND model_version = %s",
-                    active_models,
-                )
-
-            history_rows = _frame_rows(history, _HISTORY_COLUMNS)
-            if history_rows:
-                copy_rows(cur, table="gold.regime_history", columns=_HISTORY_COLUMNS, rows=history_rows)
-
-            latest_rows = _frame_rows(latest, _HISTORY_COLUMNS)
-            if latest_rows:
-                copy_rows(cur, table="gold.regime_latest", columns=_HISTORY_COLUMNS, rows=latest_rows)
-
-            transition_rows = _frame_rows(transitions, _TRANSITIONS_COLUMNS)
-            if transition_rows:
-                copy_rows(
-                    cur,
-                    table="gold.regime_transitions",
-                    columns=_TRANSITIONS_COLUMNS,
-                    rows=transition_rows,
-                )
+            _ensure_connection_is_writable(cur)
+            _create_active_models_scope(cur, active_models=active_models)
+            _apply_regime_table(
+                cur,
+                config=_REGIME_APPLY_CONFIGS[0],
+                frame=inputs,
+                active_models_count=len(active_models),
+            )
+            _apply_regime_table(
+                cur,
+                config=_REGIME_APPLY_CONFIGS[1],
+                frame=history,
+                active_models_count=len(active_models),
+            )
+            _apply_regime_table(
+                cur,
+                config=_REGIME_APPLY_CONFIGS[2],
+                frame=latest,
+                active_models_count=len(active_models),
+            )
+            _apply_regime_table(
+                cur,
+                config=_REGIME_APPLY_CONFIGS[3],
+                frame=transitions,
+                active_models_count=len(active_models),
+            )
 
 
 def _write_storage_outputs(
