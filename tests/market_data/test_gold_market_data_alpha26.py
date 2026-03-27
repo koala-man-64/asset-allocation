@@ -130,7 +130,8 @@ def _install_fake_gold_market_staging(monkeypatch: pytest.MonkeyPatch) -> None:
         return len(to_delete)
 
     def _fake_sync_gold_bucket_chunks(**kwargs):
-        frames = list(kwargs.pop("frames"))
+        frames_arg = kwargs.pop("frames")
+        frames = list(frames_arg() if callable(frames_arg) else frames_arg)
         frame = _concat_frames([df.copy() for df in frames])
         return gold.sync_gold_bucket(frame=frame, **kwargs)
 
@@ -467,7 +468,7 @@ def test_run_alpha26_market_gold_writes_healthy_symbols_and_blocks_publication_o
         for message in messages
     )
     assert any(
-        "artifact_publication_status layer=gold domain=market status=blocked reason=failed_buckets "
+        "artifact_publication_status layer=gold domain=market status=blocked reason=failed_symbols "
         "failure_mode=symbol failed=1 failed_symbols=1 failed_buckets=0 failed_finalization=0 "
         "processed=1 skipped_unchanged=0 skipped_missing_source=0" in message
         for message in messages

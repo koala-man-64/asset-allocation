@@ -208,10 +208,10 @@ def test_finalize_gold_publication_publishes_root_artifact_when_no_failures(monk
 @pytest.mark.parametrize(
     ("failed_symbols", "failed_buckets", "failed_finalization", "publication_reason", "expected_reason", "expected_mode"),
     [
-        (2, 0, 0, None, "failed_buckets", "symbol"),
+        (2, 0, 0, None, "failed_symbols", "symbol"),
         (0, 1, 0, None, "failed_buckets", "bucket"),
         (0, 0, 1, "critical_symbol_verification_failed", "critical_symbol_verification_failed", "finalization"),
-        (2, 1, 1, None, "failed_buckets", "mixed"),
+        (2, 1, 1, None, "mixed_failures", "mixed"),
     ],
 )
 def test_finalize_gold_publication_resolves_blocked_failure_modes(

@@ -88,6 +88,7 @@ python3 scripts/dependency_governance.py check --report artifacts/dependency_gov
 
 - Stateful medallion jobs should acquire a single-instance `JobLock`, wake API dependencies before execution, run inside `run_logged_job`, publish bucket and domain artifacts after writes, complete reconciliation before final watermark persistence, and only then cross the downstream trigger boundary.
 - Metadata snapshot freshness depends on the shared domain artifact publisher. Jobs that mutate operator-facing metadata should not write raw domain JSON directly.
+- ACA job retries are tiered by layer: Bronze jobs keep `replicaRetryLimit: 0` and rely on the next scheduled run for retry-worthy failures, Silver jobs use `replicaRetryLimit: 2`, and Gold jobs use `replicaRetryLimit: 3`.
 
 ## Current API Scope
 

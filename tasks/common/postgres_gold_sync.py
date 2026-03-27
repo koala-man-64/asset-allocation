@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 import pandas as pd
 
+from core import core as mdc
 from core.postgres import PostgresError, connect, copy_rows, get_dsn
 from tasks.common.finance_contracts import VALUATION_FINANCE_COLUMNS
 
@@ -339,6 +341,23 @@ class GoldSyncResult:
     error: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class GoldSyncFailureDetails:
+    stage: str
+    category: str
+    error_class: str
+    transient: bool
+    detail: str
+
+
+class PostgresWriteTargetUnavailableError(RuntimeError):
+    pass
+
+
+_TRANSIENT_SYNC_MAX_ATTEMPTS = 3
+_TRANSIENT_SYNC_RETRY_BASE_SECONDS = 2.0
+
+
 def sync_state_cache_entry(result: GoldSyncResult) -> dict[str, Any]:
     return {
         "source_commit": result.source_commit,
@@ -527,7 +546,7 @@ def _sync_gold_bucket_prepared_frames(
     *,
     config: GoldSyncConfig,
     bucket: str,
-    prepared_frames: Iterable[pd.DataFrame],
+    prepared_frames_factory: Callable[[], Iterable[pd.DataFrame]],
     scope_symbols: Sequence[str],
     source_commit: Optional[float],
     dsn: Optional[str] = None,
@@ -535,11 +554,16 @@ def _sync_gold_bucket_prepared_frames(
     resolved_dsn = dsn or resolve_postgres_dsn()
     clean_bucket = str(bucket or "").strip().upper()
     normalized_scope_symbols = set(_normalize_symbols(scope_symbols))
-    current_symbols: set[str] = set()
-    row_count = 0
-    min_key: Optional[date] = None
-    max_key: Optional[date] = None
-    def _result(*, status: str = "ok", error: Optional[str] = None) -> GoldSyncResult:
+
+    def _result(
+        *,
+        row_count: int,
+        current_symbols: set[str],
+        min_key: Optional[date],
+        max_key: Optional[date],
+        status: str = "ok",
+        error: Optional[str] = None,
+    ) -> GoldSyncResult:
         return GoldSyncResult(
             status=status,
             domain=config.domain,
@@ -554,7 +578,11 @@ def _sync_gold_bucket_prepared_frames(
         )
 
     if not resolved_dsn:
-        for prepared in prepared_frames:
+        current_symbols: set[str] = set()
+        row_count = 0
+        min_key: Optional[date] = None
+        max_key: Optional[date] = None
+        for prepared in prepared_frames_factory():
             if not isinstance(prepared, pd.DataFrame) or prepared.empty:
                 continue
             current_symbols.update(_normalize_symbols(prepared.get("symbol", pd.Series(dtype="object")).tolist()))
@@ -565,78 +593,149 @@ def _sync_gold_bucket_prepared_frames(
                 min_key = frame_min
             if frame_max is not None and (max_key is None or frame_max > max_key):
                 max_key = frame_max
-        return _result(status="skipped_no_dsn")
-
-    try:
-        with connect(resolved_dsn) as conn:
-            with conn.cursor() as cur:
-                if normalized_scope_symbols:
-                    cur.execute(
-                        f'DELETE FROM {config.table} WHERE "symbol" = ANY(%s)',
-                        (sorted(normalized_scope_symbols),),
-                    )
-                for prepared in prepared_frames:
-                    if not isinstance(prepared, pd.DataFrame) or prepared.empty:
-                        continue
-                    current_symbols.update(_normalize_symbols(prepared.get("symbol", pd.Series(dtype="object")).tolist()))
-                    row_count += int(len(prepared))
-                    frame_min = prepared[config.date_column].min()
-                    frame_max = prepared[config.date_column].max()
-                    if frame_min is not None and (min_key is None or frame_min < min_key):
-                        min_key = frame_min
-                    if frame_max is not None and (max_key is None or frame_max > max_key):
-                        max_key = frame_max
-                    copy_rows(
-                        cur,
-                        table=config.table,
-                        columns=_quote_columns(config.columns),
-                        rows=_copy_rows(prepared),
-                    )
-                _upsert_sync_state(
-                    cur,
-                    domain=config.domain,
-                    bucket=clean_bucket,
-                    source_commit=source_commit,
-                    status="success",
-                    row_count=row_count,
-                    symbol_count=len(current_symbols),
-                    min_key=min_key,
-                    max_key=max_key,
-                    error=None,
-                )
-        return _result()
-    except Exception as exc:
-        _record_failed_sync_state(
-            resolved_dsn,
-            domain=config.domain,
-            bucket=clean_bucket,
-            source_commit=source_commit,
+        return _result(
             row_count=row_count,
-            symbol_count=len(current_symbols),
+            current_symbols=current_symbols,
             min_key=min_key,
             max_key=max_key,
-            error=str(exc),
+            status="skipped_no_dsn",
         )
-        raise PostgresError(
-            f"Gold Postgres sync failed for domain={config.domain} bucket={clean_bucket}: {exc}"
-        ) from exc
+
+    max_attempts = _TRANSIENT_SYNC_MAX_ATTEMPTS
+    attempt = 0
+
+    while attempt < max_attempts:
+        attempt += 1
+        current_symbols: set[str] = set()
+        row_count = 0
+        min_key: Optional[date] = None
+        max_key: Optional[date] = None
+        failure_stage = "connect"
+
+        try:
+            with connect(resolved_dsn) as conn:
+                failure_stage = "open_cursor"
+                with conn.cursor() as cur:
+                    failure_stage = "verify_write_target"
+                    _ensure_connection_is_writable(cur)
+                    if normalized_scope_symbols:
+                        failure_stage = "delete_scope_symbols"
+                        cur.execute(
+                            f'DELETE FROM {config.table} WHERE "symbol" = ANY(%s)',
+                            (sorted(normalized_scope_symbols),),
+                        )
+                    for prepared in prepared_frames_factory():
+                        if not isinstance(prepared, pd.DataFrame) or prepared.empty:
+                            continue
+                        current_symbols.update(
+                            _normalize_symbols(prepared.get("symbol", pd.Series(dtype="object")).tolist())
+                        )
+                        row_count += int(len(prepared))
+                        frame_min = prepared[config.date_column].min()
+                        frame_max = prepared[config.date_column].max()
+                        if frame_min is not None and (min_key is None or frame_min < min_key):
+                            min_key = frame_min
+                        if frame_max is not None and (max_key is None or frame_max > max_key):
+                            max_key = frame_max
+                        failure_stage = "copy_rows"
+                        copy_rows(
+                            cur,
+                            table=config.table,
+                            columns=_quote_columns(config.columns),
+                            rows=_copy_rows(prepared),
+                        )
+                    failure_stage = "record_sync_state"
+                    _upsert_sync_state(
+                        cur,
+                        domain=config.domain,
+                        bucket=clean_bucket,
+                        source_commit=source_commit,
+                        status="success",
+                        row_count=row_count,
+                        symbol_count=len(current_symbols),
+                        min_key=min_key,
+                        max_key=max_key,
+                        error=None,
+                    )
+            return _result(
+                row_count=row_count,
+                current_symbols=current_symbols,
+                min_key=min_key,
+                max_key=max_key,
+            )
+        except Exception as exc:
+            failure = classify_sync_failure(stage=failure_stage, exc=exc)
+            if failure.transient and attempt < max_attempts:
+                retry_delay_seconds = _transient_sync_retry_delay_seconds(attempt)
+                mdc.write_line(
+                    "postgres_gold_sync_retry "
+                    f"domain={config.domain} bucket={clean_bucket} attempt={attempt} "
+                    f"next_attempt={attempt + 1} max_attempts={max_attempts} "
+                    f"stage={failure.stage} category={failure.category} "
+                    f"wait_seconds={retry_delay_seconds:.1f} rows_attempted={row_count} "
+                    f"symbols_attempted={len(current_symbols)}"
+                )
+                time.sleep(retry_delay_seconds)
+                continue
+
+            structured_error = (
+                f"stage={failure.stage} category={failure.category} "
+                f"error_class={failure.error_class} transient={str(failure.transient).lower()} "
+                f"detail={failure.detail}"
+            )
+            mdc.write_line(
+                "postgres_gold_sync_failure "
+                f"domain={config.domain} bucket={clean_bucket} stage={failure.stage} "
+                f"category={failure.category} transient={str(failure.transient).lower()} "
+                f"error_class={failure.error_class} scope_symbols={len(normalized_scope_symbols)} "
+                f"rows_attempted={row_count} symbols_attempted={len(current_symbols)} "
+                f"detail={_coerce_log_token(failure.detail)}"
+            )
+            _record_failed_sync_state(
+                resolved_dsn,
+                domain=config.domain,
+                bucket=clean_bucket,
+                source_commit=source_commit,
+                row_count=row_count,
+                symbol_count=len(current_symbols),
+                min_key=min_key,
+                max_key=max_key,
+                error=structured_error,
+            )
+            message = (
+                f"Gold Postgres sync failed for domain={config.domain} bucket={clean_bucket} "
+                f"stage={failure.stage} category={failure.category} error_class={failure.error_class} "
+                f"transient={str(failure.transient).lower()}: {failure.detail}"
+            )
+            error = PostgresError(message)
+            setattr(error, "failure_stage", failure.stage)
+            setattr(error, "failure_category", failure.category)
+            setattr(error, "failure_error_class", failure.error_class)
+            setattr(error, "failure_transient", failure.transient)
+            raise error from exc
+
+    raise AssertionError("Postgres gold sync retry loop exited unexpectedly.")
 
 
 def sync_gold_bucket_chunks(
     *,
     domain: str,
     bucket: str,
-    frames: Iterable[pd.DataFrame],
+    frames: Iterable[pd.DataFrame] | Callable[[], Iterable[pd.DataFrame]],
     scope_symbols: Sequence[str],
     source_commit: Optional[float],
     dsn: Optional[str] = None,
 ) -> GoldSyncResult:
     config = get_sync_config(domain)
-    prepared_frames = (_prepare_frame(frame, config=config) for frame in frames)
+    if callable(frames):
+        prepared_frames_factory = lambda: (_prepare_frame(frame, config=config) for frame in frames())
+    else:
+        prepared_frames = tuple(_prepare_frame(frame, config=config) for frame in frames)
+        prepared_frames_factory = lambda: iter(prepared_frames)
     return _sync_gold_bucket_prepared_frames(
         config=config,
         bucket=bucket,
-        prepared_frames=prepared_frames,
+        prepared_frames_factory=prepared_frames_factory,
         scope_symbols=scope_symbols,
         source_commit=source_commit,
         dsn=dsn,
@@ -662,7 +761,7 @@ def sync_gold_bucket(
     return _sync_gold_bucket_prepared_frames(
         config=config,
         bucket=bucket,
-        prepared_frames=[prepared],
+        prepared_frames_factory=lambda: [prepared],
         scope_symbols=sorted(normalized_scope_symbols),
         source_commit=source_commit,
         dsn=dsn,
@@ -716,6 +815,71 @@ def _normalize_symbols(values: Sequence[Any]) -> list[str]:
         seen.add(symbol)
         out.append(symbol)
     return out
+
+
+def _compact_error_text(value: object) -> str:
+    text = " ".join(str(value or "").split())
+    return text or "unknown"
+
+
+def _coerce_log_token(value: object) -> str:
+    text = _compact_error_text(value)
+    return text.replace('"', "'").replace(" ", "_") or "n/a"
+
+
+def _ensure_connection_is_writable(cur: Any) -> None:
+    cur.execute("SHOW transaction_read_only")
+    read_only_row = cur.fetchone()
+    if read_only_row and str(read_only_row[0]).strip().lower() == "on":
+        raise PostgresWriteTargetUnavailableError(
+            "Postgres write target unavailable: transaction_read_only=on"
+        )
+
+    cur.execute("SELECT pg_is_in_recovery()")
+    recovery_row = cur.fetchone()
+    if recovery_row and bool(recovery_row[0]):
+        raise PostgresWriteTargetUnavailableError(
+            "Postgres write target unavailable: pg_is_in_recovery=true"
+        )
+
+
+def _transient_sync_retry_delay_seconds(attempt: int) -> float:
+    safe_attempt = max(int(attempt), 1)
+    return float(_TRANSIENT_SYNC_RETRY_BASE_SECONDS * (2 ** (safe_attempt - 1)))
+
+
+def classify_sync_failure(*, stage: str, exc: Exception) -> GoldSyncFailureDetails:
+    error_class = type(exc).__name__
+    detail = _compact_error_text(exc)
+    haystack = f"{error_class} {detail}".lower()
+    category = "unknown"
+    transient = False
+
+    if (
+        "read-only transaction" in haystack
+        or "readonlysqltransaction" in haystack
+        or "transaction_read_only=on" in haystack
+        or "write target unavailable" in haystack
+        or "pg_is_in_recovery=true" in haystack
+    ):
+        category = "read_only_transaction"
+        transient = True
+    elif "administrator command" in haystack:
+        category = "administrator_termination"
+        transient = True
+    elif "timeout" in haystack or "connection refused" in haystack or "connection reset" in haystack:
+        category = "connection_interrupted"
+        transient = True
+    elif "schema drift" in haystack or "missing columns" in haystack or "does not exist" in haystack:
+        category = "schema_drift"
+
+    return GoldSyncFailureDetails(
+        stage=str(stage or "").strip() or "unknown",
+        category=category,
+        error_class=error_class,
+        transient=transient,
+        detail=detail,
+    )
 
 
 def _copy_rows(df: pd.DataFrame):

@@ -342,15 +342,74 @@ def test_bronze_jobs_do_not_automatically_retry_failed_executions() -> None:
         )
 
 
-def test_gold_market_job_uses_remediation_retry_and_memory_settings() -> None:
+def test_silver_jobs_retry_failed_executions_twice() -> None:
+    repo_root = _repo_root()
+    silver_job_names = (
+        "job_silver_market_data.yaml",
+        "job_silver_finance_data.yaml",
+        "job_silver_earnings_data.yaml",
+        "job_silver_price_target_data.yaml",
+    )
+
+    for job_name in silver_job_names:
+        path = repo_root / "deploy" / job_name
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+
+        configuration = (doc.get("properties") or {}).get("configuration") or {}
+        assert configuration.get("replicaRetryLimit") == 2, (
+            f"{path}: silver jobs must retry failed replicas twice"
+        )
+
+
+def test_gold_jobs_retry_failed_executions_three_times() -> None:
+    repo_root = _repo_root()
+    gold_job_names = (
+        "job_gold_market_data.yaml",
+        "job_gold_finance_data.yaml",
+        "job_gold_earnings_data.yaml",
+        "job_gold_price_target_data.yaml",
+        "job_gold_regime_data.yaml",
+    )
+
+    for job_name in gold_job_names:
+        path = repo_root / "deploy" / job_name
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+
+        configuration = (doc.get("properties") or {}).get("configuration") or {}
+        assert configuration.get("replicaRetryLimit") == 3, (
+            f"{path}: gold jobs must retry failed replicas three times"
+        )
+
+
+def test_backtests_and_platinum_keep_existing_retry_policy() -> None:
+    repo_root = _repo_root()
+    expected_retry_limits = {
+        "job_backtests.yaml": 1,
+        "job_platinum_rankings.yaml": 1,
+    }
+
+    for job_name, expected_retry_limit in expected_retry_limits.items():
+        path = repo_root / "deploy" / job_name
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+
+        configuration = (doc.get("properties") or {}).get("configuration") or {}
+        assert configuration.get("replicaRetryLimit") == expected_retry_limit, (
+            f"{path}: retry policy must remain unchanged"
+        )
+
+
+def test_gold_market_job_uses_tiered_retry_and_memory_settings() -> None:
     repo_root = _repo_root()
     path = repo_root / "deploy" / "job_gold_market_data.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(doc, dict), f"{path}: expected YAML mapping"
 
     configuration = (doc.get("properties") or {}).get("configuration") or {}
-    assert configuration.get("replicaRetryLimit") == 1, (
-        f"{path}: gold market job remediation must limit replica retries to 1"
+    assert configuration.get("replicaRetryLimit") == 3, (
+        f"{path}: gold market job must retry failed replicas three times"
     )
 
     containers = (((doc.get("properties") or {}).get("template") or {}).get("containers") or [])

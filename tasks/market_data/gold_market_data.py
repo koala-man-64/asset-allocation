@@ -1443,7 +1443,7 @@ def _run_alpha26_market_gold(
                     sync_result = sync_gold_bucket_chunks(
                         domain="market",
                         bucket=bucket,
-                        frames=_iter_staged_market_chunk_frames(
+                        frames=lambda: _iter_staged_market_chunk_frames(
                             gold_container=gold_container,
                             chunk_prefix=stage_result.staging_chunk_prefix,
                         ),

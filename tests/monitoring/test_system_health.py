@@ -1221,6 +1221,84 @@ def test_system_health_adds_retry_symbol_metadata_to_recent_jobs(
     }
 
 
+def test_system_health_does_not_add_retry_symbol_metadata_to_gold_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "gold-market-job")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    job_url = (
+        "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/gold-market-job"
+    )
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/gold-market-job",
+            "properties": {"provisioningState": "Succeeded"},
+        },
+        f"{job_url}/executions": {
+            "value": [
+                {
+                    "name": "gold-market-job-exec-1",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-01T00:00:00Z",
+                        "endTime": "2024-01-01T00:10:00Z",
+                    },
+                }
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    class FakeAzureLogAnalyticsClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.query_calls = 0
+
+        def query(self, *, workspace_id: str, query: str, timespan: Optional[str] = None) -> Dict[str, Any]:
+            self.query_calls += 1
+            raise AssertionError("gold jobs should not request retry-on-next-run metadata")
+
+        def close(self) -> None:
+            return None
+
+    fake_log_client = FakeAzureLogAnalyticsClient()
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+    monkeypatch.setattr(system_health, "AzureLogAnalyticsClient", lambda *args, **kwargs: fake_log_client)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert payload["overall"] == "healthy"
+    assert "metadata" not in payload["recentJobs"][0]
+    assert fake_log_client.query_calls == 0
+
+
 def test_system_health_critical_on_resource_health_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")

@@ -38,6 +38,24 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
   - upserts `core.gold_sync_state`
   - advances the bucket watermark only after Postgres sync succeeds
 
+## Failure Telemetry
+
+- Postgres sync failures now emit `postgres_gold_sync_failure` with:
+  - `domain`
+  - `bucket`
+  - `stage`
+  - `category`
+  - `error_class`
+  - `transient`
+- Gold earnings now emits `gold_earnings_failure_counter` whenever it increments a failure counter.
+- Final publication logs now use category-accurate blocked reasons:
+  - `failed_symbols`
+  - `failed_buckets`
+  - `failed_finalization`
+  - `mixed_failures`
+- Use `[docs/ops/gold-earnings-failure-timeline.kql](/mnt/c/Users/rdpro/Projects/asset-allocation/docs/ops/gold-earnings-failure-timeline.kql)` to reconstruct the incident table for a specific gold earnings execution.
+- If Delta writes succeed but Postgres serving sync fails, the bucket data may already exist in storage while watermarks and the shared gold symbol index remain blocked by design.
+
 ## Gold Market Notes
 
 - `gold.market_data` is an upstream dependency for `gold-regime-job` and the storage-backed market API endpoints.

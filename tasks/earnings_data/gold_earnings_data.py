@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from core import core as mdc
 from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.gold_output_contracts import project_gold_output_frame
 
@@ -69,6 +70,39 @@ def _merge_symbol_to_bucket_map(
     out = {symbol: bucket for symbol, bucket in existing.items() if bucket != touched_bucket}
     out.update(touched_symbol_to_bucket)
     return out
+
+
+def _failure_log_value(value: object) -> str:
+    text = " ".join(str(value or "").split())
+    return text.replace('"', "'").replace(" ", "_") or "n/a"
+
+
+def _log_failure_counter(
+    *,
+    stage: str,
+    failed: int,
+    failed_symbols: int,
+    failed_buckets: int,
+    failed_finalization: int,
+    bucket: Optional[str] = None,
+    ticker: Optional[str] = None,
+    exc: Optional[BaseException] = None,
+) -> None:
+    error_class = getattr(exc, "failure_error_class", None) or (
+        type(exc).__name__ if exc is not None else "none"
+    )
+    failure_source = getattr(exc, "failure_stage", None) or stage
+    failure_category = getattr(exc, "failure_category", None) or "unclassified"
+    transient_value = bool(getattr(exc, "failure_transient", False))
+    mdc.write_line(
+        "gold_earnings_failure_counter "
+        f"stage={_failure_log_value(stage)} failure_source={_failure_log_value(failure_source)} "
+        f"failure_category={_failure_log_value(failure_category)} "
+        f"bucket={_failure_log_value(bucket or 'n/a')} ticker={_failure_log_value(ticker or 'n/a')} "
+        f"exception_type={_failure_log_value(error_class)} transient={str(transient_value).lower()} "
+        f"counter_value={int(failed)} failed_symbols={int(failed_symbols)} "
+        f"failed_buckets={int(failed_buckets)} failed_finalization={int(failed_finalization)}"
+    )
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -602,6 +636,16 @@ def _run_alpha26_earnings_gold(
                         failed += 1
                         failed_symbols += 1
                         bucket_symbol_failures += 1
+                        _log_failure_counter(
+                            stage="compute_features",
+                            bucket=bucket,
+                            ticker=ticker,
+                            exc=exc,
+                            failed=failed,
+                            failed_symbols=failed_symbols,
+                            failed_buckets=failed_buckets,
+                            failed_finalization=failed_finalization,
+                        )
                         mdc.write_warning(f"Gold earnings alpha26 compute failed for {ticker}: {exc}")
             if symbol_frames:
                 df_gold_bucket = project_gold_output_frame(
@@ -733,6 +777,15 @@ def _run_alpha26_earnings_gold(
                 except Exception as exc:
                     failed += 1
                     failed_buckets += 1
+                    _log_failure_counter(
+                        stage="checkpoint_publication",
+                        bucket=bucket,
+                        exc=exc,
+                        failed=failed,
+                        failed_symbols=failed_symbols,
+                        failed_buckets=failed_buckets,
+                        failed_finalization=failed_finalization,
+                    )
                     mdc.write_error(f"Gold earnings alpha26 checkpoint failed bucket={bucket}: {exc}")
                     mdc.write_line(
                         f"watermark_update_status layer=gold domain=earnings bucket={bucket} "
@@ -777,6 +830,15 @@ def _run_alpha26_earnings_gold(
         except Exception as exc:
             failed += 1
             failed_buckets += 1
+            _log_failure_counter(
+                stage="bucket_write",
+                bucket=bucket,
+                exc=exc,
+                failed=failed,
+                failed_symbols=failed_symbols,
+                failed_buckets=failed_buckets,
+                failed_finalization=failed_finalization,
+            )
             mdc.write_error(f"Gold earnings alpha26 write failed bucket={bucket}: {exc}")
             mdc.write_line(
                 f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
@@ -865,6 +927,14 @@ def main() -> int:
             )
         except Exception as exc:
             reconciliation_failed = 1
+            _log_failure_counter(
+                stage="reconciliation",
+                exc=exc,
+                failed=failed + reconciliation_failed,
+                failed_symbols=0,
+                failed_buckets=0,
+                failed_finalization=reconciliation_failed,
+            )
             mdc.write_error(f"Gold earnings reconciliation failed: {exc}")
             mdc.write_line(
                 "reconciliation_result layer=gold domain=earnings "

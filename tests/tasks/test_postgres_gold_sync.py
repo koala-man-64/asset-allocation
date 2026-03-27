@@ -34,6 +34,19 @@ class _FakeCursor:
             return None
         return self.fetchone_rows.pop(0)
 
+    def copy(self, _statement: str):
+        class _FakeCopy:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, exc_type, exc, tb) -> None:
+                return None
+
+            def write_row(self_inner, _row) -> None:
+                return None
+
+        return _FakeCopy()
+
 
 class _FakeConnection:
     def __init__(self, cursor: _FakeCursor) -> None:
@@ -208,6 +221,193 @@ def test_sync_gold_bucket_records_failure_state(monkeypatch: pytest.MonkeyPatch)
     assert recorded["domain"] == "finance"
     assert recorded["bucket"] == "A"
     assert recorded["source_commit"] == 321.0
+
+
+def test_sync_gold_bucket_retries_transient_read_only_delete_failures_until_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    retry_sleeps: list[float] = []
+    connect_calls = {"count": 0}
+
+    class ReadOnlySqlTransaction(RuntimeError):
+        pass
+
+    class _RetryCursor(_FakeCursor):
+        def __init__(self, *, fail_delete: bool) -> None:
+            super().__init__()
+            self.fail_delete = fail_delete
+
+        def execute(self, sql: str, params=None) -> None:
+            self.executed.append((sql, params))
+            if "DELETE FROM" in sql and self.fail_delete:
+                raise ReadOnlySqlTransaction("cannot execute DELETE in a read-only transaction")
+
+    def _fake_connect(_dsn: str):
+        connect_calls["count"] = int(connect_calls["count"]) + 1
+        return _FakeConnection(_RetryCursor(fail_delete=connect_calls["count"] == 1))
+
+    monkeypatch.setattr(sync, "connect", _fake_connect)
+    monkeypatch.setattr(sync.mdc, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(sync.time, "sleep", lambda seconds: retry_sleeps.append(float(seconds)))
+
+    result = sync.sync_gold_bucket(
+        domain="market",
+        bucket="A",
+        frame=pd.DataFrame({"date": [pd.Timestamp("2026-01-02")], "symbol": ["AAPL"]}),
+        scope_symbols=["AAPL"],
+        source_commit=123.0,
+        dsn="postgresql://test",
+    )
+
+    assert result.status == "ok"
+    assert connect_calls["count"] == 2
+    assert retry_sleeps == [2.0]
+    assert any("postgres_gold_sync_retry domain=market bucket=A attempt=1 next_attempt=2" in msg for msg in messages)
+
+
+def test_sync_gold_bucket_classifies_read_only_delete_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    messages: list[str] = []
+    recorded: dict[str, object] = {}
+
+    class ReadOnlySqlTransaction(RuntimeError):
+        pass
+
+    class _ReadOnlyCursor(_FakeCursor):
+        def execute(self, sql: str, params=None) -> None:
+            self.executed.append((sql, params))
+            if "DELETE FROM" in sql:
+                raise ReadOnlySqlTransaction("cannot execute DELETE in a read-only transaction")
+
+    monkeypatch.setattr(sync, "connect", lambda _dsn: _FakeConnection(_ReadOnlyCursor()))
+    monkeypatch.setattr(sync, "_record_failed_sync_state", lambda *args, **kwargs: recorded.update(kwargs))
+    monkeypatch.setattr(sync.mdc, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(sync.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(sync.PostgresError, match="stage=delete_scope_symbols category=read_only_transaction"):
+        sync.sync_gold_bucket(
+            domain="market",
+            bucket="A",
+            frame=pd.DataFrame({"date": [pd.Timestamp("2026-01-02")], "symbol": ["AAPL"]}),
+            scope_symbols=["AAPL"],
+            source_commit=123.0,
+            dsn="postgresql://test",
+        )
+
+    assert recorded["error"] == (
+        "stage=delete_scope_symbols category=read_only_transaction "
+        "error_class=ReadOnlySqlTransaction transient=true "
+        "detail=cannot execute DELETE in a read-only transaction"
+    )
+    assert any(
+        "postgres_gold_sync_failure domain=market bucket=A stage=delete_scope_symbols "
+        "category=read_only_transaction transient=true error_class=ReadOnlySqlTransaction"
+        in message
+        for message in messages
+    )
+
+
+def test_sync_gold_bucket_detects_read_only_session_before_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    messages: list[str] = []
+    recorded: dict[str, object] = {}
+
+    def _fake_connect(_dsn: str):
+        return _FakeConnection(_FakeCursor(fetchone_rows=[("on",)]))
+
+    monkeypatch.setattr(sync, "connect", _fake_connect)
+    monkeypatch.setattr(sync, "_record_failed_sync_state", lambda *args, **kwargs: recorded.update(kwargs))
+    monkeypatch.setattr(sync.mdc, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(sync.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(sync.PostgresError, match="stage=verify_write_target category=read_only_transaction"):
+        sync.sync_gold_bucket(
+            domain="market",
+            bucket="A",
+            frame=pd.DataFrame({"date": [pd.Timestamp("2026-01-02")], "symbol": ["AAPL"]}),
+            scope_symbols=["AAPL"],
+            source_commit=123.0,
+            dsn="postgresql://test",
+        )
+
+    assert recorded["error"] == (
+        "stage=verify_write_target category=read_only_transaction "
+        "error_class=PostgresWriteTargetUnavailableError transient=true "
+        "detail=Postgres write target unavailable: transaction_read_only=on"
+    )
+    assert any(
+        "postgres_gold_sync_failure domain=market bucket=A stage=verify_write_target "
+        "category=read_only_transaction transient=true error_class=PostgresWriteTargetUnavailableError"
+        in message
+        for message in messages
+    )
+
+
+def test_sync_gold_bucket_chunks_retries_with_callable_frame_supplier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry_sleeps: list[float] = []
+    frame_supplier_calls = {"count": 0}
+    connect_calls = {"count": 0}
+
+    class ReadOnlySqlTransaction(RuntimeError):
+        pass
+
+    class _RetryCursor(_FakeCursor):
+        def __init__(self, *, fail_copy: bool) -> None:
+            super().__init__()
+            self.fail_copy = fail_copy
+
+        def execute(self, sql: str, params=None) -> None:
+            self.executed.append((sql, params))
+
+        def copy(self, _statement: str):
+            class _FailingCopy:
+                def __init__(self, *, fail_copy: bool) -> None:
+                    self.fail_copy = fail_copy
+                    self.write_calls = 0
+
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, exc_type, exc, tb) -> None:
+                    return None
+
+                def write_row(self_inner, _row) -> None:
+                    self_inner.write_calls += 1
+                    if self_inner.fail_copy and self_inner.write_calls == 1:
+                        raise ReadOnlySqlTransaction("cannot execute DELETE in a read-only transaction")
+
+            return _FailingCopy(fail_copy=self.fail_copy)
+
+    def _fake_connect(_dsn: str):
+        connect_calls["count"] = int(connect_calls["count"]) + 1
+        return _FakeConnection(_RetryCursor(fail_copy=connect_calls["count"] == 1))
+
+    def _frame_supplier():
+        frame_supplier_calls["count"] = int(frame_supplier_calls["count"]) + 1
+        return [
+            pd.DataFrame({"date": [pd.Timestamp("2026-01-02")], "symbol": ["AAPL"], "close": [101.5]}),
+            pd.DataFrame({"date": [pd.Timestamp("2026-01-03")], "symbol": ["MSFT"], "close": [202.5]}),
+        ]
+
+    monkeypatch.setattr(sync, "connect", _fake_connect)
+    monkeypatch.setattr(sync.time, "sleep", lambda seconds: retry_sleeps.append(float(seconds)))
+
+    result = sync.sync_gold_bucket_chunks(
+        domain="market",
+        bucket="A",
+        frames=_frame_supplier,
+        scope_symbols=["AAPL", "MSFT"],
+        source_commit=123.0,
+        dsn="postgresql://test",
+    )
+
+    assert result.status == "ok"
+    assert result.row_count == 2
+    assert result.symbol_count == 2
+    assert connect_calls["count"] == 2
+    assert frame_supplier_calls["count"] == 2
+    assert retry_sleeps == [2.0]
 
 
 def test_validate_sync_target_schema_raises_for_missing_columns(monkeypatch: pytest.MonkeyPatch) -> None:

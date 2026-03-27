@@ -61,6 +61,44 @@ def resolve_failure_mode(
     return "mixed"
 
 
+def default_publication_reason(
+    *,
+    failed_symbols: int,
+    failed_buckets: int,
+    failed_finalization: int,
+) -> str:
+    symbol_failure_count = _coerce_counter(failed_symbols)
+    bucket_failure_count = _coerce_counter(failed_buckets)
+    finalization_failure_count = _coerce_counter(failed_finalization)
+    if symbol_failure_count == 0 and bucket_failure_count == 0 and finalization_failure_count == 0:
+        return "none"
+    if symbol_failure_count > 0 and bucket_failure_count == 0 and finalization_failure_count == 0:
+        return "failed_symbols"
+    if bucket_failure_count > 0 and symbol_failure_count == 0 and finalization_failure_count == 0:
+        return "failed_buckets"
+    if finalization_failure_count > 0 and symbol_failure_count == 0 and bucket_failure_count == 0:
+        return "failed_finalization"
+    return "mixed_failures"
+
+
+def _emit_publication_failure_counter(
+    *,
+    domain: str,
+    stage: str,
+    reason: str,
+    failed_symbols: int,
+    failed_buckets: int,
+    failed_finalization: int,
+) -> None:
+    mdc.write_line(
+        "gold_publication_failure_counter "
+        f"layer=gold domain={domain} stage={stage} reason={reason} "
+        f"failed_symbols={_coerce_counter(failed_symbols)} "
+        f"failed_buckets={_coerce_counter(failed_buckets)} "
+        f"failed_finalization={_coerce_counter(failed_finalization)}"
+    )
+
+
 def publish_gold_checkpoint_aggregate(
     *,
     domain: str,
@@ -192,11 +230,27 @@ def finalize_gold_publication(
             except Exception as exc:
                 finalization_failure_count += 1
                 clean_reason = "index_write_failed"
+                _emit_publication_failure_counter(
+                    domain=clean_domain,
+                    stage="index_write",
+                    reason=clean_reason,
+                    failed_symbols=symbol_failure_count,
+                    failed_buckets=bucket_failure_count,
+                    failed_finalization=finalization_failure_count,
+                )
                 mdc.write_error(f"Gold {clean_domain} symbol index write failed: {exc}")
 
         if index_path is None and clean_reason is None:
             finalization_failure_count += 1
             clean_reason = "index_unavailable"
+            _emit_publication_failure_counter(
+                domain=clean_domain,
+                stage="index_availability",
+                reason=clean_reason,
+                failed_symbols=symbol_failure_count,
+                failed_buckets=bucket_failure_count,
+                failed_finalization=finalization_failure_count,
+            )
 
         if finalization_failure_count == 0 and index_path is not None:
             try:
@@ -225,7 +279,11 @@ def finalize_gold_publication(
         failed_finalization=finalization_failure_count,
     )
     if clean_reason is None and failed_total > 0:
-        clean_reason = "failed_buckets"
+        clean_reason = default_publication_reason(
+            failed_symbols=symbol_failure_count,
+            failed_buckets=bucket_failure_count,
+            failed_finalization=finalization_failure_count,
+        )
     if clean_reason is None:
         clean_reason = "none"
 

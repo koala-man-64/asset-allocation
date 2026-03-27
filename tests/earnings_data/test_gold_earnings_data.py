@@ -3,6 +3,7 @@ import pandas as pd
 from core import core as core_module
 from core import delta_core
 from core.pipeline import DataPaths
+from core.postgres import PostgresError
 from tasks.earnings_data import gold_earnings_data as gold
 from tasks.common.gold_output_contracts import GOLD_EARNINGS_OUTPUT_COLUMNS
 
@@ -373,6 +374,91 @@ def test_run_alpha26_earnings_gold_blocks_publication_when_bucket_fails(monkeypa
     assert alpha26_symbols == 0
     assert index_path is None
     assert index_calls["count"] == 0
+
+
+def test_run_alpha26_earnings_gold_logs_structured_failure_counter_for_postgres_sync(monkeypatch):
+    messages = _capture_log_messages(monkeypatch)
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gold.domain_artifacts, "write_bucket_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(gold, "save_watermarks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gold, "resolve_postgres_dsn", lambda: "postgresql://test")
+    monkeypatch.setattr(gold, "load_domain_sync_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        delta_core,
+        "get_delta_last_commit",
+        lambda _container, path: 1 if path == DataPaths.get_silver_earnings_bucket_path("A") else None,
+    )
+    monkeypatch.setattr(delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        delta_core,
+        "load_delta",
+        lambda _container, path: pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-03-01")],
+                "symbol": ["AAPL"],
+                "record_type": ["actual"],
+            }
+        )
+        if path == DataPaths.get_silver_earnings_bucket_path("A")
+        else pd.DataFrame(),
+    )
+    monkeypatch.setattr(
+        gold,
+        "compute_features",
+        lambda _df: pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-03-01")],
+                "symbol": ["AAPL"],
+                "reported_eps": [1.23],
+                "eps_estimate": [1.11],
+                "calendar_time_of_day": [pd.NA],
+                "calendar_currency": [pd.NA],
+                "next_earnings_time_of_day": ["post-market"],
+                "has_upcoming_earnings": [1],
+                "is_scheduled_earnings_day": [0],
+            }
+        ),
+    )
+    monkeypatch.setattr(delta_core, "store_delta", lambda *_args, **_kwargs: None)
+
+    failure = PostgresError("Gold Postgres sync failed")
+    setattr(failure, "failure_stage", "delete_scope_symbols")
+    setattr(failure, "failure_category", "read_only_transaction")
+    setattr(failure, "failure_error_class", "ReadOnlySqlTransaction")
+    setattr(failure, "failure_transient", True)
+    monkeypatch.setattr(gold, "sync_gold_bucket", lambda **_kwargs: (_ for _ in ()).throw(failure))
+
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        index_path,
+    ) = gold._run_alpha26_earnings_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks={},
+    )
+
+    assert processed == 0
+    assert skipped_unchanged == 0
+    assert skipped_missing_source == 0
+    assert failed == 1
+    assert watermarks_dirty is False
+    assert alpha26_symbols == 0
+    assert index_path is None
+    assert any(
+        "gold_earnings_failure_counter stage=bucket_write failure_source=delete_scope_symbols "
+        "failure_category=read_only_transaction bucket=A ticker=n/a "
+        "exception_type=ReadOnlySqlTransaction transient=true counter_value=1 "
+        "failed_symbols=0 failed_buckets=1 failed_finalization=0" in message
+        for message in messages
+    )
 
 
 def test_run_alpha26_earnings_gold_uses_checkpoint_helper_and_final_log_contract(monkeypatch):
