@@ -149,13 +149,24 @@ def _cursor_rowcount(cur: Any) -> int:
 def _ensure_connection_is_writable(cur: Any) -> None:
     cur.execute("SHOW transaction_read_only")
     read_only_row = cur.fetchone()
-    if read_only_row and str(read_only_row[0]).strip().lower() == "on":
-        raise RuntimeError("Postgres write target unavailable: transaction_read_only=on")
+    transaction_read_only = str(read_only_row[0]).strip().lower() if read_only_row else "unknown"
+
+    cur.execute("SHOW default_transaction_read_only")
+    default_read_only_row = cur.fetchone()
+    default_transaction_read_only = (
+        str(default_read_only_row[0]).strip().lower() if default_read_only_row else "unknown"
+    )
 
     cur.execute("SELECT pg_is_in_recovery()")
     recovery_row = cur.fetchone()
-    if recovery_row and bool(recovery_row[0]):
-        raise RuntimeError("Postgres write target unavailable: pg_is_in_recovery=true")
+    in_recovery = bool(recovery_row[0]) if recovery_row else False
+    if transaction_read_only == "on" or in_recovery:
+        raise RuntimeError(
+            "Postgres write target unavailable: "
+            f"transaction_read_only={transaction_read_only} "
+            f"default_transaction_read_only={default_transaction_read_only} "
+            f"pg_is_in_recovery={'true' if in_recovery else 'false'}"
+        )
 
 
 def _table_stage_name(table: str) -> str:

@@ -354,7 +354,7 @@ def test_sync_gold_bucket_detects_read_only_session_before_delete(monkeypatch: p
     recorded: dict[str, object] = {}
 
     def _fake_connect(_dsn: str):
-        return _FakeConnection(_FakeCursor(fetchone_rows=[("on",)]))
+        return _FakeConnection(_FakeCursor(fetchone_rows=[("on",), ("off",), (False,)]))
 
     monkeypatch.setattr(sync, "connect", _fake_connect)
     monkeypatch.setattr(sync, "_record_failed_sync_state", lambda *args, **kwargs: recorded.update(kwargs))
@@ -374,7 +374,8 @@ def test_sync_gold_bucket_detects_read_only_session_before_delete(monkeypatch: p
     assert recorded["error"] == (
         "stage=verify_write_target category=read_only_transaction "
         "error_class=PostgresWriteTargetUnavailableError transient=true "
-        "detail=Postgres write target unavailable: transaction_read_only=on"
+        "detail=Postgres write target unavailable: transaction_read_only=on "
+        "default_transaction_read_only=off pg_is_in_recovery=false"
     )
     assert any(
         "postgres_gold_sync_failure domain=market bucket=A stage=verify_write_target "
