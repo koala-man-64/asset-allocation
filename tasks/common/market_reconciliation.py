@@ -5,8 +5,8 @@ from typing import Any, Callable, Optional, Sequence, Set
 
 import pandas as pd
 
-from tasks.common import bronze_bucketing
-from tasks.common import layer_bucketing
+from core import bronze_bucketing
+from core import layer_bucketing
 
 from tasks.common.backfill import apply_backfill_start_cutoff
 

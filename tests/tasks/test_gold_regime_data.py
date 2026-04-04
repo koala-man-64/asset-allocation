@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
-from tasks.common.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
+from core.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
 from tasks.regime_data import gold_regime_data as regime_job
 
 
@@ -146,11 +146,11 @@ def test_write_storage_outputs_refreshes_persisted_metadata_snapshots(monkeypatc
     monkeypatch.setattr(regime_job.mdc, "get_storage_client", lambda _container: _FakeClient())
     monkeypatch.setattr(regime_job, "computed_at_iso", lambda: "2026-03-21T12:00:00+00:00")
     monkeypatch.setattr(
-        "tasks.common.domain_artifacts.mdc.save_json_content",
+        "core.domain_artifacts.mdc.save_json_content",
         lambda payload, path, client=None: saved_artifact.update({"payload": payload, "path": path, "client": client}),
     )
     monkeypatch.setattr(
-        "tasks.common.domain_artifacts.domain_metadata_snapshots.update_domain_metadata_snapshots_from_artifact",
+        "core.domain_artifacts.domain_metadata_snapshots.update_domain_metadata_snapshots_from_artifact",
         lambda **kwargs: snapshot_updates.append(kwargs),
     )
 

@@ -8,7 +8,7 @@ from core import delta_core as delta_core_module
 from core.pipeline import DataPaths
 from core.postgres import PostgresError
 from tasks.market_data import gold_market_data as gold
-from tasks.common.postgres_gold_sync import GoldSyncResult
+from core.gold_sync_contracts import GoldSyncResult
 
 
 def _silver_bucket_df(symbol: str) -> pd.DataFrame:

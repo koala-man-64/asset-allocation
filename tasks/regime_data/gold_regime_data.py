@@ -13,9 +13,9 @@ from core import core as mdc
 from core.postgres import connect, copy_rows
 from core.regime import build_regime_outputs, compute_curve_state, compute_trend_state
 from core.regime_repository import RegimeRepository
-from tasks.common import domain_artifacts
-from tasks.common.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
-from tasks.common.postgres_gold_sync import load_domain_sync_state
+from core import domain_artifacts
+from core.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
+from core.gold_sync_contracts import load_domain_sync_state
 from tasks.common.job_trigger import ensure_api_awake_from_env
 from tasks.common.system_health_markers import write_system_health_marker
 from tasks.common.watermarks import save_last_success, save_watermarks

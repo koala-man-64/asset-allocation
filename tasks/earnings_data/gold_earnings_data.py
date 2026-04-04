@@ -12,15 +12,15 @@ from tasks.common.gold_output_contracts import project_gold_output_frame
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
-from tasks.common import domain_artifacts
+from core import domain_artifacts
 from tasks.common import gold_checkpoint_publication
-from tasks.common import layer_bucketing
+from core import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
     enforce_backfill_cutoff_on_bucket_tables,
     purge_orphan_rows_from_bucket_tables,
 )
-from tasks.common.postgres_gold_sync import (
+from core.gold_sync_contracts import (
     bucket_sync_is_current,
     load_domain_sync_state,
     resolve_postgres_dsn,

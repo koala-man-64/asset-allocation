@@ -5,15 +5,6 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ALLOWED_CORE_TASK_SHIMS = {
-    Path("core/bronze_bucketing.py"),
-    Path("core/domain_artifacts.py"),
-    Path("core/domain_metadata_snapshots.py"),
-    Path("core/finance_contracts.py"),
-    Path("core/gold_sync_contracts.py"),
-    Path("core/layer_bucketing.py"),
-    Path("core/market_symbols.py"),
-}
 
 
 def _python_files_under(package: str) -> list[Path]:
@@ -58,13 +49,10 @@ def test_monitoring_has_no_direct_tasks_imports() -> None:
     assert offenders == []
 
 
-def test_core_has_no_direct_tasks_imports_outside_compatibility_shims() -> None:
+def test_core_has_no_direct_tasks_imports() -> None:
     offenders: list[str] = []
     for path in _python_files_under("core"):
-        relative = path.relative_to(REPO_ROOT)
-        if relative in ALLOWED_CORE_TASK_SHIMS:
-            continue
         imports = _task_imports(path)
         if imports:
-            offenders.append(f"{relative} -> {imports}")
+            offenders.append(f"{path.relative_to(REPO_ROOT)} -> {imports}")
     assert offenders == []

@@ -23,7 +23,7 @@ from core.market_history_contract import MARKET_HISTORY_START_DATE, MARKET_HISTO
 from core import symbol_availability
 from core import core as mdc
 from core.pipeline import ListManager
-from tasks.common import bronze_bucketing
+from core import bronze_bucketing
 from tasks.common.bronze_alpha26_publish import (
     finalize_alpha26_bronze_publish,
     start_alpha26_bronze_publish,

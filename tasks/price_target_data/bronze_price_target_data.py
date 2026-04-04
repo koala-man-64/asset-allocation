@@ -12,7 +12,7 @@ from core import core as mdc
 from core import symbol_availability
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
-from tasks.common import bronze_bucketing
+from core import bronze_bucketing
 from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
 from tasks.common.bronze_observability import log_bronze_success, should_log_bronze_success
 from tasks.common.bronze_symbol_policy import build_bronze_run_id

@@ -27,6 +27,7 @@ Any non-standard transition must include a reason in the action log.
 | WI-RSR-004 | System health decomposition | Delivery Engineer Agent | Done | P2 | WI-RSR-001, WI-RSR-003 | Hold complete; next implementation work shifts to WI-RSR-005 | None | 2 |
 | WI-RSR-005 | UI feature-surface reorganization | Delivery Engineer Agent | Done | P3 | WI-RSR-003, WI-RSR-004 | Hold complete; UI feature layout is now part of the validated baseline | None | 0 |
 | WI-RSR-006 | Extraction-readiness packaging | Delivery Orchestrator Agent | Done | P3 | WI-RSR-003, WI-RSR-004, WI-RSR-005 | Hold complete; extraction-readiness docs and verification set are now part of the validated baseline | None | 0 |
+| WI-RSR-007 | Shared foundation ownership transfer | Delivery Engineer Agent | Done | P1 | ADR 001, `core/*` owner modules, architecture boundary test | Hold complete; shared foundation ownership now lives in `core/*` and legacy `tasks.common.*` paths are compatibility-only | None | 0 |
 
 ## Work Item Details
 
@@ -117,6 +118,21 @@ Any non-standard transition must include a reason in the action log.
 - **Last Action:** Added the extraction-readiness docs and verified every documented command against the current repository layout
 - **Evidence:** Added `docs/architecture/runtime-surface-test-targets.md`, `docs/architecture/runtime-surface-extraction-manifest.md`, and `docs/architecture/runtime-surface-ci-matrix.md`; verified every documented command successfully: `python -m pytest tests/architecture/test_python_module_boundaries.py -q` -> `3 passed`; `python -m pytest tests/api/test_debug_symbols_endpoints.py tests/api/test_runtime_config_endpoints.py tests/api/test_system_container_apps_endpoints.py tests/api/test_system_domain_metadata_cache.py tests/api/test_system_job_logs_endpoints.py -q` -> `38 passed`; `python -m pytest tests/monitoring/test_system_health.py tests/monitoring/test_system_health_staleness.py tests/monitoring/test_phase3b_signals.py tests/tasks/test_blob_freshness.py -q` -> `34 passed`; `python -m pytest tests/finance_data/test_silver_finance_data.py -q` -> `22 passed`; `python -m pytest` -> `898 passed, 3 skipped`; `pnpm exec vitest run` from `ui/` -> `34 files passed, 166 tests passed`
 - **Next Action:** None for this work item; extraction-readiness docs are now part of the validated refactor baseline
+- **Blockers:** None
+- **Rework Loop Count:** 0
+
+### WI-RSR-007
+- **Title:** Shared foundation ownership transfer
+- **Objective:** Move shared contracts/helpers out of `tasks.common.*` and into `core/*`, leaving `tasks.common.*` as compatibility-only wrappers.
+- **Owner:** Delivery Engineer Agent
+- **State:** Done
+- **Priority:** P1
+- **Dependencies:** ADR 001, `core/run_manifests.py`, `core/bronze_bucketing.py`, `core/layer_bucketing.py`, `core/domain_artifacts.py`, `core/domain_metadata_snapshots.py`, `core/finance_contracts.py`, `core/market_symbols.py`, `core/gold_sync_contracts.py`, `tests/architecture/test_python_module_boundaries.py`
+- **Files / Surfaces:** shared foundation modules, affected task consumers, architecture/core/task wrapper tests, ADR 001
+- **Acceptance Criteria:** `core/*` owns the targeted shared implementations; targeted `tasks.common.*` modules are compatibility-only; `python -m pytest tests/architecture/test_python_module_boundaries.py -q` passes without a core shim allowlist; runtime behavior remains unchanged
+- **Last Action:** Completed the ownership transfer, rewrote internal imports to `core/*`, converted legacy modules into compatibility wrappers, and closed the work item with a green full Python suite
+- **Evidence:** Added `core/run_manifests.py`; replaced shim behavior in `core/finance_contracts.py`, `core/market_symbols.py`, `core/domain_metadata_snapshots.py`, `core/bronze_bucketing.py`, `core/layer_bucketing.py`, `core/domain_artifacts.py`, and `core/gold_sync_contracts.py`; converted the corresponding `tasks.common.*` modules into transitional wrappers; added direct owner tests in `tests/core/`; added wrapper smoke coverage in `tests/tasks/common/` and `tests/tasks/`; `python -m pytest tests/architecture/test_python_module_boundaries.py -q` -> `3 passed`; targeted shared-foundation and consumer suites -> `37 passed`, `8 passed`, and `125 passed`; full `python -m pytest` -> `909 passed, 3 skipped`
+- **Next Action:** None for this work item; follow-on cleanup can remove the legacy wrappers once task call sites no longer need them
 - **Blockers:** None
 - **Rework Loop Count:** 0
 
@@ -257,6 +273,14 @@ Any non-standard transition must include a reason in the action log.
 - **Evidence Produced:** Initial `python -m pytest` failed in `tests/api/test_swagger_docs.py` with a `PydanticUserError` for `domain_columns_refresh_request_model`; removed `from __future__ import annotations` from `api/endpoints/system_modules/domain_columns.py`; `python -m pytest tests/api/test_swagger_docs.py -q` -> `2 passed`; `python -m pytest` -> `898 passed, 3 skipped`
 - **State Transition:** `WI-RSR-003` remained `In Progress`; rework loop count incremented from `0` to `1`
 - **Follow-On Assignment / Next Step:** Continue WI-RSR-003 with the purge/domain-list extraction slice now that the extracted router pattern has a green full-suite baseline
+
+### 2026-04-04T17:25:00-05:00
+- **Acting Agent:** Codex / Delivery Engineer Agent
+- **Work Item ID:** WI-RSR-007
+- **Action Taken:** Transferred shared foundation ownership into `core/*`, added `core/run_manifests.py`, converted legacy `tasks.common.*` modules into compatibility wrappers, rewired task consumers to `core/*`, and updated boundary coverage plus ADR/ledger documentation.
+- **Evidence Produced:** `python -m pytest tests/architecture/test_python_module_boundaries.py -q` -> `3 passed`; `python -m pytest tests/core/test_finance_contracts.py tests/core/test_market_symbols.py tests/core/test_run_manifests.py tests/core/test_bronze_bucketing.py tests/core/test_domain_artifacts.py tests/core/test_gold_sync_contracts.py -q` -> `37 passed`; wrapper smoke validation -> `8 passed`; targeted consumer suites -> `125 passed`; full `python -m pytest` -> `909 passed, 3 skipped`
+- **State Transition:** `WI-RSR-007` moved from `Planned` to `Done`
+- **Follow-On Assignment / Next Step:** Keep the legacy wrappers until a later cleanup wave removes the remaining task-side compatibility imports entirely
 
 ### 2026-04-04T09:46:50.0375824-05:00
 - **Acting Agent:** Codex / Delivery Engineer Agent

@@ -6,9 +6,9 @@ from typing import Any, Dict, Iterable, Optional
 import pandas as pd
 
 from core import core as mdc
-from tasks.common import bronze_bucketing
-from tasks.common import domain_artifacts
-from tasks.common import run_manifests
+from core import bronze_bucketing
+from core import domain_artifacts
+from core import run_manifests
 
 
 @dataclass

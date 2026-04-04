@@ -5,9 +5,9 @@ from typing import Literal
 import pandas as pd
 
 from core import core as mdc
-from tasks.common import bronze_bucketing
-from tasks.common import layer_bucketing
-from tasks.common.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
+from core import bronze_bucketing
+from core import layer_bucketing
+from core.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
 
 MarketLayer = Literal["bronze", "silver", "gold"]
 _REGIME_REQUIRED_MARKET_SYMBOL_SET = frozenset(REGIME_REQUIRED_MARKET_SYMBOLS)

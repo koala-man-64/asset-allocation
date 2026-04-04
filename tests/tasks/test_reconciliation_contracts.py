@@ -7,7 +7,7 @@ import pytest
 
 from core import delta_core
 from core.pipeline import DataPaths
-from tasks.common import layer_bucketing
+from core import layer_bucketing
 from tasks.earnings_data import gold_earnings_data as gold_earnings
 from tasks.earnings_data import silver_earnings_data as silver_earnings
 from tasks.finance_data import gold_finance_data as gold_finance

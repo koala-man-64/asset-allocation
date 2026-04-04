@@ -1,4 +1,12 @@
 from __future__ import annotations
 
+# Transitional compatibility wrapper; remove after call-site migration.
+from core import market_symbols as _owner
 
-REGIME_REQUIRED_MARKET_SYMBOLS: tuple[str, ...] = ("SPY", "^VIX", "^VIX3M")
+
+def __getattr__(name: str):
+    return getattr(_owner, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals().keys()) | set(dir(_owner)))

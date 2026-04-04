@@ -38,7 +38,7 @@ from tasks.common.bronze_symbol_policy import (
     is_explicit_invalid_candidate,
     record_invalid_symbol_candidate,
 )
-from tasks.common import bronze_bucketing
+from core import bronze_bucketing
 from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
 from tasks.common.job_status import resolve_job_run_status
 from tasks.common.silver_contracts import parse_wait_timeout_seconds

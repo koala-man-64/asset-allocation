@@ -6,8 +6,8 @@ from typing import Any, Callable, Optional
 
 from core import core as mdc
 
-from tasks.common import domain_artifacts
-from tasks.common import layer_bucketing
+from core import domain_artifacts
+from core import layer_bucketing
 
 
 @dataclass(frozen=True)

@@ -30,14 +30,16 @@
 ## Boundary Rules
 - `api/` must not import from `tasks.*`.
 - `monitoring/` must not import from `tasks.*`.
-- `core/` must not import from `tasks.*`, except for temporary compatibility shims that expose shared contracts while call sites migrate.
+- `core/` must not import from `tasks.*`.
 - `tasks/` may depend on `core/`.
 - Shared contracts used by multiple runtime surfaces should be reached through `core/`, not `tasks.common.*`.
+- `tasks.common.*` modules that mirror `core/*` are compatibility-only wrappers and are not the source of truth.
 
 ## Compatibility Strategy
-- Temporary shims in `core/` may proxy legacy `tasks.common.*` modules while downstream callers migrate.
-- Those shims are transitional and should be removed once the underlying shared logic is moved fully out of `tasks.common`.
-- New cross-surface code should target the `core/` interface first.
+- Shared implementations and contracts now live in `core/*`.
+- Legacy `tasks.common.*` modules may re-export `core/*` while downstream callers migrate.
+- Those wrappers are transitional and should be removed once remaining task call sites no longer require the legacy import paths.
+- New cross-surface code should target the `core/*` interface first.
 
 ## Initial Extraction Priorities
 1. Replace direct `api/`, `monitoring/`, and shared `core/` imports from `tasks.common.*` with `core/*` interfaces.
@@ -46,6 +48,6 @@
 4. Move the UI toward feature folders while keeping `ui/src/app/App.tsx` as the shell.
 
 ## Consequences
-- Short term: a thin compatibility layer exists in `core/`.
-- Medium term: boundary tests can enforce the new dependency rules in CI.
+- Short term: a thin compatibility layer exists in `tasks.common`.
+- Medium term: boundary tests can enforce the new dependency rules in CI without a `core -> tasks` allowlist.
 - Long term: `ui`, `api-service`, `etl-jobs`, and shared/provider surfaces can be extracted into separate repositories without changing external contracts first.
