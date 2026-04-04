@@ -30,31 +30,31 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   };
 });
 
-vi.mock('@/app/components/pages/SystemStatusPage', () => ({
+vi.mock('@/features/system-status/SystemStatusPage', () => ({
   SystemStatusPage: () => <div data-testid="mock-system-status">Mock System Status</div>
 }));
 
-vi.mock('@/app/components/pages/DataExplorerPage', () => ({
+vi.mock('@/features/data-explorer/DataExplorerPage', () => ({
   DataExplorerPage: () => <div data-testid="mock-data-explorer">Mock Data Explorer</div>
 }));
 
-vi.mock('@/app/components/pages/RegimeMonitorPage', () => ({
+vi.mock('@/features/regimes/RegimeMonitorPage', () => ({
   RegimeMonitorPage: () => <div data-testid="mock-regime-monitor">Mock Regime Monitor</div>
 }));
 
-vi.mock('@/app/components/pages/StrategyConfigPage', () => ({
+vi.mock('@/features/strategies/StrategyConfigPage', () => ({
   StrategyConfigPage: () => <div data-testid="mock-strategy-config">Mock Strategy Workbench</div>
 }));
 
-vi.mock('@/app/components/pages/UniverseConfigPage', () => ({
+vi.mock('@/features/universes/UniverseConfigPage', () => ({
   UniverseConfigPage: () => <div data-testid="mock-universe-config">Mock Universe Workbench</div>
 }));
 
-vi.mock('@/app/components/pages/RankingConfigPage', () => ({
+vi.mock('@/features/rankings/RankingConfigPage', () => ({
   RankingConfigPage: () => <div data-testid="mock-ranking-config">Mock Ranking Workbench</div>
 }));
 
-vi.mock('@/app/components/pages/StrategyDataCatalogPage', () => ({
+vi.mock('@/features/strategy-exploration/StrategyDataCatalogPage', () => ({
   StrategyDataCatalogPage: () => (
     <div data-testid="mock-strategy-data-catalog">Mock Strategy Data Catalog</div>
   )

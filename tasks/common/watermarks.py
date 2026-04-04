@@ -124,7 +124,6 @@ def save_watermarks(key: str, items: Dict[str, Any]) -> None:
         mdc.write_error(message)
         raise RuntimeError(message) from exc
 
-
 def load_last_success(key: str) -> Optional[datetime]:
     _require_enabled("Run checkpoint load")
 

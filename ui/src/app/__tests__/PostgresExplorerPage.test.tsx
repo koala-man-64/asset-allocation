@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderWithProviders } from '@/test/utils';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import { PostgresExplorerPage } from '@/app/components/pages/PostgresExplorerPage';
 import { PostgresService } from '@/services/PostgresService';
@@ -152,6 +152,37 @@ describe('PostgresExplorerPage', () => {
         ]
       });
     });
+  });
+
+  it('sorts query results by column when a header is clicked', async () => {
+    vi.mocked(PostgresService.queryTable).mockResolvedValue([
+      { symbol: 'MSFT', company_name: 'Microsoft' },
+      { symbol: 'AAPL', company_name: 'Apple' },
+      { symbol: 'GOOG', company_name: 'Google' }
+    ]);
+
+    renderWithProviders(<PostgresExplorerPage />);
+
+    await waitFor(() => {
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /query table/i }));
+    await screen.findByText('MSFT');
+
+    fireEvent.click(screen.getByRole('button', { name: /symbol/i }));
+
+    const ascRows = screen.getAllByRole('row').slice(1);
+    expect(within(ascRows[0]).getAllByRole('cell')[1]).toHaveTextContent('AAPL');
+    expect(within(ascRows[1]).getAllByRole('cell')[1]).toHaveTextContent('GOOG');
+    expect(within(ascRows[2]).getAllByRole('cell')[1]).toHaveTextContent('MSFT');
+
+    fireEvent.click(screen.getByRole('button', { name: /symbol/i }));
+
+    const descRows = screen.getAllByRole('row').slice(1);
+    expect(within(descRows[0]).getAllByRole('cell')[1]).toHaveTextContent('MSFT');
+    expect(within(descRows[1]).getAllByRole('cell')[1]).toHaveTextContent('GOOG');
+    expect(within(descRows[2]).getAllByRole('cell')[1]).toHaveTextContent('AAPL');
   });
 
   it('does not load metadata for the previously selected table after a schema change', async () => {

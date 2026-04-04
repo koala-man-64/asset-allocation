@@ -15,6 +15,13 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+_REMOVED_DEPLOY_ENV_KEYS = (
+    "API_KEY",
+    "ASSET_ALLOCATION_API_KEY",
+    "VITE_BACKTEST_API_BASE_URL",
+)
+
+
 def _deploy_validation_env(**overrides: str) -> dict[str, str]:
     env = {
         **os.environ,
@@ -37,6 +44,8 @@ def _deploy_validation_env(**overrides: str) -> dict[str, str]:
         "LOG_LEVEL": "INFO",
         "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID": "",
     }
+    for key in _REMOVED_DEPLOY_ENV_KEYS:
+        env.pop(key, None)
     env.update(overrides)
     return env
 

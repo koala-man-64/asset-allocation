@@ -8,6 +8,11 @@ $repoRoot = Join-Path $PSScriptRoot ".."
 $envPath = Join-Path $repoRoot ".env.web"
 $localEnvPath = Join-Path $repoRoot ".env"
 $contractPath = Join-Path $repoRoot "docs\ops\env-contract.csv"
+$removedCompatibilityKeys = @(
+    "API_KEY",
+    "ASSET_ALLOCATION_API_KEY",
+    "VITE_BACKTEST_API_BASE_URL"
+)
 
 if (-not (Test-Path $envPath)) {
     Write-Error "Error: env file not found at $envPath (create .env.web)."
@@ -95,6 +100,20 @@ function Load-EnvContract {
     return $map
 }
 
+function Assert-NoRemovedCompatibilityKeys {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceName,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Map
+    )
+
+    $presentKeys = @($removedCompatibilityKeys | Where-Object { $Map.ContainsKey($_) })
+    if ($presentKeys.Count -gt 0) {
+        throw ("{0} contains removed compatibility keys that must stay out of GitHub sync: {1}" -f $SourceName, ($presentKeys -join ", "))
+    }
+}
+
 # Check if gh CLI is installed
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     Write-Error "Error: GitHub CLI (gh) is not installed or not in PATH."
@@ -107,9 +126,11 @@ if ($DryRun) { Write-Host "Running in DRY RUN mode (no changes will be made)..."
 $envMap = Parse-EnvFile -Path $envPath
 $lines = Get-Content $envPath
 $contractMap = Load-EnvContract -Path $contractPath
+Assert-NoRemovedCompatibilityKeys -SourceName ".env.web" -Map $envMap
 
 if (Test-Path $localEnvPath) {
     $localMap = Parse-EnvFile -Path $localEnvPath
+    Assert-NoRemovedCompatibilityKeys -SourceName ".env" -Map $localMap
     $missingInWeb = @()
     foreach ($key in $localMap.Keys) {
         if (Should-SkipParityKey -Key $key -ContractMap $contractMap) { continue }

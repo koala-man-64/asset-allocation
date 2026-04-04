@@ -11,12 +11,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.blob_storage import BlobStorageClient
 
 from api.service.dependencies import get_settings, validate_auth
+from core import layer_bucketing
 from core.delta_core import load_delta
 from core.pipeline import DataPaths
 from core.postgres import PostgresError, connect
 from core.regime import DEFAULT_REGIME_MODEL_NAME
 from core.regime_repository import RegimeRepository
-from tasks.common import layer_bucketing
 
 from ..data_service import DataService
 from api.service.validation_service import ValidationService

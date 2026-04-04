@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 
 interface DataTableProps<T> {
   data: T[];
@@ -6,6 +6,7 @@ interface DataTableProps<T> {
   emptyMessage?: string;
   columns?: { header: string; accessorKey: keyof T | string }[];
   onRowClick?: (item: T) => void;
+  enableColumnSorting?: boolean;
 }
 
 export const DataTable = <T extends Record<string, unknown>>({
@@ -13,8 +14,14 @@ export const DataTable = <T extends Record<string, unknown>>({
   className = '',
   emptyMessage = 'No data available.',
   columns: propColumns,
-  onRowClick
+  onRowClick,
+  enableColumnSorting = false
 }: DataTableProps<T>) => {
+  const [sortState, setSortState] = useState<{
+    accessorKey: string;
+    direction: 'asc' | 'desc';
+  } | null>(null);
+
   const tableColumns = useMemo(() => {
     if (propColumns) {
       return propColumns;
@@ -22,6 +29,64 @@ export const DataTable = <T extends Record<string, unknown>>({
     if (!data || data.length === 0) return [];
     return Object.keys(data[0]).map((key) => ({ header: key, accessorKey: key }));
   }, [data, propColumns]);
+
+  const sortedData = useMemo(() => {
+    if (!sortState) {
+      return data;
+    }
+
+    return [...data].sort((leftRow, rightRow) => {
+      const leftValue = leftRow[sortState.accessorKey as keyof T];
+      const rightValue = rightRow[sortState.accessorKey as keyof T];
+
+      if (leftValue == null && rightValue == null) {
+        return 0;
+      }
+      if (leftValue == null) {
+        return 1;
+      }
+      if (rightValue == null) {
+        return -1;
+      }
+
+      const leftComparable =
+        typeof leftValue === 'number'
+          ? leftValue
+          : typeof leftValue === 'boolean'
+            ? Number(leftValue)
+            : String(leftValue).toLowerCase();
+      const rightComparable =
+        typeof rightValue === 'number'
+          ? rightValue
+          : typeof rightValue === 'boolean'
+            ? Number(rightValue)
+            : String(rightValue).toLowerCase();
+
+      if (leftComparable < rightComparable) {
+        return sortState.direction === 'asc' ? -1 : 1;
+      }
+      if (leftComparable > rightComparable) {
+        return sortState.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  }, [data, sortState]);
+
+  const toggleColumnSort = (accessorKey: string) => {
+    if (!enableColumnSorting) {
+      return;
+    }
+
+    setSortState((current) => {
+      if (!current || current.accessorKey !== accessorKey) {
+        return { accessorKey, direction: 'asc' };
+      }
+      if (current.direction === 'asc') {
+        return { accessorKey, direction: 'desc' };
+      }
+      return null;
+    });
+  };
 
   if (!data || data.length === 0) {
     return (
@@ -46,13 +111,23 @@ export const DataTable = <T extends Record<string, unknown>>({
                 key={String(col.accessorKey)}
                 className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-mcm-walnut/70 whitespace-nowrap"
               >
-                {col.header}
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-1 ${enableColumnSorting ? 'hover:text-mcm-walnut focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 rounded-sm px-0.5 py-0.5' : 'cursor-default'}`}
+                  onClick={() => toggleColumnSort(String(col.accessorKey))}
+                  disabled={!enableColumnSorting}
+                >
+                  <span>{col.header}</span>
+                  {enableColumnSorting &&
+                    sortState?.accessorKey === String(col.accessorKey) &&
+                    (sortState.direction === 'asc' ? <span>↑</span> : <span>↓</span>)}
+                </button>
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {data.map((row, idx) => (
+          {sortedData.map((row, idx) => (
             <tr
               key={idx}
               className={`group transition-colors hover:[&>td]:bg-mcm-cream ${onRowClick ? 'cursor-pointer' : ''}`}

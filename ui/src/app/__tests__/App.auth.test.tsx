@@ -45,7 +45,7 @@ vi.mock('@/services/DataService', () => ({
   }
 }));
 
-vi.mock('@/app/components/pages/SystemStatusPage', () => ({
+vi.mock('@/features/system-status/SystemStatusPage', () => ({
   SystemStatusPage: () => <div data-testid="mock-system-status">Mock System Status</div>
 }));
 

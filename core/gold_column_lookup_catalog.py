@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-from tasks.common.postgres_gold_sync import get_sync_config
+from core.gold_sync_contracts import get_sync_config
 
 SUPPORTED_GOLD_LOOKUP_TABLES: Tuple[str, ...] = (
     "market_data",
