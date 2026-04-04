@@ -60,8 +60,7 @@ def _contract_names_by_class(class_name: str) -> set[str]:
     }
 
 
-def _template_keys() -> set[str]:
-    path = _repo_root() / ".env.template"
+def _env_file_keys(path: Path) -> set[str]:
     keys: set[str] = set()
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -69,6 +68,11 @@ def _template_keys() -> set[str]:
             continue
         keys.add(line.split("=", 1)[0].strip())
     return keys
+
+
+def _template_keys() -> set[str]:
+    path = _repo_root() / ".env.template"
+    return _env_file_keys(path)
 
 
 def _workflow_refs(pattern: re.Pattern[str]) -> set[str]:
@@ -258,6 +262,21 @@ def test_workflow_var_and_secret_refs_follow_contract() -> None:
         assert contract[name]["github_storage"] == "secret", (
             f"Workflow secret reference must be classified as github_storage=secret: {name}"
         )
+
+
+def test_env_web_contains_only_documented_keys_and_sync_surface() -> None:
+    contract = _contract_map()
+    env_web_keys = _env_file_keys(_repo_root() / ".env.web")
+    undocumented = sorted(env_web_keys - set(contract))
+    assert undocumented == [], f".env.web contains undocumented keys: {undocumented}"
+
+    ignored = {"GITHUB_TOKEN"}
+    required_sync_keys = (
+        _workflow_refs(_WORKFLOW_VAR_PATTERN)
+        | _workflow_refs(_WORKFLOW_SECRET_PATTERN)
+    ) - ignored
+    missing = sorted(required_sync_keys - env_web_keys)
+    assert missing == [], f".env.web is missing sync-managed workflow keys: {missing}"
 
 
 def test_runtime_config_keys_are_not_consumed_from_github_vars() -> None:

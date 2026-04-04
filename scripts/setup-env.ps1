@@ -28,6 +28,7 @@ if ([string]::IsNullOrWhiteSpace($EnvFilePath)) {
 
 $EnvFileName = Split-Path -Leaf $EnvFilePath
 $IsGitHubSyncTarget = $EnvFileName -ieq ".env.web"
+$EnvContractPath = Join-Path $rootDir "docs\ops\env-contract.csv"
 
 # Load existing variables (if any) to use as defaults.
 $ExistingVars = @{}
@@ -86,6 +87,48 @@ function Prompt-Var {
     $input = Read-Host "$Name [$Suggestion]"
     if ([string]::IsNullOrWhiteSpace($input)) { return $Suggestion }
     return $input
+}
+
+function Get-SupportedEnvKeys {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContractPath
+    )
+
+    if (-not (Test-Path $ContractPath)) {
+        throw "Env contract not found at $ContractPath"
+    }
+
+    $keys = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($row in (Import-Csv -Path $ContractPath)) {
+        $name = (($row.name | Out-String).Trim())
+        if (-not [string]::IsNullOrWhiteSpace($name)) {
+            [void]$keys.Add($name)
+        }
+    }
+    return $keys
+}
+
+function Filter-ConfigToSupportedKeys {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Config,
+        [Parameter(Mandatory = $true)]$SupportedKeys
+    )
+
+    $filtered = @()
+    foreach ($line in $Config) {
+        $trimmed = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith("#") -or $trimmed -notmatch "^([^=]+)=(.*)$") {
+            $filtered += $line
+            continue
+        }
+
+        $key = $matches[1].Trim()
+        if ($SupportedKeys.Contains($key)) {
+            $filtered += $line
+        }
+    }
+
+    return $filtered
 }
 
 $Config = @()
@@ -262,6 +305,9 @@ $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID=" + (Prompt-Var "SYSTEM_HEA
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS" "5" "Optional: Log Analytics timeout seconds.")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES" "15" "Optional: timespan minutes (e.g., 15).")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON" "" "Optional: JSON array of query specs.")
+$Config += "REALTIME_LOG_STREAM_POLL_SECONDS=" + (Prompt-Var "REALTIME_LOG_STREAM_POLL_SECONDS" "5" "Optional: poll interval in seconds for realtime job-log streaming.")
+$Config += "REALTIME_LOG_STREAM_LOOKBACK_SECONDS=" + (Prompt-Var "REALTIME_LOG_STREAM_LOOKBACK_SECONDS" "30" "Optional: initial lookback window in seconds for realtime job-log streaming.")
+$Config += "REALTIME_LOG_STREAM_BATCH_SIZE=" + (Prompt-Var "REALTIME_LOG_STREAM_BATCH_SIZE" "200" "Optional: max events fetched per realtime log-stream poll.")
 $Config += "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS=" + (Prompt-Var "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS" "168" "Optional: lookback window in hours for Bronze symbol-count jump detection.")
 $Config += "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON=" + (Prompt-Var "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON" "" "Optional: JSON object of Bronze symbol-count jump thresholds.")
 
@@ -291,6 +337,11 @@ $Config += "VITE_API_BASE_URL=" + (Prompt-Var "VITE_API_BASE_URL" "/api" "UI bui
 $Config += "VITE_OIDC_AUTHORITY=" + (Prompt-Var "VITE_OIDC_AUTHORITY" "" "UI build-time fallback OIDC authority.")
 $Config += "VITE_OIDC_CLIENT_ID=" + (Prompt-Var "VITE_OIDC_CLIENT_ID" "" "UI build-time fallback OIDC client ID.")
 $Config += "VITE_OIDC_SCOPES=" + (Prompt-Var "VITE_OIDC_SCOPES" "" "UI build-time fallback OIDC scopes.")
+
+if ($IsGitHubSyncTarget) {
+    $supportedKeys = Get-SupportedEnvKeys -ContractPath $EnvContractPath
+    $Config = Filter-ConfigToSupportedKeys -Config $Config -SupportedKeys $supportedKeys
+}
 
 if ($DryRun) {
     Write-Host "`n[DRY RUN] Would write the following to ${EnvFilePath}:" -ForegroundColor Yellow

@@ -127,6 +127,10 @@ $envMap = Parse-EnvFile -Path $envPath
 $lines = Get-Content $envPath
 $contractMap = Load-EnvContract -Path $contractPath
 Assert-NoRemovedCompatibilityKeys -SourceName ".env.web" -Map $envMap
+$unsupportedWebKeys = @($envMap.Keys | Where-Object { -not $contractMap.ContainsKey($_) } | Sort-Object -Unique)
+if ($unsupportedWebKeys.Count -gt 0) {
+    throw (".env.web contains undocumented keys. Update docs/ops/env-contract.csv or remove the stale entries: {0}" -f ($unsupportedWebKeys -join ", "))
+}
 
 if (Test-Path $localEnvPath) {
     $localMap = Parse-EnvFile -Path $localEnvPath
@@ -185,7 +189,6 @@ foreach ($line in $lines) {
         }
 
         if (-not $contractMap.ContainsKey($key)) {
-            Write-Warning "Ignoring unsupported env key in .env.web: $key"
             continue
         }
 
