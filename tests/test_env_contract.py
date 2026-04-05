@@ -282,15 +282,30 @@ def test_workflow_var_and_secret_refs_follow_contract() -> None:
 
 def test_env_web_contains_only_documented_keys_and_sync_surface() -> None:
     contract = _contract_map()
-    env_web_keys = _env_file_keys(_repo_root() / ".env.web")
-    undocumented = sorted(env_web_keys - set(contract))
-    assert undocumented == [], f".env.web contains undocumented keys: {undocumented}"
-
     ignored = {"GITHUB_TOKEN"}
     required_sync_keys = (
         _workflow_refs(_WORKFLOW_VAR_PATTERN)
         | _workflow_refs(_WORKFLOW_SECRET_PATTERN)
     ) - ignored
+
+    missing_from_contract_template = sorted(
+        name
+        for name in required_sync_keys
+        if contract.get(name, {}).get("template") != "true"
+    )
+    assert missing_from_contract_template == [], (
+        "sync-managed workflow keys must stay template-backed in env-contract.csv: "
+        f"{missing_from_contract_template}"
+    )
+
+    env_web_path = _repo_root() / ".env.web"
+    if not env_web_path.exists():
+        return
+
+    env_web_keys = _env_file_keys(env_web_path)
+    undocumented = sorted(env_web_keys - set(contract))
+    assert undocumented == [], f".env.web contains undocumented keys: {undocumented}"
+
     missing = sorted(required_sync_keys - env_web_keys)
     assert missing == [], f".env.web is missing sync-managed workflow keys: {missing}"
 
