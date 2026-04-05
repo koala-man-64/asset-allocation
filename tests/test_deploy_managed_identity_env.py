@@ -700,9 +700,18 @@ def test_deploy_validation_requires_api_scope_for_bronze_jobs() -> None:
 
 def test_deploy_validation_rejects_removed_auth_and_ui_compatibility_settings() -> None:
     for name in ("API_KEY", "ASSET_ALLOCATION_API_KEY", "VITE_BACKTEST_API_BASE_URL"):
-        result = _run_deploy_validation(**{name: "stale-value"})
-        assert result.returncode != 0
-        assert f"{name} is no longer supported." in (result.stdout + result.stderr)
+        for value in ("stale-value", ""):
+            result = _run_deploy_validation(**{name: value})
+            assert result.returncode != 0
+            assert f"{name} is no longer supported." in (result.stdout + result.stderr)
+
+
+def test_provision_azure_does_not_source_deprecated_kubernetes_env_fallbacks() -> None:
+    repo_root = _repo_root()
+    text = (repo_root / "scripts" / "provision_azure.ps1").read_text(encoding="utf-8")
+
+    assert 'Get-EnvValue -Key "KUBERNETES_NAMESPACE"' not in text
+    assert 'Get-EnvValue -Key "AKS_CLUSTER_NAME"' not in text
 
 
 def test_public_deploy_surfaces_no_longer_reference_shared_api_key_auth() -> None:

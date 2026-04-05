@@ -1,12 +1,27 @@
 from types import ModuleType
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 
 def _runtime_attr(runtime: ModuleType, name: str) -> Any:
     return getattr(runtime, name)
+
+
+class RuntimeConfigUpsertRequest(BaseModel):
+    key: str = Field(..., description="Configuration key (env-var style).")
+    scope: str = Field(default="global", description="Scope for this key (e.g., global or job:<name>).")
+    value: str = Field(default="", description="Raw string value to apply (can be empty).")
+    description: Optional[str] = Field(default=None, description="Optional human-readable description.")
+
+
+class DebugSymbolsUpdateRequest(BaseModel):
+    symbols: str = Field(
+        ...,
+        description="Comma-separated list or JSON array. Row presence means the allowlist is active.",
+    )
 
 
 def build_router(

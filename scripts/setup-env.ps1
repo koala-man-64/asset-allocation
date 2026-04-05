@@ -146,7 +146,6 @@ $Config += "TEST_MODE=" + (Prompt-Var "TEST_MODE" "false" "Set true to disable n
 $Config += "ENABLE_ENV_DIAGNOSTICS=" + (Prompt-Var "ENABLE_ENV_DIAGNOSTICS" "false" "Set true to log additional (allowlisted) environment diagnostics.")
 $Config += "DEBUG_SYMBOLS=" + (Prompt-Var "DEBUG_SYMBOLS" "" "Optional: comma-separated symbols for debug runs (e.g., AAPL,MSFT).")
 $Config += "SYMBOLS_REFRESH_INTERVAL_HOURS=" + (Prompt-Var "SYMBOLS_REFRESH_INTERVAL_HOURS" "24" "Optional: refresh symbol universe from NASDAQ + (Alpha Vantage via API) when older than this many hours (0 disables).")
-$Config += "FEATURE_ENGINEERING_MAX_WORKERS=" + (Prompt-Var "FEATURE_ENGINEERING_MAX_WORKERS" "" "Optional: max workers for feature engineering fan-out.")
 $Config += "DOMAIN_METADATA_MAX_SCANNED_BLOBS=" + (Prompt-Var "DOMAIN_METADATA_MAX_SCANNED_BLOBS" "200000" "Optional: upper bound for domain metadata scans (monitoring).")
 $Config += "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE=" + (Prompt-Var "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE" "" "Optional: set true to require Azure storage config at startup.")
 $Config += "ALPHA_VANTAGE_BASE_URL=" + (Prompt-Var "ALPHA_VANTAGE_BASE_URL" "https://www.alphavantage.co" "Optional: local override for the upstream Alpha Vantage API base URL.")
@@ -176,23 +175,6 @@ $Config += "AZURE_STORAGE_CONNECTION_STRING=" + (Prompt-Var "AZURE_STORAGE_CONNE
 $Config += "AZURE_STORAGE_ACCOUNT_KEY=" + (Prompt-Var "AZURE_STORAGE_ACCOUNT_KEY" "" "Optional: storage account key (alternative to connection string)." -Secret)
 $Config += "AZURE_STORAGE_ACCESS_KEY=" + (Prompt-Var "AZURE_STORAGE_ACCESS_KEY" "" "Optional: storage access key (alias of account key)." -Secret)
 $Config += "AZURE_STORAGE_SAS_TOKEN=" + (Prompt-Var "AZURE_STORAGE_SAS_TOKEN" "" "Optional: SAS token (alternative auth)." -Secret)
-
-# -------------------------------------------------------------------------
-# Storage Containers & Folders (canonical names)
-# -------------------------------------------------------------------------
-$Config += ""
-$Config += "# =========================================="
-$Config += "# Storage Containers & Folders (canonical names)"
-$Config += "# =========================================="
-$Config += "AZURE_CONTAINER_COMMON=" + (Prompt-Var "AZURE_CONTAINER_COMMON" "common" "Blob container for shared artifacts.")
-$Config += "AZURE_CONTAINER_BRONZE=" + (Prompt-Var "AZURE_CONTAINER_BRONZE" "bronze" "Blob container for bronze layer.")
-$Config += "AZURE_CONTAINER_SILVER=" + (Prompt-Var "AZURE_CONTAINER_SILVER" "silver" "Blob container for silver layer.")
-$Config += "AZURE_CONTAINER_GOLD=" + (Prompt-Var "AZURE_CONTAINER_GOLD" "gold" "Blob container for gold layer.")
-$Config += "AZURE_CONTAINER_PLATINUM=" + (Prompt-Var "AZURE_CONTAINER_PLATINUM" "platinum" "Blob container for platinum layer.")
-$Config += "AZURE_FOLDER_MARKET=" + (Prompt-Var "AZURE_FOLDER_MARKET" "market-data" "Folder/prefix for market data.")
-$Config += "AZURE_FOLDER_FINANCE=" + (Prompt-Var "AZURE_FOLDER_FINANCE" "finance-data" "Folder/prefix for finance data.")
-$Config += "AZURE_FOLDER_EARNINGS=" + (Prompt-Var "AZURE_FOLDER_EARNINGS" "earnings-data" "Folder/prefix for earnings data.")
-$Config += "AZURE_FOLDER_TARGETS=" + (Prompt-Var "AZURE_FOLDER_TARGETS" "price-target-data" "Folder/prefix for price target data.")
 
 # -------------------------------------------------------------------------
 # External Data APIs

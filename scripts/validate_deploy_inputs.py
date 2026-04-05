@@ -19,6 +19,11 @@ REQUIRED_ENV_NAMES = (
     "SERVICE_ACCOUNT_NAME",
     "ASSET_ALLOCATION_API_BASE_URL",
 )
+REMOVED_DEPLOY_ENV_KEYS = (
+    "API_KEY",
+    "ASSET_ALLOCATION_API_KEY",
+    "VITE_BACKTEST_API_BASE_URL",
+)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _WORKLOAD_PROFILE_PATTERN = re.compile(r"^\s*workloadProfileName:\s*(.+?)\s*$")
 _CPU_PATTERN = re.compile(r"^\s*cpu:\s*(.+?)\s*$")
@@ -42,6 +47,10 @@ def require_value(name: str) -> str:
 
 def optional_value(name: str) -> str:
     return (os.environ.get(name) or "").strip()
+
+
+def has_env_key(name: str) -> bool:
+    return name in os.environ
 
 
 def _strip_yaml_scalar(raw: str) -> str:
@@ -246,8 +255,8 @@ def validate_log_analytics() -> None:
 
 
 def validate_auth_configuration() -> None:
-    for deprecated_name in ("API_KEY", "ASSET_ALLOCATION_API_KEY", "VITE_BACKTEST_API_BASE_URL"):
-        if optional_value(deprecated_name):
+    for deprecated_name in REMOVED_DEPLOY_ENV_KEYS:
+        if has_env_key(deprecated_name):
             fail(
                 f"{deprecated_name} is no longer supported. Remove the stale API-key/backtest compatibility setting."
             )

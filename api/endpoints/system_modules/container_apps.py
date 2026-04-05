@@ -1,12 +1,214 @@
+import json
+import logging
+import os
+import sys
+from datetime import datetime, timezone
 from types import ModuleType
 from typing import Any, Dict, List, Optional
+
+import httpx
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+logger = logging.getLogger("asset-allocation.api.system.container_apps")
+
 
 def _runtime_attr(runtime: ModuleType, name: str) -> Any:
     return getattr(runtime, name)
+
+
+def _system_attr(name: str, default: Any) -> Any:
+    system_module = sys.modules.get("api.endpoints.system")
+    if system_module is None:
+        return default
+    return getattr(system_module, name, default)
+
+
+def _compat_export(name: str, target: Any) -> Any:
+    def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        resolved = _system_attr(name, target)
+        if resolved is _wrapper:
+            resolved = target
+        return resolved(*args, **kwargs)
+
+    _wrapper.__name__ = getattr(target, "__name__", name)
+    _wrapper.__doc__ = getattr(target, "__doc__", None)
+    _wrapper.__module__ = __name__
+    return _wrapper
+
+
+def _normalize_container_app_name(value: str) -> str:
+    return str(value or "").strip().lower().replace("_", "-")
+
+
+def _container_app_allowlist() -> tuple[str, str, List[str]]:
+    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
+    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+    resource_group = resource_group_raw.strip() if resource_group_raw else ""
+    app_names_raw = os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS")
+    app_allowlist = [item.strip() for item in (app_names_raw or "").split(",") if item.strip()]
+    return subscription_id, resource_group, app_allowlist
+
+
+def _container_app_health_url_overrides() -> Dict[str, str]:
+    raw = (os.environ.get("SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON") or "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        logger.warning("Invalid SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON; expected JSON object.")
+        return {}
+    if not isinstance(payload, dict):
+        logger.warning("Invalid SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON type; expected JSON object.")
+        return {}
+
+    out: Dict[str, str] = {}
+    for key, value in payload.items():
+        name = _normalize_container_app_name(str(key or ""))
+        url = str(value or "").strip()
+        if not name or not url:
+            continue
+        out[name] = url
+    return out
+
+
+def _container_app_default_health_path(app_name: str) -> str:
+    lowered = _normalize_container_app_name(app_name)
+    if "api" in lowered:
+        return "/healthz"
+    return "/"
+
+
+def _resolve_container_app_health_url(
+    app_name: str,
+    *,
+    ingress_fqdn: Optional[str],
+    overrides: Dict[str, str],
+) -> Optional[str]:
+    override = overrides.get(_normalize_container_app_name(app_name))
+    if override:
+        if override.startswith(("http://", "https://")):
+            return override
+        if override.startswith("/") and ingress_fqdn:
+            path = override if override.startswith("/") else f"/{override}"
+            return f"https://{ingress_fqdn}{path}"
+        return override
+
+    if not ingress_fqdn:
+        return None
+    path = _container_app_default_health_path(app_name)
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"https://{ingress_fqdn}{path}"
+
+
+def _probe_container_app_health(url: str, *, timeout_seconds: float) -> Dict[str, Any]:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    try:
+        with httpx.Client(timeout=max(0.5, float(timeout_seconds)), follow_redirects=True, trust_env=False) as client:
+            response = client.get(url)
+        status_code = int(response.status_code)
+        if 200 <= status_code < 400:
+            status = "healthy"
+        elif 400 <= status_code < 500:
+            status = "warning"
+        else:
+            status = "error"
+        return {
+            "status": status,
+            "url": url,
+            "httpStatus": status_code,
+            "checkedAt": checked_at,
+            "error": None,
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "url": url,
+            "httpStatus": None,
+            "checkedAt": checked_at,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _resource_status_from_provisioning_state(value: str) -> str:
+    state = str(value or "").strip().lower()
+    if state == "succeeded":
+        return "healthy"
+    if state in {"failed", "canceled", "cancelled"}:
+        return "error"
+    if state in {"creating", "updating", "deleting", "inprogress"}:
+        return "warning"
+    if not state:
+        return "unknown"
+    return "warning"
+
+
+def _worse_status(a: str, b: str) -> str:
+    order = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
+    return b if order.get(b, 0) > order.get(a, 0) else a
+
+
+def _extract_container_app_properties(payload: Dict[str, Any]) -> Dict[str, Any]:
+    props = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
+    configuration = props.get("configuration") if isinstance(props.get("configuration"), dict) else {}
+    ingress = configuration.get("ingress") if isinstance(configuration.get("ingress"), dict) else {}
+
+    provisioning_state = str(props.get("provisioningState") or "").strip() or None
+    running_state = (
+        str(props.get("runningStatus") or "").strip()
+        or str(props.get("runningState") or "").strip()
+        or None
+    )
+    latest_ready_revision = str(props.get("latestReadyRevisionName") or "").strip() or None
+    ingress_fqdn = str(ingress.get("fqdn") or "").strip() or None
+    resource_id = str(payload.get("id") or "").strip() or None
+
+    return {
+        "provisioningState": provisioning_state,
+        "runningState": running_state,
+        "latestReadyRevisionName": latest_ready_revision,
+        "ingressFqdn": ingress_fqdn,
+        "azureId": resource_id,
+    }
+
+
+_normalize_container_app_name_impl = _normalize_container_app_name
+_normalize_container_app_name = _compat_export("_normalize_container_app_name", _normalize_container_app_name_impl)
+_container_app_allowlist_impl = _container_app_allowlist
+_container_app_allowlist = _compat_export("_container_app_allowlist", _container_app_allowlist_impl)
+_container_app_health_url_overrides_impl = _container_app_health_url_overrides
+_container_app_health_url_overrides = _compat_export(
+    "_container_app_health_url_overrides",
+    _container_app_health_url_overrides_impl,
+)
+_container_app_default_health_path_impl = _container_app_default_health_path
+_container_app_default_health_path = _compat_export(
+    "_container_app_default_health_path",
+    _container_app_default_health_path_impl,
+)
+_resolve_container_app_health_url_impl = _resolve_container_app_health_url
+_resolve_container_app_health_url = _compat_export(
+    "_resolve_container_app_health_url",
+    _resolve_container_app_health_url_impl,
+)
+_probe_container_app_health_impl = _probe_container_app_health
+_probe_container_app_health = _compat_export("_probe_container_app_health", _probe_container_app_health_impl)
+_resource_status_from_provisioning_state_impl = _resource_status_from_provisioning_state
+_resource_status_from_provisioning_state = _compat_export(
+    "_resource_status_from_provisioning_state",
+    _resource_status_from_provisioning_state_impl,
+)
+_worse_status_impl = _worse_status
+_worse_status = _compat_export("_worse_status", _worse_status_impl)
+_extract_container_app_properties_impl = _extract_container_app_properties
+_extract_container_app_properties = _compat_export(
+    "_extract_container_app_properties",
+    _extract_container_app_properties_impl,
+)
 
 
 def build_router(*, runtime: ModuleType) -> tuple[APIRouter, dict[str, Any]]:

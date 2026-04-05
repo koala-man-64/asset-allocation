@@ -363,22 +363,6 @@ if ((-not $PSBoundParameters.ContainsKey("ServiceAccountName")) -or [string]::Is
   }
 }
 
-if ((-not $PSBoundParameters.ContainsKey("KubernetesNamespace")) -or [string]::IsNullOrWhiteSpace($KubernetesNamespace)) {
-  $namespaceFromEnv = Get-EnvValue -Key "KUBERNETES_NAMESPACE"
-  if ($namespaceFromEnv) {
-    Write-Host "Using KUBERNETES_NAMESPACE from ${envLabel}: $namespaceFromEnv"
-    $KubernetesNamespace = $namespaceFromEnv
-  }
-}
-
-if ((-not $PSBoundParameters.ContainsKey("AksClusterName")) -or [string]::IsNullOrWhiteSpace($AksClusterName)) {
-  $aksFromEnv = Get-EnvValue -Key "AKS_CLUSTER_NAME"
-  if ($aksFromEnv) {
-    Write-Host "Using AKS_CLUSTER_NAME from ${envLabel}: $aksFromEnv"
-    $AksClusterName = $aksFromEnv
-  }
-}
-
 if (-not $PSBoundParameters.ContainsKey("EnableAcrAdmin")) {
   $enableAcrAdminFromEnv = Get-EnvBool -Key "ENABLE_ACR_ADMIN"
   if ($enableAcrAdminFromEnv -ne $null) {

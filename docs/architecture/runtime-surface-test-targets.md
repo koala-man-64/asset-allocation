@@ -48,14 +48,15 @@ python -m pytest tests/monitoring/test_system_health.py tests/monitoring/test_sy
 Purpose:
 - validates the `monitoring.system_health` facade after extraction into `monitoring/system_health_modules/*`
 
-### Finance Silver Pilot
+### Finance ETL Module Surface
 
 ```powershell
-python -m pytest tests/finance_data/test_silver_finance_data.py -q
+python -m pytest tests/finance_data/test_finance_module_packages.py tests/finance_data/test_silver_finance_data.py tests/finance_data/test_bronze_finance_data.py tests/finance_data/test_gold_finance_delta_write.py tests/finance_data/test_feature_generator.py tests/tasks/test_reconciliation_contracts.py tests/tasks/test_job_entrypoint_contracts.py tests/tasks/test_postgres_gold_sync.py -q
 ```
 
 Purpose:
-- validates the silver finance entrypoint after extraction into `silver_parsing.py` and `silver_frames.py`
+- validates the finance job compatibility surfaces after establishing `silver_modules/*`, `bronze_modules/*`, and `gold_modules/*`
+- confirms the legacy top-level entrypoints and the new module packages resolve to the same helper surfaces where compatibility wrappers are still in place
 
 ### Full UI Closeout
 

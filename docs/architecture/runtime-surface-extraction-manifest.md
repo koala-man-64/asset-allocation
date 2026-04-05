@@ -17,6 +17,7 @@ This manifest records the current extraction-ready surface boundaries after the 
   - `api/endpoints/system_modules/jobs.py`
 - Compatibility rule:
   - keep `api.endpoints.system` as the route import, monkeypatch, and helper re-export surface until downstream tests and callers no longer depend on it directly
+  - route-owned request/response models and the non-purge helper clusters now live in `system_modules/*`; the facade keeps shared glue plus the remaining purge execution helpers that still serve as the direct patch surface
 
 ### Monitoring Health Surface
 
@@ -44,14 +45,34 @@ This manifest records the current extraction-ready surface boundaries after the 
 - Compatibility rule:
   - `api/`, `monitoring/`, and non-shim `core/` consumers import shared contracts through `core/*`, not `tasks.common.*`
 
-### Finance Silver Surface
+### Finance ETL Surface
 
-- Public entrypoint: `tasks/finance_data/silver_finance_data.py`
-- Extracted helpers:
-  - `tasks/finance_data/silver_parsing.py`
-  - `tasks/finance_data/silver_frames.py`
+- Public entrypoints:
+  - `tasks/finance_data/bronze_finance_data.py`
+  - `tasks/finance_data/silver_finance_data.py`
+  - `tasks/finance_data/gold_finance_data.py`
+- Extracted modules:
+  - `tasks/finance_data/silver_modules/parsing.py`
+  - `tasks/finance_data/silver_modules/frames.py`
+  - `tasks/finance_data/silver_modules/discovery.py`
+  - `tasks/finance_data/silver_modules/indexing.py`
+  - `tasks/finance_data/silver_modules/writes.py`
+  - `tasks/finance_data/silver_modules/reconciliation.py`
+  - `tasks/finance_data/silver_modules/runner.py`
+  - `tasks/finance_data/bronze_modules/coverage.py`
+  - `tasks/finance_data/bronze_modules/provider.py`
+  - `tasks/finance_data/bronze_modules/invalid_symbols.py`
+  - `tasks/finance_data/bronze_modules/assembly.py`
+  - `tasks/finance_data/bronze_modules/publication.py`
+  - `tasks/finance_data/bronze_modules/runner.py`
+  - `tasks/finance_data/gold_modules/features.py`
+  - `tasks/finance_data/gold_modules/schema.py`
+  - `tasks/finance_data/gold_modules/watermarks.py`
+  - `tasks/finance_data/gold_modules/sync.py`
+  - `tasks/finance_data/gold_modules/reconciliation.py`
+  - `tasks/finance_data/gold_modules/runner.py`
 - Compatibility rule:
-  - keep `silver_finance_data.py` as the orchestration entrypoint and exported helper surface while delegating parsing/frame logic to extracted modules
+  - keep `bronze_finance_data.py`, `silver_finance_data.py`, and `gold_finance_data.py` as the public entrypoint and monkeypatch surface while the `*_modules/` packages provide the decomposed helper namespace during the transition
 
 ### UI Application Surface
 
@@ -74,6 +95,14 @@ This manifest records the current extraction-ready surface boundaries after the 
   - `ui/src/features/universes/UniverseConfigPage.tsx`
   - `ui/src/features/rankings/RankingConfigPage.tsx`
   - `ui/src/features/strategy-exploration/StrategyDataCatalogPage.tsx`
+- Feature-local internal ownership seams:
+  - `ui/src/features/symbol-purge/components/*`
+  - `ui/src/features/symbol-purge/hooks/useSymbolPurgeController.ts`
+  - `ui/src/features/symbol-purge/lib/symbolPurge.ts`
+  - `ui/src/features/strategy-exploration/components/*`
+  - `ui/src/features/strategy-exploration/hooks/useStrategyDataCatalog.ts`
+  - `ui/src/features/strategy-exploration/lib/strategyDataCatalog.ts`
+  - `ui/src/features/system-status/domain-layer-comparison/DomainLayerComparisonPanel.tsx`
 - Compatibility wrappers:
   - `ui/src/app/components/pages/*.tsx` for the routed page entry files
 - Compatibility rule:

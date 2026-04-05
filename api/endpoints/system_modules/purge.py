@@ -1,12 +1,135 @@
 from types import ModuleType
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 
 def _runtime_attr(runtime: ModuleType, name: str) -> Any:
     return getattr(runtime, name)
+
+
+class PurgeRequest(BaseModel):
+    scope: Literal["layer-domain", "layer", "domain"]
+    layer: Optional[str] = None
+    domain: Optional[str] = None
+    confirm: bool = False
+
+
+class DomainListResetRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    confirm: bool = False
+
+
+class DomainCheckpointResetRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    confirm: bool = False
+
+
+class DomainListFileResponse(BaseModel):
+    listType: Literal["whitelist", "blacklist"]
+    path: str
+    exists: bool
+    symbolCount: int
+    symbols: List[str] = Field(default_factory=list)
+    truncated: bool = False
+    warning: Optional[str] = None
+
+
+class DomainListsResponse(BaseModel):
+    layer: str
+    domain: str
+    container: str
+    limit: int
+    files: List[DomainListFileResponse] = Field(default_factory=list)
+    loadedAt: str
+
+
+class DomainCheckpointTargetResponse(BaseModel):
+    operation: str
+    path: str
+    status: Literal["reset"]
+    existed: bool
+    deleted: bool
+
+
+class DomainCheckpointResetResponse(BaseModel):
+    layer: str
+    domain: str
+    container: Optional[str] = None
+    resetCount: int
+    deletedCount: int
+    targets: List[DomainCheckpointTargetResponse] = Field(default_factory=list)
+    updatedAt: str
+    note: Optional[str] = None
+
+
+class PurgeCandidatesRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    column: str = Field(..., min_length=1, max_length=128)
+    operator: str = Field(..., min_length=1, max_length=24)
+    value: Optional[float] = None
+    percentile: Optional[float] = None
+    as_of: Optional[str] = None
+    recent_rows: int = Field(default=1, ge=1, le=5000)
+    aggregation: str = Field(default="avg", min_length=1, max_length=24)
+    limit: Optional[int] = Field(default=None, ge=1, le=5000)
+    offset: int = Field(default=0, ge=0)
+    min_rows: int = Field(default=1, ge=1)
+
+
+class PurgeSymbolRequest(BaseModel):
+    symbol: str
+    confirm: bool = False
+
+
+class PurgeRuleAuditRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    column_name: str = Field(..., min_length=1, max_length=128)
+    operator: str = Field(..., min_length=1, max_length=24)
+    threshold: float
+    aggregation: Optional[str] = Field(default=None, min_length=1, max_length=24)
+    recent_rows: Optional[int] = Field(default=None, ge=1, le=5000)
+    expression: Optional[str] = Field(default=None, max_length=512)
+    selected_symbol_count: Optional[int] = Field(default=None, ge=0)
+    matched_symbol_count: Optional[int] = Field(default=None, ge=0)
+
+
+class PurgeSymbolsBatchRequest(BaseModel):
+    symbols: List[str] = Field(..., min_length=1)
+    confirm: bool = False
+    scope_note: Optional[str] = None
+    dry_run: bool = False
+    audit_rule: Optional[PurgeRuleAuditRequest] = None
+
+
+class PurgeRuleCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    column_name: str = Field(..., min_length=1, max_length=128)
+    operator: str = Field(..., min_length=1, max_length=24)
+    threshold: float
+    run_interval_minutes: int = Field(..., ge=1)
+
+
+class PurgeRuleUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    layer: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    domain: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    column_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    operator: Optional[str] = Field(default=None, min_length=1, max_length=24)
+    threshold: Optional[float] = None
+    run_interval_minutes: Optional[int] = Field(default=None, ge=1)
+
+
+class PurgeRulePreviewRequest(BaseModel):
+    max_symbols: int = Field(default=200, ge=1, le=1000)
 
 
 def build_router(

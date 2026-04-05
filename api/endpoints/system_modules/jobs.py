@@ -1,12 +1,145 @@
+import sys
 from types import ModuleType
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from monitoring.log_analytics import extract_first_table_rows
 
 
 def _runtime_attr(runtime: ModuleType, name: str) -> Any:
     return getattr(runtime, name)
+
+
+def _system_attr(name: str, default: Any) -> Any:
+    system_module = sys.modules.get("api.endpoints.system")
+    if system_module is None:
+        return default
+    return getattr(system_module, name, default)
+
+
+def _compat_export(name: str, target: Any) -> Any:
+    def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        resolved = _system_attr(name, target)
+        if resolved is _wrapper:
+            resolved = target
+        return resolved(*args, **kwargs)
+
+    _wrapper.__name__ = getattr(target, "__name__", name)
+    _wrapper.__doc__ = getattr(target, "__doc__", None)
+    _wrapper.__module__ = __name__
+    return _wrapper
+
+
+_ACTIVE_JOB_EXECUTION_STATUS_TOKENS = frozenset(
+    {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}
+)
+
+
+def _normalize_job_execution_status_token(value: Optional[str]) -> str:
+    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
+
+def _is_active_job_execution_status(value: Optional[str]) -> bool:
+    return _normalize_job_execution_status_token(value) in _ACTIVE_JOB_EXECUTION_STATUS_TOKENS
+
+
+def _is_active_job_execution(execution: Dict[str, Any]) -> bool:
+    return _is_active_job_execution_status(execution.get("status")) and not str(
+        execution.get("endTime") or ""
+    ).strip()
+
+
+def _select_anchored_job_executions(
+    executions: Sequence[Dict[str, Any]], *, limit: int
+) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    selected = list(executions[:limit])
+    if not selected:
+        return selected
+
+    active_execution = next(
+        (execution for execution in executions if _is_active_job_execution(execution)),
+        None,
+    )
+    if active_execution is None or active_execution in selected:
+        return selected
+
+    return [active_execution, *selected[: max(0, limit - 1)]]
+
+
+def _coalesce_log_row_string(row: Dict[str, Any], *keys: str) -> str:
+    lowered = {str(key).lower(): value for key, value in row.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _extract_console_log_entries(payload: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:
+    entries: List[Dict[str, Optional[str]]] = []
+    for row in extract_first_table_rows(payload):
+        if not isinstance(row, dict):
+            continue
+        message = _coalesce_log_row_string(row, "msg", "Log_s", "Log", "LogMessage_s", "Message", "message")
+        if not message:
+            continue
+        entries.append(
+            {
+                "timestamp": _coalesce_log_row_string(row, "TimeGenerated", "timegenerated") or None,
+                "stream_s": _coalesce_log_row_string(row, "stream_s", "Stream_s", "stream", "Stream") or None,
+                "executionName": _coalesce_log_row_string(
+                    row,
+                    "executionName",
+                    "ExecutionName",
+                    "exec",
+                    "Exec",
+                    "execution_name",
+                    "Execution_Name",
+                )
+                or None,
+                "message": message,
+            }
+        )
+    return entries
+
+
+def _extract_log_lines(payload: Dict[str, Any]) -> List[str]:
+    return [str(item.get("message") or "") for item in _extract_console_log_entries(payload) if item.get("message")]
+
+
+_normalize_job_execution_status_token_impl = _normalize_job_execution_status_token
+_normalize_job_execution_status_token = _compat_export(
+    "_normalize_job_execution_status_token",
+    _normalize_job_execution_status_token_impl,
+)
+_is_active_job_execution_status_impl = _is_active_job_execution_status
+_is_active_job_execution_status = _compat_export(
+    "_is_active_job_execution_status",
+    _is_active_job_execution_status_impl,
+)
+_is_active_job_execution_impl = _is_active_job_execution
+_is_active_job_execution = _compat_export("_is_active_job_execution", _is_active_job_execution_impl)
+_select_anchored_job_executions_impl = _select_anchored_job_executions
+_select_anchored_job_executions = _compat_export(
+    "_select_anchored_job_executions",
+    _select_anchored_job_executions_impl,
+)
+_coalesce_log_row_string_impl = _coalesce_log_row_string
+_coalesce_log_row_string = _compat_export("_coalesce_log_row_string", _coalesce_log_row_string_impl)
+_extract_console_log_entries_impl = _extract_console_log_entries
+_extract_console_log_entries = _compat_export(
+    "_extract_console_log_entries",
+    _extract_console_log_entries_impl,
+)
+_extract_log_lines_impl = _extract_log_lines
+_extract_log_lines = _compat_export("_extract_log_lines", _extract_log_lines_impl)
 
 
 def build_router(*, runtime: ModuleType) -> tuple[APIRouter, dict[str, Any]]:

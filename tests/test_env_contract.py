@@ -35,6 +35,7 @@ _JS_ENV_PATTERNS = (
 )
 _VITE_BUILTINS = {"DEV", "PROD", "SSR", "MODE", "BASE_URL"}
 _ENV_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]+$")
+_SETUP_ENV_PROMPT_PATTERN = re.compile(r'Prompt-Var\s+"([A-Z][A-Z0-9_]+)"')
 
 
 def _repo_root() -> Path:
@@ -73,6 +74,11 @@ def _env_file_keys(path: Path) -> set[str]:
 def _template_keys() -> set[str]:
     path = _repo_root() / ".env.template"
     return _env_file_keys(path)
+
+
+def _setup_env_prompt_keys() -> set[str]:
+    path = _repo_root() / "scripts" / "setup-env.ps1"
+    return set(_SETUP_ENV_PROMPT_PATTERN.findall(path.read_text(encoding="utf-8")))
 
 
 def _workflow_refs(pattern: re.Pattern[str]) -> set[str]:
@@ -245,6 +251,16 @@ def test_env_contract_exactly_matches_env_template_surface() -> None:
         if row["template"] == "true"
     }
     assert contract_template_keys == _template_keys()
+
+
+def test_setup_env_prompts_only_for_template_backed_keys() -> None:
+    contract = _contract_map()
+    prompt_keys = _setup_env_prompt_keys()
+    undocumented = sorted(prompt_keys - set(contract))
+    assert undocumented == [], f"setup-env.ps1 prompts for undocumented keys: {undocumented}"
+
+    non_template = sorted(key for key in prompt_keys if contract[key]["template"] != "true")
+    assert non_template == [], f"setup-env.ps1 prompts for non-template keys: {non_template}"
 
 
 def test_workflow_var_and_secret_refs_follow_contract() -> None:

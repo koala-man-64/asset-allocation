@@ -28,6 +28,8 @@ Any non-standard transition must include a reason in the action log.
 | WI-RSR-005 | UI feature-surface reorganization | Delivery Engineer Agent | Done | P3 | WI-RSR-003, WI-RSR-004 | Hold complete; UI feature layout is now part of the validated baseline | None | 0 |
 | WI-RSR-006 | Extraction-readiness packaging | Delivery Orchestrator Agent | Done | P3 | WI-RSR-003, WI-RSR-004, WI-RSR-005 | Hold complete; extraction-readiness docs and verification set are now part of the validated baseline | None | 0 |
 | WI-RSR-007 | Shared foundation ownership transfer | Delivery Engineer Agent | Done | P1 | ADR 001, `core/*` owner modules, architecture boundary test | Hold complete; shared foundation ownership now lives in `core/*` and legacy `tasks.common.*` paths are compatibility-only | None | 0 |
+| WI-RSR-008 | Finance ETL module package decomposition | Delivery Engineer Agent | Done | P1 | WI-RSR-002, WI-RSR-007 | Hold complete; finance helper packages now exist for silver, bronze, and gold while top-level job modules remain the stable runtime surface | None | 0 |
+| WI-RSR-009 | Final `system.py` facade cutover | Delivery Engineer Agent | Done | P1 | WI-RSR-003, WI-RSR-004, architecture/system API regression suites | Hold complete; `system.py` now re-exports owner-module models and non-purge helper seams while the facade guard blocks regrowth of the migrated clusters | None | 0 |
 
 ## Work Item Details
 
@@ -136,7 +138,68 @@ Any non-standard transition must include a reason in the action log.
 - **Blockers:** None
 - **Rework Loop Count:** 0
 
+### WI-RSR-008
+- **Title:** Finance ETL module package decomposition
+- **Objective:** Establish `silver_modules/*`, `bronze_modules/*`, and `gold_modules/*` as the decomposed finance helper namespace without breaking the stable top-level finance job entrypoints.
+- **Owner:** Delivery Engineer Agent
+- **State:** Done
+- **Priority:** P1
+- **Dependencies:** WI-RSR-002, WI-RSR-007
+- **Files / Surfaces:** `tasks/finance_data/silver_modules/*`, `tasks/finance_data/bronze_modules/*`, `tasks/finance_data/gold_modules/*`, `tasks/finance_data/silver_parsing.py`, `tasks/finance_data/silver_frames.py`, finance ETL tests and extraction docs
+- **Acceptance Criteria:** `silver_modules/*`, `bronze_modules/*`, and `gold_modules/*` exist and expose the decomposed finance helper surfaces; `silver_parsing.py` and `silver_frames.py` delegate to `silver_modules/*`; the top-level finance job modules remain the runtime entrypoint and monkeypatch surface; finance validation remains green
+- **Last Action:** Added the finance helper packages, converted the legacy silver helper files into compatibility wrappers, added package-surface smoke coverage, and closed the work item with green finance and boundary suites
+- **Evidence:** Added `tasks/finance_data/silver_modules/`, `tasks/finance_data/bronze_modules/`, and `tasks/finance_data/gold_modules/`; moved the silver parsing and frame implementations under `silver_modules/`; converted `tasks/finance_data/silver_parsing.py` and `tasks/finance_data/silver_frames.py` into explicit compatibility wrappers; added `tests/finance_data/test_finance_module_packages.py`; `python -m pytest tests/finance_data/test_finance_module_packages.py tests/finance_data/test_silver_finance_data.py tests/finance_data/test_bronze_finance_data.py tests/finance_data/test_gold_finance_delta_write.py tests/finance_data/test_feature_generator.py tests/tasks/test_reconciliation_contracts.py tests/tasks/test_job_entrypoint_contracts.py tests/tasks/test_postgres_gold_sync.py -q` -> `102 passed`; `python -m pytest tests/finance_data -q` -> `64 passed`; `python -m pytest tests/architecture/test_python_module_boundaries.py -q` -> `3 passed`
+- **Next Action:** None for this work item; a later refactor wave can invert full ownership from the top-level job modules into the package modules once the test patch surface is reduced
+- **Blockers:** None
+- **Rework Loop Count:** 0
+
+### WI-RSR-009
+- **Title:** Final `system.py` facade cutover
+- **Objective:** Move route-owned request/response models and non-purge helper clusters out of `api/endpoints/system.py` and into `api/endpoints/system_modules/*` while preserving `api.endpoints.system` as the import and monkeypatch surface.
+- **Owner:** Delivery Engineer Agent
+- **State:** Done
+- **Priority:** P1
+- **Dependencies:** WI-RSR-003, WI-RSR-004, `tests/api/*system*`, `tests/architecture/test_python_module_boundaries.py`
+- **Files / Surfaces:** `api/endpoints/system.py`, `api/endpoints/system_modules/status_read.py`, `api/endpoints/system_modules/domain_metadata.py`, `api/endpoints/system_modules/domain_columns.py`, `api/endpoints/system_modules/runtime_ops.py`, `api/endpoints/system_modules/container_apps.py`, `api/endpoints/system_modules/jobs.py`, `api/endpoints/system_modules/purge.py`, `tests/architecture/test_system_facade_guard.py`, `docs/architecture/runtime-surface-extraction-manifest.md`
+- **Acceptance Criteria:** `system.py` owns no top-level Pydantic models; migrated helper clusters live in `system_modules/*`; `api.endpoints.system` still exposes the legacy patch surface; architecture, targeted API, monitoring, and full-suite validation stay green
+- **Last Action:** Moved the route-owned models plus the status/domain-metadata/domain-columns/container-apps/jobs helper implementations into their owner modules, rewired the facade to re-export those seams, added a facade guard test, and reran the broad API plus full Python validation
+- **Evidence:** `python -m py_compile api/endpoints/system.py api/endpoints/system_modules/status_read.py api/endpoints/system_modules/domain_metadata.py api/endpoints/system_modules/domain_columns.py api/endpoints/system_modules/runtime_ops.py api/endpoints/system_modules/container_apps.py api/endpoints/system_modules/jobs.py api/endpoints/system_modules/purge.py` completed successfully; `python -m pytest tests/architecture/test_system_facade_guard.py -q` -> `2 passed`; `python -m pytest tests/monitoring/test_system_health.py -q` -> `22 passed`; `python -m pytest tests/api/test_system_domain_metadata_cache.py -q` -> `18 passed`; `python -m pytest tests/api/test_system_domain_columns_cache.py -q` -> `6 passed`; `python -m pytest tests/api/test_runtime_config_endpoints.py tests/api/test_debug_symbols_endpoints.py tests/api/test_system_container_apps_endpoints.py tests/api/test_system_job_logs_endpoints.py -q` -> `20 passed`; `python -m pytest tests/api/test_system_purge_audit_rule_helpers.py tests/api/test_system_purge_candidates_operations.py tests/api/test_system_purge_parallelism.py tests/api/test_system_purge_symbol_cleanup.py -q` -> `31 passed`; `python -m pytest tests/architecture/test_python_module_boundaries.py -q` -> `3 passed`; `python -m pytest tests/api -q` -> `213 passed`; `python -m pytest -q` -> `915 passed, 3 skipped`
+- **Next Action:** None for this work item; any future cleanup can target the remaining purge execution helpers still kept on the facade patch surface
+- **Blockers:** None
+- **Rework Loop Count:** 0
+
+### WI-RSR-010
+- **Title:** Split the largest UI feature pages and panels
+- **Objective:** Break the largest routed UI surfaces into feature-local `components`, `hooks`, and `lib` ownership units while preserving the current wrapper imports, routes, and visible behavior.
+- **Owner:** Delivery Engineer Agent
+- **State:** Done
+- **Priority:** P1
+- **Dependencies:** WI-RSR-005, UI feature tests, `ui/src/app/routes.tsx`
+- **Files / Surfaces:** `ui/src/features/symbol-purge/*`, `ui/src/features/strategy-exploration/*`, `ui/src/features/system-status/domain-layer-comparison/*`, `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx`, UI architecture docs
+- **Acceptance Criteria:** `SymbolPurgeByCriteriaPage.tsx` and `StrategyDataCatalogPage.tsx` are thin composition files; `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx` is a compatibility wrapper; feature behavior, wrapper imports, and lazy routes remain unchanged; targeted Vitest suites and the Vite production build remain green
+- **Last Action:** Split `symbol-purge` and `strategy-exploration` into feature-local controller/hooks/components/lib files, moved the domain-layer comparison panel ownership into `ui/src/features/system-status/domain-layer-comparison/`, added feature-local helper tests, and closed the work item with green targeted UI suites plus a production build
+- **Evidence:** Added `ui/src/features/symbol-purge/components/`, `ui/src/features/symbol-purge/hooks/useSymbolPurgeController.ts`, and `ui/src/features/symbol-purge/lib/symbolPurge.ts`; added `ui/src/features/strategy-exploration/components/`, `ui/src/features/strategy-exploration/hooks/useStrategyDataCatalog.ts`, and `ui/src/features/strategy-exploration/lib/strategyDataCatalog.ts`; moved the real domain-layer comparison implementation to `ui/src/features/system-status/domain-layer-comparison/DomainLayerComparisonPanel.tsx` and converted `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx` into a thin re-export wrapper; added `ui/src/features/symbol-purge/lib/symbolPurge.test.ts` and `ui/src/features/strategy-exploration/lib/strategyDataCatalog.test.ts`; current thin entrypoint lengths are `SymbolPurgeByCriteriaPage.tsx` -> `18`, `StrategyDataCatalogPage.tsx` -> `69`, and wrapper `DomainLayerComparisonPanel.tsx` -> `3`; `npm exec vitest -- run src/app/__tests__/SymbolPurgeByCriteriaPage.test.tsx` -> `11 passed`; `npm exec vitest -- run src/app/__tests__/StrategyDataCatalogPage.test.tsx` -> `2 passed`; `npm exec vitest -- run src/app/__tests__/DomainLayerComparisonPanel.test.tsx` -> `20 passed`; `npm exec vitest -- run src/app/__tests__/SystemStatusPage.test.tsx` -> `8 passed`; `npm exec vitest -- run src/app/__tests__/StrategyDataCatalogPage.test.tsx src/app/__tests__/SymbolPurgeByCriteriaPage.test.tsx src/app/__tests__/DomainLayerComparisonPanel.test.tsx src/app/__tests__/SystemStatusPage.test.tsx src/features/symbol-purge/lib/symbolPurge.test.ts src/features/strategy-exploration/lib/strategyDataCatalog.test.ts` -> `46 passed`; `npm exec vite -- build` completed successfully
+- **Next Action:** None for this work item; a later cleanup wave can further decompose the feature-owned domain-layer comparison implementation if the panel remains a maintenance hotspot
+- **Blockers:** None
+- **Rework Loop Count:** 0
+
 ## Action Log
+
+### 2026-04-04T20:25:00-05:00
+- **Acting Agent:** Codex / Delivery Engineer Agent and QA Release Gate Agent
+- **Work Item ID:** WI-RSR-010
+- **Action Taken:** Split the largest UI feature pages into feature-local `components`, `hooks`, and `lib` seams, moved the domain-layer comparison panel ownership into `ui/src/features/system-status/domain-layer-comparison/`, retained the legacy wrapper imports, added feature-local helper tests, and reran the targeted UI suites plus production build validation.
+- **Evidence Produced:** `npm exec vitest -- run src/app/__tests__/SymbolPurgeByCriteriaPage.test.tsx` -> `11 passed`; `npm exec vitest -- run src/app/__tests__/StrategyDataCatalogPage.test.tsx` -> `2 passed`; `npm exec vitest -- run src/app/__tests__/DomainLayerComparisonPanel.test.tsx` -> `20 passed`; `npm exec vitest -- run src/app/__tests__/SystemStatusPage.test.tsx` -> `8 passed`; `npm exec vitest -- run src/app/__tests__/StrategyDataCatalogPage.test.tsx src/app/__tests__/SymbolPurgeByCriteriaPage.test.tsx src/app/__tests__/DomainLayerComparisonPanel.test.tsx src/app/__tests__/SystemStatusPage.test.tsx src/features/symbol-purge/lib/symbolPurge.test.ts src/features/strategy-exploration/lib/strategyDataCatalog.test.ts` -> `46 passed`; `npm exec vite -- build` completed successfully.
+- **State Transition:** `WI-RSR-010` moved from `Planned` to `Done`
+- **Follow-On Assignment / Next Step:** Treat the new feature-local ownership seams as the baseline for future UI work; only remove wrapper imports in a later intentional cleanup wave
+
+### 2026-04-04T18:40:00-05:00
+- **Acting Agent:** Codex / Delivery Engineer Agent, Delivery Orchestrator Agent, QA Release Gate Agent, and Architecture / Security / Maintainability review lanes
+- **Work Item ID:** WI-RSR-009
+- **Action Taken:** Collected explicit signoff on the compatibility-first cutover plan, moved the route-owned models plus the status/domain-metadata/domain-columns/container-apps/jobs helper ownership into `system_modules/*`, rewired `api/endpoints/system.py` into a thinner facade plus re-export bridge, added the facade guard test, and updated the extraction manifest.
+- **Evidence Produced:** Active signoff board approved-with-conditions for architecture, maintainability, testing, security/fail-fast, cleanup, and workflow/governance; `python -m py_compile api/endpoints/system.py api/endpoints/system_modules/status_read.py api/endpoints/system_modules/domain_metadata.py api/endpoints/system_modules/domain_columns.py api/endpoints/system_modules/runtime_ops.py api/endpoints/system_modules/container_apps.py api/endpoints/system_modules/jobs.py api/endpoints/system_modules/purge.py` completed successfully; `python -m pytest tests/architecture/test_system_facade_guard.py -q` -> `2 passed`; `python -m pytest tests/monitoring/test_system_health.py -q` -> `22 passed`; `python -m pytest tests/api/test_system_domain_metadata_cache.py tests/api/test_system_domain_columns_cache.py tests/api/test_runtime_config_endpoints.py tests/api/test_debug_symbols_endpoints.py tests/api/test_system_container_apps_endpoints.py tests/api/test_system_job_logs_endpoints.py tests/api/test_system_purge_audit_rule_helpers.py tests/api/test_system_purge_candidates_operations.py tests/api/test_system_purge_parallelism.py tests/api/test_system_purge_symbol_cleanup.py -q` -> `69 passed`; `python -m pytest tests/architecture/test_python_module_boundaries.py -q` -> `3 passed`; `python -m pytest tests/api -q` -> `213 passed`; `python -m pytest -q` -> `915 passed, 3 skipped`
+- **State Transition:** `WI-RSR-009` moved from `Planned` to `Done`
+- **Follow-On Assignment / Next Step:** Optional later cleanup can relocate the remaining purge execution helpers once the direct facade monkeypatch surface is intentionally reduced
 
 ### 2026-04-02T12:46:55.6247209-04:00
 - **Acting Agent:** Codex / Delivery Engineer Agent

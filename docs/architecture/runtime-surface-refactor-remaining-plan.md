@@ -322,6 +322,17 @@ Keep shared assets in:
 - feature pages are owned by `ui/src/features/*`
 - full Vitest suite passes
 
+### 2026-04-04 status
+
+- Route-level feature ownership is complete and the next UI refactor wave is now closed:
+  - `ui/src/features/symbol-purge/SymbolPurgeByCriteriaPage.tsx` is a thin composition entrypoint backed by feature-local `components/`, `hooks/`, and `lib/`.
+  - `ui/src/features/strategy-exploration/StrategyDataCatalogPage.tsx` is a thin composition entrypoint backed by feature-local `components/`, `hooks/`, and `lib/`.
+  - `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx` is now a compatibility wrapper over `ui/src/features/system-status/domain-layer-comparison/DomainLayerComparisonPanel.tsx`.
+- Validation closed green for the UI wave:
+  - `npm exec vitest -- run src/app/__tests__/StrategyDataCatalogPage.test.tsx src/app/__tests__/SymbolPurgeByCriteriaPage.test.tsx src/app/__tests__/DomainLayerComparisonPanel.test.tsx src/app/__tests__/SystemStatusPage.test.tsx`
+  - `npm exec vite -- build`
+- Remaining UI work is no longer page-entry ownership. Future UI cleanup should target deeper decomposition of the feature-owned `domain-layer-comparison` implementation if it remains a hotspot.
+
 ## WI-RSR-006: Extraction-Readiness Packaging
 
 ### Objective

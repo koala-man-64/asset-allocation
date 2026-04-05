@@ -17,7 +17,6 @@ from typing import Any, Callable, Dict, List, Optional, Literal, Tuple, TypeVar,
 import httpx
 from anyio import from_thread
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
 
 from api.endpoints.system_modules import container_apps as system_container_apps_routes
 from api.endpoints.system_modules import domain_columns as system_domain_columns_routes
@@ -94,49 +93,6 @@ def _reject_removed_query_params(request: Request, *names: str) -> None:
         )
 
 
-def _sanitize_system_health_json_value(value: Any) -> tuple[Any, int]:
-    if value is None or isinstance(value, (str, bool)):
-        return value, 0
-
-    if isinstance(value, int):
-        return value, 0
-
-    if isinstance(value, float):
-        return (value, 0) if math.isfinite(value) else (None, 1)
-
-    if isinstance(value, dict):
-        sanitized: Dict[Any, Any] = {}
-        replacements = 0
-        for key, item in value.items():
-            sanitized_item, item_replacements = _sanitize_system_health_json_value(item)
-            sanitized[key] = sanitized_item
-            replacements += item_replacements
-        return sanitized, replacements
-
-    if isinstance(value, (list, tuple)):
-        sanitized_items: List[Any] = []
-        replacements = 0
-        for item in value:
-            sanitized_item, item_replacements = _sanitize_system_health_json_value(item)
-            sanitized_items.append(sanitized_item)
-            replacements += item_replacements
-        return sanitized_items, replacements
-
-    try:
-        if hasattr(value, "isoformat") and callable(value.isoformat):
-            return value.isoformat(), 0
-    except Exception:
-        pass
-
-    try:
-        coerced = value.item() if hasattr(value, "item") and callable(value.item) else value
-    except Exception:
-        coerced = value
-
-    if coerced is not value:
-        return _sanitize_system_health_json_value(coerced)
-
-    return value, 0
 
 
 REALTIME_TOPIC_BACKTESTS = "backtests"
@@ -190,168 +146,8 @@ def _emit_realtime(topic: str, event_type: str, payload: Optional[Dict[str, Any]
         logger.exception("Realtime emit failed: topic=%s type=%s", topic, event_type)
 
 
-def _normalize_domain_metadata_targets(targets: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
-    normalized: List[Dict[str, str]] = []
-    seen: set[str] = set()
-    for target in targets:
-        layer = _normalize_layer(str(target.get("layer") or ""))
-        domain = _normalize_domain(str(target.get("domain") or ""))
-        if not layer or not domain:
-            continue
-        key = f"{layer}/{domain}"
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append({"layer": layer, "domain": domain})
-    return normalized
 
 
-def _extract_domain_metadata_targets_from_entries(entries: Dict[str, Any]) -> List[Dict[str, str]]:
-    targets: List[Dict[str, str]] = []
-    for key, value in (entries or {}).items():
-        if isinstance(value, dict):
-            layer = value.get("layer")
-            domain = value.get("domain")
-        else:
-            layer = None
-            domain = None
-        if layer and domain:
-            targets.append({"layer": layer, "domain": domain})
-            continue
-        if isinstance(key, str) and "/" in key:
-            layer_key, domain_key = key.split("/", 1)
-            targets.append({"layer": layer_key, "domain": domain_key})
-    return _normalize_domain_metadata_targets(targets)
-
-
-def _emit_domain_metadata_snapshot_changed(
-    reason: Literal["refresh", "ui-cache-write", "purge"],
-    targets: Sequence[Dict[str, Any]],
-) -> None:
-    _emit_realtime(
-        REALTIME_TOPIC_SYSTEM_HEALTH,
-        "DOMAIN_METADATA_SNAPSHOT_CHANGED",
-        {
-            "reason": reason,
-            "targets": _normalize_domain_metadata_targets(targets),
-            "updatedAt": datetime.now(timezone.utc).isoformat(),
-        },
-    )
-
-
-def _resolve_system_health_payload(
-    request: Request,
-    *,
-    refresh: bool,
-) -> tuple[Dict[str, Any], bool, bool]:
-    settings = get_settings(request)
-
-    include_ids = False
-    if settings.auth_required:
-        raw_env = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS")
-        raw = raw_env.strip().lower() if raw_env else ""
-        include_ids = raw in {"1", "true", "t", "yes", "y", "on"}
-
-    cache: TtlCache[Dict[str, Any]] = get_system_health_cache(request)
-
-    def _refresh() -> Dict[str, Any]:
-        return collect_system_health_snapshot(include_resource_ids=include_ids)
-
-    try:
-        result = cache.get(_refresh, force_refresh=bool(refresh))
-    except Exception as exc:
-        logger.exception("System health cache refresh failed.")
-        raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
-
-    payload: Dict[str, Any] = dict(result.value or {})
-    request_id = request.headers.get("x-request-id", "")
-    logger.info(
-        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s recent_jobs=%s",
-        result.cache_hit,
-        bool(result.refresh_error),
-        len(payload.get("dataLayers") or []),
-        len(payload.get("alerts") or []),
-        len(payload.get("resources") or []),
-        len(payload.get("recentJobs") or []),
-    )
-    recent_runs_preview: list[str] = []
-    for run in (payload.get("recentJobs") or [])[:10]:
-        if not isinstance(run, dict):
-            continue
-        job_name = str(run.get("jobName") or "").strip() or "?"
-        status = str(run.get("status") or "").strip() or "unknown"
-        start_time = str(run.get("startTime") or "").strip() or "n/a"
-        recent_runs_preview.append(f"{job_name}:{status}@{start_time}")
-    if recent_runs_preview:
-        logger.info("System health recentJobs preview: %s", " | ".join(recent_runs_preview))
-    elif payload.get("recentJobs") == []:
-        logger.warning("System health recentJobs is empty.")
-
-    payload, sanitization_replacements = _sanitize_system_health_json_value(payload)
-    if sanitization_replacements:
-        logger.warning(
-            "System health payload sanitized before JSON response: replacements=%s request_id=%s",
-            sanitization_replacements,
-            request_id,
-        )
-
-    return payload, bool(result.cache_hit), bool(result.refresh_error)
-
-
-def _extract_arm_error_message(response: httpx.Response) -> str:
-    """
-    Best-effort extraction of a human-friendly error message from ARM responses.
-
-    Some ARM endpoints return a JSON string like:
-      "Reason: Bad Request. Body: {\"error\":\"...\",\"success\":false}"
-    """
-
-    def _from_mapping(payload: Dict[str, Any]) -> str:
-        err = payload.get("error")
-        if isinstance(err, dict):
-            message = err.get("message") or err.get("Message") or err.get("detail") or err.get("details")
-            if isinstance(message, str) and message.strip():
-                return message.strip()
-            code = err.get("code") or err.get("Code")
-            if isinstance(code, str) and code.strip():
-                return code.strip()
-            return json.dumps(err, ensure_ascii=False)
-        if isinstance(err, str) and err.strip():
-            return err.strip()
-        message = payload.get("message") or payload.get("Message")
-        if isinstance(message, str) and message.strip():
-            return message.strip()
-        return json.dumps(payload, ensure_ascii=False)
-
-    def _from_text(text: str) -> str:
-        cleaned = (text or "").strip()
-        if not cleaned:
-            return ""
-        # If the payload includes an embedded JSON body fragment, prefer it.
-        match = re.search(r"Body:\\s*(\\{.*\\})\\s*$", cleaned)
-        if match:
-            fragment = match.group(1)
-            try:
-                nested = json.loads(fragment)
-            except json.JSONDecodeError:
-                return cleaned
-            if isinstance(nested, dict):
-                return _from_mapping(nested)
-            if isinstance(nested, str) and nested.strip():
-                return nested.strip()
-            return fragment
-        return cleaned
-
-    try:
-        payload = response.json()
-    except Exception:
-        return _from_text(response.text)
-
-    if isinstance(payload, dict):
-        return _from_mapping(payload)
-    if isinstance(payload, str):
-        return _from_text(payload)
-    return _from_text(response.text)
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -392,389 +188,14 @@ def _split_csv(raw: Optional[str]) -> List[str]:
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
-def _normalize_container_app_name(value: str) -> str:
-    return str(value or "").strip().lower().replace("_", "-")
 
 
-def _container_app_allowlist() -> Tuple[str, str, List[str]]:
-    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
-    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
-    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
-    resource_group = resource_group_raw.strip() if resource_group_raw else ""
-    app_names_raw = os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS")
-    app_allowlist = _split_csv(app_names_raw)
-    return subscription_id, resource_group, app_allowlist
 
-
-def _container_app_health_url_overrides() -> Dict[str, str]:
-    raw = (os.environ.get("SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON") or "").strip()
-    if not raw:
-        return {}
-    try:
-        payload = json.loads(raw)
-    except Exception:
-        logger.warning("Invalid SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON; expected JSON object.")
-        return {}
-    if not isinstance(payload, dict):
-        logger.warning("Invalid SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON type; expected JSON object.")
-        return {}
-
-    out: Dict[str, str] = {}
-    for key, value in payload.items():
-        name = _normalize_container_app_name(str(key or ""))
-        url = str(value or "").strip()
-        if not name or not url:
-            continue
-        out[name] = url
-    return out
-
-
-def _container_app_default_health_path(app_name: str) -> str:
-    lowered = _normalize_container_app_name(app_name)
-    if "api" in lowered:
-        return "/healthz"
-    return "/"
-
-
-def _resolve_container_app_health_url(
-    app_name: str,
-    *,
-    ingress_fqdn: Optional[str],
-    overrides: Dict[str, str],
-) -> Optional[str]:
-    override = overrides.get(_normalize_container_app_name(app_name))
-    if override:
-        if override.startswith(("http://", "https://")):
-            return override
-        if override.startswith("/") and ingress_fqdn:
-            path = override if override.startswith("/") else f"/{override}"
-            return f"https://{ingress_fqdn}{path}"
-        return override
-
-    if not ingress_fqdn:
-        return None
-    path = _container_app_default_health_path(app_name)
-    if not path.startswith("/"):
-        path = f"/{path}"
-    return f"https://{ingress_fqdn}{path}"
-
-
-def _probe_container_app_health(url: str, *, timeout_seconds: float) -> Dict[str, Any]:
-    checked_at = datetime.now(timezone.utc).isoformat()
-    try:
-        with httpx.Client(timeout=max(0.5, float(timeout_seconds)), follow_redirects=True, trust_env=False) as client:
-            response = client.get(url)
-        status_code = int(response.status_code)
-        if 200 <= status_code < 400:
-            status = "healthy"
-        elif 400 <= status_code < 500:
-            status = "warning"
-        else:
-            status = "error"
-        return {
-            "status": status,
-            "url": url,
-            "httpStatus": status_code,
-            "checkedAt": checked_at,
-            "error": None,
-        }
-    except Exception as exc:
-        return {
-            "status": "error",
-            "url": url,
-            "httpStatus": None,
-            "checkedAt": checked_at,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-
-
-def _resource_status_from_provisioning_state(value: str) -> str:
-    state = str(value or "").strip().lower()
-    if state == "succeeded":
-        return "healthy"
-    if state in {"failed", "canceled", "cancelled"}:
-        return "error"
-    if state in {"creating", "updating", "deleting", "inprogress"}:
-        return "warning"
-    if not state:
-        return "unknown"
-    return "warning"
-
-
-def _worse_status(a: str, b: str) -> str:
-    order = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
-    return b if order.get(b, 0) > order.get(a, 0) else a
-
-
-def _extract_container_app_properties(payload: Dict[str, Any]) -> Dict[str, Any]:
-    props = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
-    configuration = props.get("configuration") if isinstance(props.get("configuration"), dict) else {}
-    ingress = configuration.get("ingress") if isinstance(configuration.get("ingress"), dict) else {}
-
-    provisioning_state = str(props.get("provisioningState") or "").strip() or None
-    running_state = (
-        str(props.get("runningStatus") or "").strip()
-        or str(props.get("runningState") or "").strip()
-        or None
-    )
-    latest_ready_revision = str(props.get("latestReadyRevisionName") or "").strip() or None
-    ingress_fqdn = str(ingress.get("fqdn") or "").strip() or None
-    resource_id = str(payload.get("id") or "").strip() or None
-
-    return {
-        "provisioningState": provisioning_state,
-        "runningState": running_state,
-        "latestReadyRevisionName": latest_ready_revision,
-        "ingressFqdn": ingress_fqdn,
-        "azureId": resource_id,
-    }
-
-def _normalize_job_name_key(value: Any) -> str:
-    return str(value or "").strip().lower()
-
-
-def _status_view_domain_job_names(system_health_payload: Dict[str, Any]) -> List[str]:
-    names: List[str] = []
-    seen: set[str] = set()
-
-    for layer in system_health_payload.get("dataLayers") or []:
-        if not isinstance(layer, dict):
-            continue
-        for domain in layer.get("domains") or []:
-            if not isinstance(domain, dict):
-                continue
-            job_name = str(domain.get("jobName") or "").strip()
-            if not job_name:
-                continue
-            key = _normalize_job_name_key(job_name)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            names.append(job_name)
-
-    return names
-
-
-def _merge_live_job_resources(
-    existing_resources: Sequence[Dict[str, Any]],
-    live_resources: Sequence[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    target_keys = {
-        _normalize_job_name_key(resource.get("name"))
-        for resource in live_resources
-        if isinstance(resource, dict)
-        and str(resource.get("resourceType") or "").strip() == "Microsoft.App/jobs"
-        and _normalize_job_name_key(resource.get("name"))
-    }
-
-    merged: List[Dict[str, Any]] = []
-    for resource in existing_resources:
-        if not isinstance(resource, dict):
-            continue
-        resource_type = str(resource.get("resourceType") or "").strip()
-        resource_key = _normalize_job_name_key(resource.get("name"))
-        if resource_type == "Microsoft.App/jobs" and resource_key in target_keys:
-            continue
-        merged.append(dict(resource))
-
-    merged.extend(dict(resource) for resource in live_resources if isinstance(resource, dict))
-    return merged
-
-
-def _same_job_run(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
-    job_names_match = _normalize_job_name_key(left.get("jobName")) == _normalize_job_name_key(
-        right.get("jobName")
-    )
-
-    left_execution_name = str(left.get("executionName") or "").strip()
-    right_execution_name = str(right.get("executionName") or "").strip()
-    left_start_time = str(left.get("startTime") or "").strip()
-    right_start_time = str(right.get("startTime") or "").strip()
-
-    execution_names_match = bool(
-        left_execution_name and right_execution_name and left_execution_name == right_execution_name
-    )
-    start_times_match = bool(left_start_time and right_start_time and left_start_time == right_start_time)
-
-    return job_names_match and (
-        execution_names_match or (not (left_execution_name and right_execution_name) and start_times_match)
-    )
-
-
-def _merge_live_job_runs(
-    existing_runs: Sequence[Dict[str, Any]],
-    live_runs: Sequence[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    merged: List[Dict[str, Any]] = [dict(run) for run in existing_runs if isinstance(run, dict)]
-
-    for live_run in live_runs:
-        if not isinstance(live_run, dict):
-            continue
-        if not _normalize_job_name_key(live_run.get("jobName")):
-            continue
-
-        filtered = [run for run in merged if not _same_job_run(run, live_run)]
-        filtered.insert(0, dict(live_run))
-        merged = filtered
-
-    return merged
-
-
-def _overlay_live_domain_job_runtime(system_health_payload: Dict[str, Any]) -> Dict[str, Any]:
-    job_names = _status_view_domain_job_names(system_health_payload)
-    if not job_names:
-        return system_health_payload
-
-    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
-    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
-    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
-    resource_group = resource_group_raw.strip() if resource_group_raw else ""
-    allowlist = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS"))
-
-    if not (subscription_id and resource_group and allowlist):
-        return system_health_payload
-
-    allowlist_index = {_normalize_job_name_key(name): name for name in allowlist}
-    requested_job_names: List[str] = []
-    seen: set[str] = set()
-    for job_name in job_names:
-        key = _normalize_job_name_key(job_name)
-        resolved = allowlist_index.get(key)
-        if not resolved or key in seen:
-            continue
-        seen.add(key)
-        requested_job_names.append(resolved)
-
-    if not requested_job_names:
-        return system_health_payload
-
-    api_version_env = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION")
-    api_version = api_version_env.strip() if api_version_env else ""
-    if not api_version:
-        api_version = ArmConfig.api_version
-
-    timeout_env = os.environ.get("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS")
-    try:
-        timeout_seconds = float(timeout_env.strip()) if timeout_env else 5.0
-    except ValueError:
-        timeout_seconds = 5.0
-
-    cfg = ArmConfig(
-        subscription_id=subscription_id,
-        resource_group=resource_group,
-        api_version=api_version,
-        timeout_seconds=timeout_seconds,
-    )
-
-    checked_at = _utc_timestamp()
-    try:
-        with AzureArmClient(cfg) as arm:
-            live_resources_raw, live_runs = collect_jobs_and_executions(
-                arm,
-                job_names=requested_job_names,
-                last_checked_iso=checked_at,
-                include_ids=False,
-                max_executions_per_job=1,
-                resource_health_enabled=False,
-            )
-    except Exception as exc:
-        logger.warning(
-            "Status-view live domain job runtime overlay failed for jobs=%s error=%s",
-            requested_job_names,
-            exc,
-            exc_info=True,
-        )
-        return system_health_payload
-
-    live_resources = [resource.to_dict(include_ids=False) for resource in live_resources_raw]
-
-    payload = dict(system_health_payload)
-    payload["resources"] = _merge_live_job_resources(payload.get("resources") or [], live_resources)
-    payload["recentJobs"] = _merge_live_job_runs(payload.get("recentJobs") or [], live_runs)
-    return payload
-
-
-def build_system_status_view(request: Request, refresh: bool = False) -> Dict[str, Any]:
-    system_health_payload, system_health_cache_hit, _refresh_error = _resolve_system_health_payload(
-        request,
-        refresh=bool(refresh),
-    )
-    system_health_payload = _overlay_live_domain_job_runtime(system_health_payload)
-    metadata_snapshot_payload = _build_domain_metadata_snapshot_payload(refresh=bool(refresh))
-    return {
-        "version": 1,
-        "generatedAt": _utc_timestamp(),
-        "systemHealth": system_health_payload,
-        "metadataSnapshot": metadata_snapshot_payload,
-        "sources": {
-            "systemHealth": "cache" if system_health_cache_hit else "live-refresh",
-            "metadataSnapshot": "persisted-snapshot",
-        },
-    }
-
-
-class SymbolSyncStateResponse(BaseModel):
-    id: int
-    last_refreshed_at: Optional[str] = None
-    last_refreshed_sources: Optional[Dict[str, Any]] = None
-    last_refresh_error: Optional[str] = None
-
-class DomainDateRange(BaseModel):
-    min: Optional[str] = None
-    max: Optional[str] = None
-    column: Optional[str] = None
-    source: Optional[Literal["partition", "stats", "artifact"]] = None
-
-
-class DomainMetadataResponse(BaseModel):
-    layer: str
-    domain: str
-    container: str
-    type: Literal["blob", "delta"]
-    computedAt: str
-    folderLastModified: Optional[str] = None
-    cachedAt: Optional[str] = None
-    cacheSource: Optional[Literal["snapshot", "live-refresh"]] = None
-    symbolCount: Optional[int] = None
-    columns: List[str] = Field(default_factory=list)
-    columnCount: Optional[int] = None
-    financeSubfolderSymbolCounts: Optional[Dict[str, int]] = None
-    dateRange: Optional[DomainDateRange] = None
-    totalRows: Optional[int] = None
-    fileCount: Optional[int] = None
-    totalBytes: Optional[int] = None
-    deltaVersion: Optional[int] = None
-    tablePath: Optional[str] = None
-    prefix: Optional[str] = None
-    blacklistedSymbolCount: Optional[int] = None
-    metadataPath: Optional[str] = None
-    metadataSource: Optional[Literal["artifact", "scan"]] = None
-    warnings: List[str] = Field(default_factory=list)
-
-
-class DomainMetadataSnapshotResponse(BaseModel):
-    version: int = 1
-    updatedAt: Optional[str] = None
-    entries: Dict[str, DomainMetadataResponse] = Field(default_factory=dict)
-    warnings: List[str] = Field(default_factory=list)
-
-
-class SystemStatusViewSources(BaseModel):
-    systemHealth: Literal["cache", "live-refresh"]
-    metadataSnapshot: Literal["persisted-snapshot"] = "persisted-snapshot"
-
-
-class SystemStatusViewResponse(BaseModel):
-    version: int = 1
-    generatedAt: str
-    systemHealth: Dict[str, Any] = Field(default_factory=dict)
-    metadataSnapshot: DomainMetadataSnapshotResponse = Field(default_factory=DomainMetadataSnapshotResponse)
-    sources: SystemStatusViewSources
 
 _status_read_router, _status_read_exports = status_read.build_router(
     runtime=_system_runtime(),
-    symbol_sync_state_response_model=SymbolSyncStateResponse,
-    system_status_view_response_model=SystemStatusViewResponse,
+    symbol_sync_state_response_model=status_read.SymbolSyncStateResponse,
+    system_status_view_response_model=status_read.SystemStatusViewResponse,
 )
 router.include_router(_status_read_router)
 
@@ -784,365 +205,25 @@ get_symbol_sync_state_endpoint = _status_read_exports["get_symbol_sync_state_end
 system_status_view = _status_read_exports["system_status_view"]
 system_lineage = _status_read_exports["system_lineage"]
 
+SymbolSyncStateResponse = status_read.SymbolSyncStateResponse
+SystemStatusViewSources = status_read.SystemStatusViewSources
+SystemStatusViewResponse = status_read.SystemStatusViewResponse
+_sanitize_system_health_json_value = status_read._sanitize_system_health_json_value
+_resolve_system_health_payload = status_read._resolve_system_health_payload
+_extract_arm_error_message = status_read._extract_arm_error_message
+_normalize_job_name_key = status_read._normalize_job_name_key
+_status_view_domain_job_names = status_read._status_view_domain_job_names
+_merge_live_job_resources = status_read._merge_live_job_resources
+_same_job_run = status_read._same_job_run
+_merge_live_job_runs = status_read._merge_live_job_runs
+_overlay_live_domain_job_runtime = status_read._overlay_live_domain_job_runtime
+build_system_status_view = status_read.build_system_status_view
 
-_DOMAIN_METADATA_CACHE_FILE_DEFAULT = "metadata/domain-metadata.json"
-_DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS = 30.0
-_DOMAIN_METADATA_DOCUMENT_CACHE_LOCK = threading.Lock()
-_DOMAIN_METADATA_DOCUMENT_CACHE: Optional[Dict[str, Any]] = None
-_DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = 0.0
-_DOMAIN_METADATA_UI_CACHE_FILE_DEFAULT = "metadata/ui-cache/domain-metadata-snapshot.json"
-
-
-def _domain_metadata_cache_path() -> str:
-    configured = (os.environ.get("DOMAIN_METADATA_CACHE_PATH") or "").strip()
-    return configured or _DOMAIN_METADATA_CACHE_FILE_DEFAULT
-
-
-def _domain_metadata_ui_cache_path() -> str:
-    configured = (os.environ.get("DOMAIN_METADATA_UI_CACHE_PATH") or "").strip()
-    return configured or _DOMAIN_METADATA_UI_CACHE_FILE_DEFAULT
-
-
-def _domain_metadata_snapshot_cache_ttl_seconds() -> float:
-    raw = (os.environ.get("DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS") or "").strip()
-    if not raw:
-        return _DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS
-    try:
-        ttl = float(raw)
-    except ValueError:
-        logger.warning(
-            "Invalid DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS=%r. Using default=%s.",
-            raw,
-            _DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS,
-        )
-        return _DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS
-    if ttl < 0:
-        return 0.0
-    return ttl
-
-
-def _cache_domain_metadata_document(payload: Dict[str, Any]) -> None:
-    ttl = _domain_metadata_snapshot_cache_ttl_seconds()
-    with _DOMAIN_METADATA_DOCUMENT_CACHE_LOCK:
-        global _DOMAIN_METADATA_DOCUMENT_CACHE
-        global _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT
-        if ttl <= 0:
-            _DOMAIN_METADATA_DOCUMENT_CACHE = None
-            _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = 0.0
-            return
-        _DOMAIN_METADATA_DOCUMENT_CACHE = deepcopy(payload)
-        _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = time.monotonic() + ttl
-
-
-def _invalidate_domain_metadata_document_cache() -> None:
-    with _DOMAIN_METADATA_DOCUMENT_CACHE_LOCK:
-        global _DOMAIN_METADATA_DOCUMENT_CACHE
-        global _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT
-        _DOMAIN_METADATA_DOCUMENT_CACHE = None
-        _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = 0.0
-
-
-def _domain_metadata_cache_key(layer: str, domain: str) -> str:
-    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
-    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
-    return f"{normalized_layer}/{normalized_domain}"
-
-
-def _default_domain_metadata_document() -> Dict[str, Any]:
-    return {"version": 1, "updatedAt": None, "entries": {}}
-
-
-def _load_domain_metadata_document(force_refresh: bool = False) -> Dict[str, Any]:
-    if not force_refresh:
-        now = time.monotonic()
-        with _DOMAIN_METADATA_DOCUMENT_CACHE_LOCK:
-            cached = _DOMAIN_METADATA_DOCUMENT_CACHE
-            expires_at = _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT
-            if isinstance(cached, dict) and now < expires_at:
-                return deepcopy(cached)
-
-    path = _domain_metadata_cache_path()
-    payload = mdc.get_common_json_content(path)
-    if not isinstance(payload, dict):
-        payload = _default_domain_metadata_document()
-
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        payload["entries"] = {}
-    _cache_domain_metadata_document(payload)
-    return payload
-
-
-def _read_cached_domain_metadata_snapshot(
-    layer: str,
-    domain: str,
-    *,
-    force_refresh: bool = False,
-) -> Optional[Dict[str, Any]]:
-    key = _domain_metadata_cache_key(layer, domain)
-    payload = _load_domain_metadata_document(force_refresh=force_refresh)
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        return None
-
-    raw_entry = entries.get(key)
-    if not isinstance(raw_entry, dict):
-        return None
-
-    raw_metadata = raw_entry.get("metadata")
-    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-    if not metadata:
-        return None
-
-    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
-    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
-    metadata["layer"] = normalized_layer
-    metadata["domain"] = normalized_domain
-
-    cached_at = raw_entry.get("cachedAt")
-    if not isinstance(cached_at, str):
-        cached_at = ""
-    if cached_at:
-        metadata["cachedAt"] = cached_at
-    metadata["cacheSource"] = "snapshot"
-    return metadata
-
-
-def _write_cached_domain_metadata_snapshot(layer: str, domain: str, metadata: Dict[str, Any]) -> str:
-    if not isinstance(metadata, dict):
-        raise ValueError("metadata payload must be a JSON object.")
-
-    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
-    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
-    key = _domain_metadata_cache_key(normalized_layer, normalized_domain)
-
-    payload = _load_domain_metadata_document()
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        entries = {}
-        payload["entries"] = entries
-
-    now = _utc_timestamp()
-    metadata_payload = dict(metadata)
-    metadata_payload["layer"] = normalized_layer
-    metadata_payload["domain"] = normalized_domain
-    metadata_payload["cachedAt"] = now
-    metadata_payload["cacheSource"] = "snapshot"
-
-    previous_entry = entries.get(key)
-    history: List[Dict[str, Any]] = []
-    if isinstance(previous_entry, dict):
-        previous_history = previous_entry.get("history")
-        if isinstance(previous_history, list):
-            for item in previous_history[-199:]:
-                if isinstance(item, dict):
-                    history.append(dict(item))
-
-    history.append(
-        {
-            "timestamp": now,
-            "symbolCount": metadata_payload.get("symbolCount"),
-            "columnCount": metadata_payload.get("columnCount"),
-            "fileCount": metadata_payload.get("fileCount"),
-            "totalRows": metadata_payload.get("totalRows"),
-            "totalBytes": metadata_payload.get("totalBytes"),
-            "deltaVersion": metadata_payload.get("deltaVersion"),
-        }
-    )
-
-    entries[key] = {
-        "layer": normalized_layer,
-        "domain": normalized_domain,
-        "cachedAt": now,
-        "metadata": metadata_payload,
-        "history": history[-200:],
-    }
-    payload["version"] = 1
-    payload["updatedAt"] = now
-    mdc.save_common_json_content(payload, _domain_metadata_cache_path())
-    _cache_domain_metadata_document(payload)
-    return now
-
-
-def _refresh_domain_metadata_snapshot(layer: str, domain: str) -> Dict[str, Any]:
-    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
-    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
-
-    try:
-        metadata = collect_domain_metadata(
-            layer=normalized_layer,
-            domain=normalized_domain,
-            force_refresh=True,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception(
-            "Domain metadata live refresh failed: layer=%s domain=%s",
-            normalized_layer,
-            normalized_domain,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Failed to refresh domain metadata live for "
-                f"{normalized_layer}/{normalized_domain}: {exc}"
-            ),
-        ) from exc
-
-    try:
-        persisted = domain_metadata_snapshots.write_domain_metadata_snapshot_documents(
-            layer=normalized_layer,
-            domain=normalized_domain,
-            metadata=metadata,
-            snapshot_path=_domain_metadata_cache_path(),
-            ui_snapshot_path=_domain_metadata_ui_cache_path(),
-        )
-    except Exception as exc:
-        logger.exception(
-            "Domain metadata snapshot persist failed after live refresh: layer=%s domain=%s",
-            normalized_layer,
-            normalized_domain,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Failed to persist refreshed domain metadata for "
-                f"{normalized_layer}/{normalized_domain}: {exc}"
-            ),
-        ) from exc
-
-    _invalidate_domain_metadata_document_cache()
-    _emit_domain_metadata_snapshot_changed(
-        "refresh",
-        [{"layer": normalized_layer, "domain": normalized_domain}],
-    )
-    response_payload = dict(persisted)
-    response_payload["cacheSource"] = "live-refresh"
-    return response_payload
-
-
-def _extract_cached_domain_metadata_snapshots(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        return {}
-
-    extracted: Dict[str, Dict[str, Any]] = {}
-    for raw_key, raw_entry in entries.items():
-        if not isinstance(raw_entry, dict):
-            continue
-
-        raw_metadata = raw_entry.get("metadata")
-        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-        if not metadata:
-            continue
-
-        layer = _normalize_layer(str(metadata.get("layer") or raw_entry.get("layer") or ""))
-        domain = _normalize_domain(str(metadata.get("domain") or raw_entry.get("domain") or ""))
-        if not layer or not domain:
-            if isinstance(raw_key, str) and "/" in raw_key:
-                prefix, suffix = raw_key.split("/", 1)
-                layer = layer or _normalize_layer(prefix)
-                domain = domain or _normalize_domain(suffix)
-        if not layer or not domain:
-            continue
-
-        key = _domain_metadata_cache_key(layer, domain)
-        metadata["layer"] = layer
-        metadata["domain"] = domain
-
-        cached_at = raw_entry.get("cachedAt")
-        if not isinstance(cached_at, str):
-            cached_at = ""
-        if cached_at:
-            metadata["cachedAt"] = cached_at
-        metadata["cacheSource"] = "snapshot"
-        extracted[key] = metadata
-
-    return extracted
-
-
-def _parse_domain_metadata_filter(
-    raw: Optional[str],
-    *,
-    param_name: str,
-    normalizer: Callable[[str], Optional[str]],
-    allowed_values: Optional[set[str]] = None,
-) -> Optional[set[str]]:
-    text = (raw or "").strip()
-    if not text:
-        return None
-    items = _split_csv(text)
-    if not items:
-        return set()
-    normalized: set[str] = set()
-    for item in items:
-        value = normalizer(item)
-        if not value:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{param_name} contains unsupported value: {item!r}.",
-            )
-        if allowed_values is not None and value not in allowed_values:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{param_name} contains unsupported value: {item!r}.",
-            )
-        normalized.add(value)
-    return normalized
-
-
-def _build_domain_metadata_snapshot_payload(
-    *,
-    layers: Optional[str] = None,
-    domains: Optional[str] = None,
-    refresh: bool = False,
-) -> Dict[str, Any]:
-    layer_filter = _parse_domain_metadata_filter(
-        layers,
-        param_name="layers",
-        normalizer=lambda value: _normalize_layer(value),
-        allowed_values=set(_LAYER_CONTAINER_ENV.keys()),
-    )
-    domain_filter = _parse_domain_metadata_filter(
-        domains,
-        param_name="domains",
-        normalizer=lambda value: _normalize_domain(value),
-    )
-
-    try:
-        snapshot_doc = _load_domain_metadata_document(force_refresh=bool(refresh))
-    except Exception as exc:
-        logger.warning("Domain metadata snapshot load failed: %s", exc)
-        snapshot_doc = _default_domain_metadata_document()
-        _invalidate_domain_metadata_document_cache()
-
-    all_entries = _extract_cached_domain_metadata_snapshots(snapshot_doc)
-    filtered_entries: Dict[str, Dict[str, Any]] = {}
-    warnings: List[str] = []
-
-    for key, metadata in all_entries.items():
-        layer = _normalize_layer(str(metadata.get("layer") or ""))
-        domain = _normalize_domain(str(metadata.get("domain") or ""))
-        if not layer or not domain:
-            continue
-        if layer_filter is not None and layer not in layer_filter:
-            continue
-        if domain_filter is not None and domain not in domain_filter:
-            continue
-        filtered_entries[key] = metadata
-
-    return {
-        "version": int(snapshot_doc.get("version") or 1),
-        "updatedAt": snapshot_doc.get("updatedAt"),
-        "entries": filtered_entries,
-        "warnings": warnings,
-    }
 
 _domain_metadata_router, _domain_metadata_exports = system_domain_metadata_routes.build_router(
     runtime=_system_runtime(),
-    domain_metadata_response_model=DomainMetadataResponse,
-    domain_metadata_snapshot_response_model=DomainMetadataSnapshotResponse,
+    domain_metadata_response_model=system_domain_metadata_routes.DomainMetadataResponse,
+    domain_metadata_snapshot_response_model=system_domain_metadata_routes.DomainMetadataSnapshotResponse,
 )
 router.include_router(_domain_metadata_router)
 
@@ -1151,432 +232,73 @@ domain_metadata_snapshot = _domain_metadata_exports["domain_metadata_snapshot"]
 get_domain_metadata_snapshot_cache = _domain_metadata_exports["get_domain_metadata_snapshot_cache"]
 put_domain_metadata_snapshot_cache = _domain_metadata_exports["put_domain_metadata_snapshot_cache"]
 
+DomainDateRange = system_domain_metadata_routes.DomainDateRange
+DomainMetadataResponse = system_domain_metadata_routes.DomainMetadataResponse
+DomainMetadataSnapshotResponse = system_domain_metadata_routes.DomainMetadataSnapshotResponse
+_normalize_domain_metadata_targets = system_domain_metadata_routes._normalize_domain_metadata_targets
+_extract_domain_metadata_targets_from_entries = system_domain_metadata_routes._extract_domain_metadata_targets_from_entries
+_emit_domain_metadata_snapshot_changed = system_domain_metadata_routes._emit_domain_metadata_snapshot_changed
+_domain_metadata_cache_path = system_domain_metadata_routes._domain_metadata_cache_path
+_domain_metadata_ui_cache_path = system_domain_metadata_routes._domain_metadata_ui_cache_path
+_domain_metadata_snapshot_cache_ttl_seconds = system_domain_metadata_routes._domain_metadata_snapshot_cache_ttl_seconds
+_cache_domain_metadata_document = system_domain_metadata_routes._cache_domain_metadata_document
+_invalidate_domain_metadata_document_cache = system_domain_metadata_routes._invalidate_domain_metadata_document_cache
+_domain_metadata_cache_key = system_domain_metadata_routes._domain_metadata_cache_key
+_default_domain_metadata_document = system_domain_metadata_routes._default_domain_metadata_document
+_load_domain_metadata_document = system_domain_metadata_routes._load_domain_metadata_document
+_read_cached_domain_metadata_snapshot = system_domain_metadata_routes._read_cached_domain_metadata_snapshot
+_write_cached_domain_metadata_snapshot = system_domain_metadata_routes._write_cached_domain_metadata_snapshot
+_refresh_domain_metadata_snapshot = system_domain_metadata_routes._refresh_domain_metadata_snapshot
+_extract_cached_domain_metadata_snapshots = system_domain_metadata_routes._extract_cached_domain_metadata_snapshots
+_parse_domain_metadata_filter = system_domain_metadata_routes._parse_domain_metadata_filter
+_build_domain_metadata_snapshot_payload = system_domain_metadata_routes._build_domain_metadata_snapshot_payload
 
-class DomainColumnsResponse(BaseModel):
-    layer: str
-    domain: str
-    columns: List[str] = Field(default_factory=list)
-    found: bool = False
-    promptRetrieve: bool = False
-    source: Literal["common-file", "artifact"] = "common-file"
-    cachePath: str
-    updatedAt: Optional[str] = None
-
-
-class DomainColumnsRefreshRequest(BaseModel):
-    layer: str = Field(..., min_length=1, max_length=32)
-    domain: str = Field(..., min_length=1, max_length=64)
-    sample_limit: int = Field(default=500, ge=1, le=5000)
 
 
 _domain_columns_router, _domain_columns_exports = system_domain_columns_routes.build_router(
     runtime=_system_runtime(),
-    domain_columns_response_model=DomainColumnsResponse,
-    domain_columns_refresh_request_model=DomainColumnsRefreshRequest,
+    domain_columns_response_model=system_domain_columns_routes.DomainColumnsResponse,
+    domain_columns_refresh_request_model=system_domain_columns_routes.DomainColumnsRefreshRequest,
 )
 router.include_router(_domain_columns_router)
 
 get_domain_columns = _domain_columns_exports["get_domain_columns"]
 refresh_domain_columns = _domain_columns_exports["refresh_domain_columns"]
 
+DomainColumnsResponse = system_domain_columns_routes.DomainColumnsResponse
+DomainColumnsRefreshRequest = system_domain_columns_routes.DomainColumnsRefreshRequest
+_domain_columns_cache_path = system_domain_columns_routes._domain_columns_cache_path
+_parse_timeout_seconds_env = system_domain_columns_routes._parse_timeout_seconds_env
+_domain_columns_read_timeout_seconds = system_domain_columns_routes._domain_columns_read_timeout_seconds
+_domain_columns_refresh_timeout_seconds = system_domain_columns_routes._domain_columns_refresh_timeout_seconds
+_run_with_timeout = system_domain_columns_routes._run_with_timeout
+_require_common_storage_for_domain_columns = system_domain_columns_routes._require_common_storage_for_domain_columns
+_normalize_columns_list = system_domain_columns_routes._normalize_columns_list
+_read_domain_columns_from_artifact = system_domain_columns_routes._read_domain_columns_from_artifact
+_domain_columns_cache_key = system_domain_columns_routes._domain_columns_cache_key
+_default_domain_columns_document = system_domain_columns_routes._default_domain_columns_document
+_load_domain_columns_document = system_domain_columns_routes._load_domain_columns_document
+_read_cached_domain_columns = system_domain_columns_routes._read_cached_domain_columns
+_write_cached_domain_columns = system_domain_columns_routes._write_cached_domain_columns
+_discover_first_delta_table_for_prefix = system_domain_columns_routes._discover_first_delta_table_for_prefix
+_retrieve_domain_columns_from_schema = system_domain_columns_routes._retrieve_domain_columns_from_schema
+_retrieve_domain_columns = system_domain_columns_routes._retrieve_domain_columns
 
-_DOMAIN_COLUMNS_CACHE_FILE_DEFAULT = "metadata/domain-columns.json"
-_DOMAIN_COLUMNS_READ_TIMEOUT_SECONDS_DEFAULT = 8.0
-_DOMAIN_COLUMNS_REFRESH_TIMEOUT_SECONDS_DEFAULT = 25.0
 
-
-def _domain_columns_cache_path() -> str:
-    configured = (os.environ.get("DOMAIN_COLUMNS_CACHE_PATH") or "").strip()
-    return configured or _DOMAIN_COLUMNS_CACHE_FILE_DEFAULT
-
-
-def _parse_timeout_seconds_env(env_name: str, default_value: float) -> float:
-    raw = (os.environ.get(env_name) or "").strip()
-    if not raw:
-        return float(default_value)
-    try:
-        value = float(raw)
-    except ValueError:
-        logger.warning("Invalid %s=%s. Using default=%s", env_name, raw, default_value)
-        return float(default_value)
-    if value <= 0:
-        return float(default_value)
-    return value
-
-
-def _domain_columns_read_timeout_seconds() -> float:
-    return _parse_timeout_seconds_env(
-        "DOMAIN_COLUMNS_READ_TIMEOUT_SECONDS",
-        _DOMAIN_COLUMNS_READ_TIMEOUT_SECONDS_DEFAULT,
-    )
-
-
-def _domain_columns_refresh_timeout_seconds() -> float:
-    return _parse_timeout_seconds_env(
-        "DOMAIN_COLUMNS_REFRESH_TIMEOUT_SECONDS",
-        _DOMAIN_COLUMNS_REFRESH_TIMEOUT_SECONDS_DEFAULT,
-    )
-
-
-def _run_with_timeout(fn: Callable[[], _T], *, timeout_seconds: float, timeout_message: str) -> _T:
-    if timeout_seconds <= 0:
-        return fn()
-
-    done = threading.Event()
-    state: Dict[str, Any] = {}
-
-    def _worker() -> None:
-        try:
-            state["result"] = fn()
-        except Exception as exc:
-            state["error"] = exc
-        finally:
-            done.set()
-
-    thread = threading.Thread(target=_worker, daemon=True)
-    thread.start()
-    if not done.wait(timeout_seconds):
-        raise TimeoutError(timeout_message)
-
-    if "error" in state:
-        raise state["error"]
-    return state["result"]
-
-
-def _require_common_storage_for_domain_columns() -> None:
-    if getattr(mdc, "common_storage_client", None) is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Common storage is unavailable (AZURE_CONTAINER_COMMON).",
-        )
-
-
-def _normalize_columns_list(values: Any) -> List[str]:
-    if not isinstance(values, list):
-        return []
-    seen: set[str] = set()
-    normalized: List[str] = []
-    for value in values:
-        column = str(value or "").strip()
-        if not column or column in seen:
-            continue
-        seen.add(column)
-        normalized.append(column)
-    return normalized
-
-
-def _read_domain_columns_from_artifact(layer: str, domain: str) -> tuple[List[str], Optional[str], bool, Optional[str]]:
-    artifact = domain_artifacts.load_domain_artifact(layer=layer, domain=domain)
-    if not isinstance(artifact, dict):
-        return [], None, False, None
-    columns = _normalize_columns_list(artifact.get("columns"))
-    updated_at = artifact.get("updatedAt") or artifact.get("computedAt")
-    artifact_path = artifact.get("artifactPath")
-    return (
-        columns,
-        str(updated_at) if isinstance(updated_at, str) else None,
-        bool(columns),
-        str(artifact_path) if isinstance(artifact_path, str) and artifact_path.strip() else None,
-    )
-
-
-def _domain_columns_cache_key(layer: str, domain: str) -> str:
-    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
-    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
-    return f"{normalized_layer}/{normalized_domain}"
-
-
-def _default_domain_columns_document() -> Dict[str, Any]:
-    return {"version": 1, "updatedAt": None, "entries": {}}
-
-
-def _load_domain_columns_document() -> Dict[str, Any]:
-    path = _domain_columns_cache_path()
-    payload = mdc.get_common_json_content(path)
-    if not isinstance(payload, dict):
-        return _default_domain_columns_document()
-
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        payload["entries"] = {}
-    return payload
-
-
-def _read_cached_domain_columns(layer: str, domain: str) -> tuple[List[str], Optional[str], bool]:
-    key = _domain_columns_cache_key(layer, domain)
-    payload = _load_domain_columns_document()
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        return [], None, False
-
-    raw_entry = entries.get(key)
-    if isinstance(raw_entry, list):
-        columns = _normalize_columns_list(raw_entry)
-        updated_at = payload.get("updatedAt")
-        return columns, (str(updated_at) if isinstance(updated_at, str) else None), bool(columns)
-    if not isinstance(raw_entry, dict):
-        return [], None, False
-
-    columns = _normalize_columns_list(raw_entry.get("columns"))
-    updated_at = raw_entry.get("updatedAt")
-    return columns, (str(updated_at) if isinstance(updated_at, str) else None), bool(columns)
-
-
-def _write_cached_domain_columns(layer: str, domain: str, columns: List[str]) -> tuple[List[str], str]:
-    normalized_columns = _normalize_columns_list(columns)
-    if not normalized_columns:
-        raise ValueError("No columns were discovered for cache update.")
-
-    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
-    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
-    key = _domain_columns_cache_key(normalized_layer, normalized_domain)
-
-    payload = _load_domain_columns_document()
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        entries = {}
-        payload["entries"] = entries
-
-    now = _utc_timestamp()
-    entries[key] = {
-        "layer": normalized_layer,
-        "domain": normalized_domain,
-        "columns": normalized_columns,
-        "updatedAt": now,
-    }
-    payload["version"] = 1
-    payload["updatedAt"] = now
-    mdc.save_common_json_content(payload, _domain_columns_cache_path())
-    return normalized_columns, now
-
-
-def _discover_first_delta_table_for_prefix(*, container: str, prefix: str) -> Optional[str]:
-    normalized = f"{str(prefix or '').strip().strip('/')}/"
-    if normalized == "/":
-        return None
-
-    client = BlobStorageClient(container_name=container, ensure_container_exists=False)
-    marker = "/_delta_log/"
-    for blob in client.container_client.list_blobs(name_starts_with=normalized):
-        name = str(getattr(blob, "name", "") or "")
-        if marker not in name:
-            continue
-        root = name.split(marker, 1)[0].strip("/")
-        if root and root.startswith(normalized.rstrip("/")):
-            return root
-    return None
-
-
-def _retrieve_domain_columns_from_schema(layer: str, domain: str) -> List[str]:
-    normalized_layer = _normalize_layer(layer)
-    normalized_domain = _normalize_domain(domain)
-    if normalized_layer not in {"silver", "gold"}:
-        return []
-    if not normalized_domain:
-        return []
-
-    prefix = _RULE_DATA_PREFIXES.get(normalized_layer, {}).get(normalized_domain)
-    if not prefix:
-        return []
-
-    container = _resolve_container(normalized_layer)
-    first_table = _discover_first_delta_table_for_prefix(container=container, prefix=prefix)
-    if not first_table:
-        return []
-
-    schema_columns = get_delta_schema_columns(container, first_table)
-    return _normalize_columns_list(schema_columns or [])
-
-
-def _retrieve_domain_columns(layer: str, domain: str, sample_limit: int) -> List[str]:
-    normalized_layer = _normalize_layer(layer)
-    normalized_domain = _normalize_domain(domain)
-    if normalized_layer not in {"bronze", "silver", "gold"}:
-        raise HTTPException(status_code=400, detail="layer must be bronze, silver, or gold.")
-    if not normalized_domain:
-        raise HTTPException(status_code=400, detail="domain is required.")
-
-    try:
-        schema_columns = _retrieve_domain_columns_from_schema(normalized_layer, normalized_domain)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.warning(
-            "Schema-first column retrieval failed; falling back to sampled retrieval. layer=%s domain=%s err=%s",
-            normalized_layer,
-            normalized_domain,
-            exc,
-        )
-        schema_columns = []
-
-    if schema_columns:
-        return schema_columns
-
-    try:
-        from api.data_service import DataService
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Data service unavailable: {exc}") from exc
-
-    try:
-        rows = DataService.get_data(
-            layer=normalized_layer,
-            domain=normalized_domain,
-            ticker=None,
-            limit=int(sample_limit),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception(
-            "Domain columns retrieval failed: layer=%s domain=%s",
-            normalized_layer,
-            normalized_domain,
-        )
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve domain columns: {exc}") from exc
-
-    for row in rows or []:
-        if isinstance(row, dict) and row:
-            return _normalize_columns_list(list(row.keys()))
-    return []
-
-class PurgeRequest(BaseModel):
-    scope: Literal["layer-domain", "layer", "domain"]
-    layer: Optional[str] = None
-    domain: Optional[str] = None
-    confirm: bool = False
-
-
-class DomainListResetRequest(BaseModel):
-    layer: str = Field(..., min_length=1, max_length=32)
-    domain: str = Field(..., min_length=1, max_length=64)
-    confirm: bool = False
-
-
-class DomainCheckpointResetRequest(BaseModel):
-    layer: str = Field(..., min_length=1, max_length=32)
-    domain: str = Field(..., min_length=1, max_length=64)
-    confirm: bool = False
-
-
-class DomainListFileResponse(BaseModel):
-    listType: Literal["whitelist", "blacklist"]
-    path: str
-    exists: bool
-    symbolCount: int
-    symbols: List[str] = Field(default_factory=list)
-    truncated: bool = False
-    warning: Optional[str] = None
-
-
-class DomainListsResponse(BaseModel):
-    layer: str
-    domain: str
-    container: str
-    limit: int
-    files: List[DomainListFileResponse] = Field(default_factory=list)
-    loadedAt: str
-
-
-class DomainCheckpointTargetResponse(BaseModel):
-    operation: str
-    path: str
-    status: Literal["reset"]
-    existed: bool
-    deleted: bool
-
-
-class DomainCheckpointResetResponse(BaseModel):
-    layer: str
-    domain: str
-    container: Optional[str] = None
-    resetCount: int
-    deletedCount: int
-    targets: List[DomainCheckpointTargetResponse] = Field(default_factory=list)
-    updatedAt: str
-    note: Optional[str] = None
-
-
-class PurgeCandidatesRequest(BaseModel):
-    layer: str = Field(..., min_length=1, max_length=32)
-    domain: str = Field(..., min_length=1, max_length=64)
-    column: str = Field(..., min_length=1, max_length=128)
-    operator: str = Field(..., min_length=1, max_length=24)
-    value: Optional[float] = None
-    percentile: Optional[float] = None
-    as_of: Optional[str] = None
-    recent_rows: int = Field(default=1, ge=1, le=5000)
-    aggregation: str = Field(default="avg", min_length=1, max_length=24)
-    limit: Optional[int] = Field(default=None, ge=1, le=5000)
-    offset: int = Field(default=0, ge=0)
-    min_rows: int = Field(default=1, ge=1)
-
-
-class PurgeSymbolRequest(BaseModel):
-    symbol: str
-    confirm: bool = False
-
-
-class PurgeRuleAuditRequest(BaseModel):
-    layer: str = Field(..., min_length=1, max_length=32)
-    domain: str = Field(..., min_length=1, max_length=64)
-    column_name: str = Field(..., min_length=1, max_length=128)
-    operator: str = Field(..., min_length=1, max_length=24)
-    threshold: float
-    aggregation: Optional[str] = Field(default=None, min_length=1, max_length=24)
-    recent_rows: Optional[int] = Field(default=None, ge=1, le=5000)
-    expression: Optional[str] = Field(default=None, max_length=512)
-    selected_symbol_count: Optional[int] = Field(default=None, ge=0)
-    matched_symbol_count: Optional[int] = Field(default=None, ge=0)
-
-
-class PurgeSymbolsBatchRequest(BaseModel):
-    symbols: List[str] = Field(..., min_length=1)
-    confirm: bool = False
-    scope_note: Optional[str] = None
-    dry_run: bool = False
-    audit_rule: Optional[PurgeRuleAuditRequest] = None
-
-
-class PurgeRuleCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    layer: str = Field(..., min_length=1, max_length=32)
-    domain: str = Field(..., min_length=1, max_length=64)
-    column_name: str = Field(..., min_length=1, max_length=128)
-    operator: str = Field(..., min_length=1, max_length=24)
-    threshold: float
-    run_interval_minutes: int = Field(..., ge=1)
-
-
-class PurgeRuleUpdateRequest(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    layer: Optional[str] = Field(default=None, min_length=1, max_length=32)
-    domain: Optional[str] = Field(default=None, min_length=1, max_length=64)
-    column_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
-    operator: Optional[str] = Field(default=None, min_length=1, max_length=24)
-    threshold: Optional[float] = None
-    run_interval_minutes: Optional[int] = Field(default=None, ge=1)
-
-
-class PurgeRulePreviewRequest(BaseModel):
-    max_symbols: int = Field(default=200, ge=1, le=1000)
 
 
 _purge_router, _purge_exports = system_purge_routes.build_router(
     runtime=_system_runtime(),
-    domain_lists_response_model=DomainListsResponse,
-    purge_request_model=PurgeRequest,
-    domain_list_reset_request_model=DomainListResetRequest,
-    domain_checkpoint_reset_request_model=DomainCheckpointResetRequest,
-    purge_candidates_request_model=PurgeCandidatesRequest,
-    purge_symbol_request_model=PurgeSymbolRequest,
-    purge_symbols_batch_request_model=PurgeSymbolsBatchRequest,
-    purge_rule_create_request_model=PurgeRuleCreateRequest,
-    purge_rule_update_request_model=PurgeRuleUpdateRequest,
-    purge_rule_preview_request_model=PurgeRulePreviewRequest,
+    domain_lists_response_model=system_purge_routes.DomainListsResponse,
+    purge_request_model=system_purge_routes.PurgeRequest,
+    domain_list_reset_request_model=system_purge_routes.DomainListResetRequest,
+    domain_checkpoint_reset_request_model=system_purge_routes.DomainCheckpointResetRequest,
+    purge_candidates_request_model=system_purge_routes.PurgeCandidatesRequest,
+    purge_symbol_request_model=system_purge_routes.PurgeSymbolRequest,
+    purge_symbols_batch_request_model=system_purge_routes.PurgeSymbolsBatchRequest,
+    purge_rule_create_request_model=system_purge_routes.PurgeRuleCreateRequest,
+    purge_rule_update_request_model=system_purge_routes.PurgeRuleUpdateRequest,
+    purge_rule_preview_request_model=system_purge_routes.PurgeRulePreviewRequest,
 )
 router.include_router(_purge_router)
 
@@ -1598,6 +320,20 @@ purge_symbols = _purge_exports["purge_symbols"]
 purge_symbol = _purge_exports["purge_symbol"]
 get_purge_operation = _purge_exports["get_purge_operation"]
 
+PurgeRequest = system_purge_routes.PurgeRequest
+DomainListResetRequest = system_purge_routes.DomainListResetRequest
+DomainCheckpointResetRequest = system_purge_routes.DomainCheckpointResetRequest
+DomainListFileResponse = system_purge_routes.DomainListFileResponse
+DomainListsResponse = system_purge_routes.DomainListsResponse
+DomainCheckpointTargetResponse = system_purge_routes.DomainCheckpointTargetResponse
+DomainCheckpointResetResponse = system_purge_routes.DomainCheckpointResetResponse
+PurgeCandidatesRequest = system_purge_routes.PurgeCandidatesRequest
+PurgeSymbolRequest = system_purge_routes.PurgeSymbolRequest
+PurgeRuleAuditRequest = system_purge_routes.PurgeRuleAuditRequest
+PurgeSymbolsBatchRequest = system_purge_routes.PurgeSymbolsBatchRequest
+PurgeRuleCreateRequest = system_purge_routes.PurgeRuleCreateRequest
+PurgeRuleUpdateRequest = system_purge_routes.PurgeRuleUpdateRequest
+PurgeRulePreviewRequest = system_purge_routes.PurgeRulePreviewRequest
 
 def _require_postgres_dsn(request: Request) -> str:
     settings = get_settings(request)
@@ -4062,10 +2798,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "How many days finance statement data is considered fresh before re-fetch (integer).",
         "example": "28",
     },
-    "FEATURE_ENGINEERING_MAX_WORKERS": {
-        "description": "Max workers for feature engineering concurrency (integer).",
-        "example": "8",
-    },
     "TRIGGER_NEXT_JOB_NAME": {
         "description": "Optional downstream job name to trigger on success.",
         "example": "silver-market-job",
@@ -4212,24 +2944,12 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
 }
 
 
-class RuntimeConfigUpsertRequest(BaseModel):
-    key: str = Field(..., description="Configuration key (env-var style).")
-    scope: str = Field(default="global", description="Scope for this key (e.g., global or job:<name>).")
-    value: str = Field(default="", description="Raw string value to apply (can be empty).")
-    description: Optional[str] = Field(default=None, description="Optional human-readable description.")
-
-
-class DebugSymbolsUpdateRequest(BaseModel):
-    symbols: str = Field(
-        ...,
-        description="Comma-separated list or JSON array. Row presence means the allowlist is active.",
-    )
 
 
 _runtime_ops_router, _runtime_ops_exports = system_runtime_ops_routes.build_router(
     runtime=_system_runtime(),
-    runtime_config_upsert_request_model=RuntimeConfigUpsertRequest,
-    debug_symbols_update_request_model=DebugSymbolsUpdateRequest,
+    runtime_config_upsert_request_model=system_runtime_ops_routes.RuntimeConfigUpsertRequest,
+    debug_symbols_update_request_model=system_runtime_ops_routes.DebugSymbolsUpdateRequest,
 )
 router.include_router(_runtime_ops_router)
 
@@ -4241,6 +2961,8 @@ get_debug_symbols = _runtime_ops_exports["get_debug_symbols"]
 set_debug_symbols = _runtime_ops_exports["set_debug_symbols"]
 remove_debug_symbols = _runtime_ops_exports["remove_debug_symbols"]
 
+RuntimeConfigUpsertRequest = system_runtime_ops_routes.RuntimeConfigUpsertRequest
+DebugSymbolsUpdateRequest = system_runtime_ops_routes.DebugSymbolsUpdateRequest
 
 _container_apps_router, _container_apps_exports = system_container_apps_routes.build_router(
     runtime=_system_runtime(),
@@ -4252,6 +2974,15 @@ get_container_app_logs = _container_apps_exports["get_container_app_logs"]
 start_container_app = _container_apps_exports["start_container_app"]
 stop_container_app = _container_apps_exports["stop_container_app"]
 
+_normalize_container_app_name = system_container_apps_routes._normalize_container_app_name
+_container_app_allowlist = system_container_apps_routes._container_app_allowlist
+_container_app_health_url_overrides = system_container_apps_routes._container_app_health_url_overrides
+_container_app_default_health_path = system_container_apps_routes._container_app_default_health_path
+_resolve_container_app_health_url = system_container_apps_routes._resolve_container_app_health_url
+_probe_container_app_health = system_container_apps_routes._probe_container_app_health
+_resource_status_from_provisioning_state = system_container_apps_routes._resource_status_from_provisioning_state
+_worse_status = system_container_apps_routes._worse_status
+_extract_container_app_properties = system_container_apps_routes._extract_container_app_properties
 
 _jobs_router, _jobs_exports = system_jobs_routes.build_router(
     runtime=_system_runtime(),
@@ -4264,6 +2995,13 @@ stop_job = _jobs_exports["stop_job"]
 resume_job = _jobs_exports["resume_job"]
 get_job_logs = _jobs_exports["get_job_logs"]
 
+_normalize_job_execution_status_token = system_jobs_routes._normalize_job_execution_status_token
+_is_active_job_execution_status = system_jobs_routes._is_active_job_execution_status
+_is_active_job_execution = system_jobs_routes._is_active_job_execution
+_select_anchored_job_executions = system_jobs_routes._select_anchored_job_executions
+_coalesce_log_row_string = system_jobs_routes._coalesce_log_row_string
+_extract_console_log_entries = system_jobs_routes._extract_console_log_entries
+_extract_log_lines = system_jobs_routes._extract_log_lines
 
 def _is_truthy(raw: Optional[str]) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
@@ -4285,81 +3023,5 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _normalize_job_execution_status_token(value: Optional[str]) -> str:
-    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
-
-
-def _is_active_job_execution_status(value: Optional[str]) -> bool:
-    return _normalize_job_execution_status_token(value) in _ACTIVE_JOB_EXECUTION_STATUS_TOKENS
-
-
-def _is_active_job_execution(execution: Dict[str, Any]) -> bool:
-    return _is_active_job_execution_status(execution.get("status")) and not str(
-        execution.get("endTime") or ""
-    ).strip()
-
-
-def _select_anchored_job_executions(
-    executions: Sequence[Dict[str, Any]], *, limit: int
-) -> List[Dict[str, Any]]:
-    if limit <= 0:
-        return []
-
-    selected = list(executions[:limit])
-    if not selected:
-        return selected
-
-    active_execution = next(
-        (execution for execution in executions if _is_active_job_execution(execution)),
-        None,
-    )
-    if active_execution is None or active_execution in selected:
-        return selected
-
-    return [active_execution, *selected[: max(0, limit - 1)]]
-
-
-def _coalesce_log_row_string(row: Dict[str, Any], *keys: str) -> str:
-    lowered = {str(key).lower(): value for key, value in row.items()}
-    for key in keys:
-        value = lowered.get(key.lower())
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            return text
-    return ""
-
-
-def _extract_console_log_entries(payload: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:
-    entries: List[Dict[str, Optional[str]]] = []
-    for row in extract_first_table_rows(payload):
-        if not isinstance(row, dict):
-            continue
-        message = _coalesce_log_row_string(row, "msg", "Log_s", "Log", "LogMessage_s", "Message", "message")
-        if not message:
-            continue
-        entries.append(
-            {
-                "timestamp": _coalesce_log_row_string(row, "TimeGenerated", "timegenerated") or None,
-                "stream_s": _coalesce_log_row_string(row, "stream_s", "Stream_s", "stream", "Stream") or None,
-                "executionName": _coalesce_log_row_string(
-                    row,
-                    "executionName",
-                    "ExecutionName",
-                    "exec",
-                    "Exec",
-                    "execution_name",
-                    "Execution_Name",
-                )
-                or None,
-                "message": message,
-            }
-        )
-    return entries
-
-
-def _extract_log_lines(payload: Dict[str, Any]) -> List[str]:
-    return [str(item.get("message") or "") for item in _extract_console_log_entries(payload) if item.get("message")]
 
 
