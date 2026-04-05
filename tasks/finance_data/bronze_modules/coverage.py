@@ -4,3 +4,9 @@ from tasks.finance_data.bronze_finance_data import (
     _mark_coverage,
     _is_fresh,
 )
+
+_COMPAT_EXPORTS = (
+    _empty_coverage_summary,
+    _mark_coverage,
+    _is_fresh,
+)

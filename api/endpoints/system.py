@@ -74,6 +74,37 @@ from core.runtime_config import (
     upsert_runtime_config,
 )
 
+# Preserve the historical import surface while route assembly is moved into submodules.
+_LEGACY_EXPORTS = (
+    json,
+    math,
+    time,
+    deepcopy,
+    timedelta,
+    httpx,
+    get_system_health_cache,
+    validate_auth,
+    ArmConfig,
+    AzureArmClient,
+    collect_jobs_and_executions,
+    collect_domain_metadata,
+    AzureLogAnalyticsClient,
+    extract_first_table_rows,
+    collect_system_health_snapshot,
+    TtlCache,
+    domain_artifacts,
+    delete_debug_symbols_state,
+    read_debug_symbols_state,
+    replace_debug_symbols_state,
+    get_delta_schema_columns,
+    build_snapshot_miss_payload,
+    DEFAULT_ENV_OVERRIDE_KEYS,
+    delete_runtime_config,
+    list_runtime_config,
+    normalize_env_override,
+    upsert_runtime_config,
+)
+
 logger = logging.getLogger("asset-allocation.api.system")
 
 router = APIRouter()

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from core import core as mdc
 from core import domain_metadata_snapshots
-from core.domain_metadata_snapshots import build_snapshot_miss_payload
+from core.domain_metadata_snapshots import build_snapshot_miss_payload as build_snapshot_miss_payload_from_snapshots
 from monitoring.domain_metadata import collect_domain_metadata
 
 logger = logging.getLogger("asset-allocation.api.system.domain_metadata")
@@ -635,7 +635,11 @@ def build_router(
         normalize_domain = _runtime_attr(runtime, "_normalize_domain")
         refresh_domain_metadata_snapshot = _runtime_attr(runtime, "_refresh_domain_metadata_snapshot")
         read_cached_domain_metadata_snapshot = _runtime_attr(runtime, "_read_cached_domain_metadata_snapshot")
-        build_snapshot_miss_payload = _runtime_attr(runtime, "build_snapshot_miss_payload")
+        build_snapshot_miss_payload = getattr(
+            runtime,
+            "build_snapshot_miss_payload",
+            build_snapshot_miss_payload_from_snapshots,
+        )
         logger = _runtime_attr(runtime, "logger")
 
         validate_auth(request)
