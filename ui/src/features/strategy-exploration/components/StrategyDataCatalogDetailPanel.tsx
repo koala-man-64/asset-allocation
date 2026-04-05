@@ -22,7 +22,8 @@ type Props = {
 
 export function StrategyDataCatalogDetailPanel({ controller }: Props) {
   const { detail, actions } = controller;
-  const { selectedTable, selectedTableState, selectedColumns, selectedTableDocumentedCount } = detail;
+  const { selectedTable, selectedTableState, selectedColumns, selectedTableDocumentedCount } =
+    detail;
 
   if (!selectedTable) {
     return (
@@ -53,7 +54,9 @@ export function StrategyDataCatalogDetailPanel({ controller }: Props) {
               <div className="flex flex-wrap gap-2">
                 <Badge variant="outline">{selectedTable.layerLabel}</Badge>
                 <Badge variant="secondary">{selectedTable.schemaName}</Badge>
-                {selectedTable.domainLabel ? <Badge variant="secondary">{selectedTable.domainLabel}</Badge> : null}
+                {selectedTable.domainLabel ? (
+                  <Badge variant="secondary">{selectedTable.domainLabel}</Badge>
+                ) : null}
                 {selectedTable.domainMetadata?.type ? (
                   <Badge variant="secondary">{selectedTable.domainMetadata.type}</Badge>
                 ) : null}
@@ -77,7 +80,9 @@ export function StrategyDataCatalogDetailPanel({ controller }: Props) {
                 Domain telemetry
               </div>
               <div className="mt-2 space-y-1">
-                <div>Columns in snapshot: {formatInt(selectedTable.domainMetadata?.columnCount)}</div>
+                <div>
+                  Columns in snapshot: {formatInt(selectedTable.domainMetadata?.columnCount)}
+                </div>
                 <div>Symbols: {formatInt(selectedTable.domainMetadata?.symbolCount)}</div>
                 <div>Storage: {formatBytes(selectedTable.domainMetadata?.totalBytes)}</div>
                 <div>Range: {formatDateRangeLabel(selectedTable.domainMetadata)}</div>
@@ -121,7 +126,10 @@ export function StrategyDataCatalogDetailPanel({ controller }: Props) {
                   note={
                     selectedTableState.data.can_edit
                       ? 'Rows can be edited from the explorer.'
-                      : (selectedTableState.data.edit_reason || 'Editing is disabled for this contract.').trim()
+                      : (
+                          selectedTableState.data.edit_reason ||
+                          'Editing is disabled for this contract.'
+                        ).trim()
                   }
                 />
               </div>
@@ -163,7 +171,10 @@ export function StrategyDataCatalogDetailPanel({ controller }: Props) {
                     <TableBody>
                       {selectedColumns.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                          <TableCell
+                            colSpan={4}
+                            className="py-10 text-center text-sm text-muted-foreground"
+                          >
                             No columns matched the current column filter.
                           </TableCell>
                         </TableRow>
@@ -177,8 +188,14 @@ export function StrategyDataCatalogDetailPanel({ controller }: Props) {
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                   {column.primary_key ? <Badge variant="default">PK</Badge> : null}
-                                  {column.nullable ? <Badge variant="outline">Nullable</Badge> : <Badge variant="outline">Required</Badge>}
-                                  {column.status ? <Badge variant="secondary">{column.status}</Badge> : null}
+                                  {column.nullable ? (
+                                    <Badge variant="outline">Nullable</Badge>
+                                  ) : (
+                                    <Badge variant="outline">Required</Badge>
+                                  )}
+                                  {column.status ? (
+                                    <Badge variant="secondary">{column.status}</Badge>
+                                  ) : null}
                                 </div>
                               </div>
                             </TableCell>
@@ -262,13 +279,16 @@ export function StrategyDataCatalogDetailPanel({ controller }: Props) {
           </div>
           <ul className="mt-4 space-y-2 text-sm text-mcm-walnut/70">
             <li>
-              System-status snapshot provides domain health, column counts, symbols, and storage rollups.
+              System-status snapshot provides domain health, column counts, symbols, and storage
+              rollups.
             </li>
             <li>
-              Postgres table metadata provides authoritative table columns, types, keys, and editability.
+              Postgres table metadata provides authoritative table columns, types, keys, and
+              editability.
             </li>
             <li>
-              Gold lookup annotations backfill authored descriptions when the Postgres comment is empty.
+              Gold lookup annotations backfill authored descriptions when the Postgres comment is
+              empty.
             </li>
           </ul>
         </div>

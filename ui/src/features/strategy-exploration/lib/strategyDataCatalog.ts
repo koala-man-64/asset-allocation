@@ -1,4 +1,8 @@
-import { PostgresService, type GoldColumnLookupRow, type PostgresTableMetadata } from '@/services/PostgresService';
+import {
+  PostgresService,
+  type GoldColumnLookupRow,
+  type PostgresTableMetadata
+} from '@/services/PostgresService';
 import type { DomainMetadata } from '@/types/strategy';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 

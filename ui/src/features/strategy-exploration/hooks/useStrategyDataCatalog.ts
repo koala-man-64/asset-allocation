@@ -10,10 +10,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 
 import { useSystemStatusViewQuery } from '@/hooks/useSystemStatusView';
-import {
-  PostgresService,
-  type GoldColumnLookupRow
-} from '@/services/PostgresService';
+import { PostgresService, type GoldColumnLookupRow } from '@/services/PostgresService';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 import {

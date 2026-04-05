@@ -1,3 +1,1 @@
-export {
-  DomainLayerComparisonPanel
-} from '@/features/system-status/domain-layer-comparison/DomainLayerComparisonPanel';
+export { DomainLayerComparisonPanel } from '@/features/system-status/domain-layer-comparison/DomainLayerComparisonPanel';

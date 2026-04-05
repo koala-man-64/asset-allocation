@@ -35,7 +35,9 @@ export function SymbolPurgeExecutionPanel({ controller }: Props) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div className="rounded-md border border-border/70 bg-muted/30 p-3">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected symbols</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Selected symbols
+            </p>
             <p className="font-mono text-2xl font-black">{candidate.selectedCount}</p>
           </div>
           <div className="rounded-md border border-border/70 bg-muted/30 p-3">

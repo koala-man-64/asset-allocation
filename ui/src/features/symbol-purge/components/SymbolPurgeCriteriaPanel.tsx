@@ -137,7 +137,9 @@ export function SymbolPurgeCriteriaPanel({ controller }: Props) {
             <select
               value={criteria.operator}
               className={formSelectClass}
-              onChange={(event) => actions.setOperator(event.target.value as typeof criteria.operator)}
+              onChange={(event) =>
+                actions.setOperator(event.target.value as typeof criteria.operator)
+              }
             >
               {operatorOptions.map((entry) => (
                 <option key={entry.value} value={entry.value}>
@@ -216,7 +218,9 @@ export function SymbolPurgeCriteriaPanel({ controller }: Props) {
 
         <div className="rounded-xl border border-border/70 bg-muted/30 p-2.5 text-xs text-muted-foreground">
           <p className="font-semibold text-foreground">Rule summary</p>
-          <p className="mt-1 break-words font-mono">{derived.previewExpression || 'No valid rule yet.'}</p>
+          <p className="mt-1 break-words font-mono">
+            {derived.previewExpression || 'No valid rule yet.'}
+          </p>
         </div>
       </div>
     </section>

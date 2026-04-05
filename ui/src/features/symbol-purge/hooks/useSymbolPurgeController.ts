@@ -57,9 +57,7 @@ export function useSymbolPurgeController() {
   const [operationId, setOperationId] = useState<string | null>(null);
   const [operationStatus, setOperationStatus] = useState<PurgeOperationStatus>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const [symbolExecutionResults, setSymbolExecutionResults] = useState<PurgeSymbolResultItem[]>(
-    []
-  );
+  const [symbolExecutionResults, setSymbolExecutionResults] = useState<PurgeSymbolResultItem[]>([]);
   const [completionSummary, setCompletionSummary] = useState<PurgeCompletionSummary | null>(null);
 
   const isPercentMode = operator === 'top_percent' || operator === 'bottom_percent';

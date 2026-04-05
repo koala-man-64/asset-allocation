@@ -84,7 +84,9 @@ export function StrategyDataCatalogNavigator({ controller }: Props) {
                   titleCase(navigator.selectedDomain)
                 : 'All domains'}
             </Badge>
-            <Badge variant="secondary">{formatInt(navigator.filteredTables.length)} visible tables</Badge>
+            <Badge variant="secondary">
+              {formatInt(navigator.filteredTables.length)} visible tables
+            </Badge>
           </div>
         </div>
 
@@ -135,7 +137,9 @@ export function StrategyDataCatalogNavigator({ controller }: Props) {
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <Badge variant="outline">{table.layerLabel}</Badge>
-                          {table.domainLabel ? <Badge variant="secondary">{table.domainLabel}</Badge> : null}
+                          {table.domainLabel ? (
+                            <Badge variant="secondary">{table.domainLabel}</Badge>
+                          ) : null}
                         </div>
                       </div>
                       {detailState?.isLoading ? (
@@ -144,7 +148,10 @@ export function StrategyDataCatalogNavigator({ controller }: Props) {
                     </div>
 
                     <div className="mt-3 text-xs text-mcm-walnut/65">
-                      {(table.domainDescription || 'Serving-table contract for this medallion slice.').trim()}
+                      {(
+                        table.domainDescription ||
+                        'Serving-table contract for this medallion slice.'
+                      ).trim()}
                     </div>
 
                     <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
@@ -152,14 +159,20 @@ export function StrategyDataCatalogNavigator({ controller }: Props) {
                         <div className="text-[10px] uppercase tracking-[0.16em] text-mcm-walnut/55">
                           Schema
                         </div>
-                        <div className="mt-1 font-mono font-bold text-foreground">{table.schemaName}</div>
+                        <div className="mt-1 font-mono font-bold text-foreground">
+                          {table.schemaName}
+                        </div>
                       </div>
                       <div className="rounded-[0.9rem] bg-mcm-cream/70 px-3 py-2">
                         <div className="text-[10px] uppercase tracking-[0.16em] text-mcm-walnut/55">
                           Columns
                         </div>
                         <div className="mt-1 font-mono font-bold text-foreground">
-                          {columnCount ? formatInt(columnCount) : detailState?.isLoading ? '...' : 'Open'}
+                          {columnCount
+                            ? formatInt(columnCount)
+                            : detailState?.isLoading
+                              ? '...'
+                              : 'Open'}
                         </div>
                       </div>
                     </div>

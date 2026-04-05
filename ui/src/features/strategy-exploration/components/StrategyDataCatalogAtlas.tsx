@@ -3,7 +3,12 @@ import { Badge } from '@/app/components/ui/badge';
 import { Skeleton } from '@/app/components/ui/skeleton';
 
 import type { LayerAtlas, LayerFilter, MedallionKey } from '../lib/strategyDataCatalog';
-import { LAYER_VISUALS, formatBytes, formatDateRangeLabel, formatInt } from '../lib/strategyDataCatalog';
+import {
+  LAYER_VISUALS,
+  formatBytes,
+  formatDateRangeLabel,
+  formatInt
+} from '../lib/strategyDataCatalog';
 
 type Props = {
   atlasLayers: LayerAtlas[];
@@ -81,7 +86,8 @@ export function StrategyDataCatalogAtlas({
                       </div>
                     ) : (
                       layer.domains.map((domain) => {
-                        const isActive = selectedDomain === domain.key && selectedLayer === layer.key;
+                        const isActive =
+                          selectedDomain === domain.key && selectedLayer === layer.key;
                         return (
                           <button
                             key={`${layer.key}-${domain.key}`}
@@ -101,7 +107,9 @@ export function StrategyDataCatalogAtlas({
                                   {domain.label}
                                 </div>
                                 <div className="mt-1 text-xs text-mcm-walnut/60">
-                                  {(domain.description || 'No domain description published.').trim()}
+                                  {(
+                                    domain.description || 'No domain description published.'
+                                  ).trim()}
                                 </div>
                               </div>
                               {domain.metadata?.type ? (
@@ -110,7 +118,10 @@ export function StrategyDataCatalogAtlas({
                             </div>
 
                             <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-mcm-walnut/70">
-                              <StatChip label="Symbols" value={formatInt(domain.metadata?.symbolCount)} />
+                              <StatChip
+                                label="Symbols"
+                                value={formatInt(domain.metadata?.symbolCount)}
+                              />
                               <StatChip
                                 label="Columns"
                                 value={formatInt(
@@ -118,7 +129,11 @@ export function StrategyDataCatalogAtlas({
                                 )}
                               />
                               <StatChip label="Tables" value={formatInt(domain.tableCount)} />
-                              <StatChip label="Range" value={formatDateRangeLabel(domain.metadata)} compact />
+                              <StatChip
+                                label="Range"
+                                value={formatDateRangeLabel(domain.metadata)}
+                                compact
+                              />
                             </div>
 
                             <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-mcm-walnut/55">
@@ -140,21 +155,11 @@ export function StrategyDataCatalogAtlas({
   );
 }
 
-function StatChip({
-  label,
-  value,
-  compact
-}: {
-  label: string;
-  value: string;
-  compact?: boolean;
-}) {
+function StatChip({ label, value, compact }: { label: string; value: string; compact?: boolean }) {
   return (
     <div className="rounded-[1rem] bg-mcm-cream/65 px-3 py-2">
       <div className="text-[10px] uppercase tracking-[0.18em] text-mcm-walnut/55">{label}</div>
-      <div
-        className={`mt-1 font-mono font-bold text-foreground ${compact ? 'text-[11px]' : ''}`}
-      >
+      <div className={`mt-1 font-mono font-bold text-foreground ${compact ? 'text-[11px]' : ''}`}>
         {value}
       </div>
     </div>

@@ -42,13 +42,28 @@ export function SymbolPurgeCandidateReview({ controller }: Props) {
             <ClipboardCopy className="h-4 w-4" />
             Copy selected
           </Button>
-          <Button variant="outline" size="sm" onClick={actions.selectAll} disabled={!candidate.rows.length}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={actions.selectAll}
+            disabled={!candidate.rows.length}
+          >
             Select all
           </Button>
-          <Button variant="outline" size="sm" onClick={actions.clearAll} disabled={!candidate.rows.length}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={actions.clearAll}
+            disabled={!candidate.rows.length}
+          >
             Clear all
           </Button>
-          <Button variant="outline" size="sm" onClick={actions.invertSelection} disabled={!candidate.rows.length}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={actions.invertSelection}
+            disabled={!candidate.rows.length}
+          >
             <ArrowUpDown className="h-4 w-4" />
             Invert
           </Button>
