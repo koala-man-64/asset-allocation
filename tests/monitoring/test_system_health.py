@@ -837,6 +837,215 @@ def test_system_health_defaults_blank_arm_timeout_and_job_execution_limit(
     assert not any(alert["title"] == "Azure monitoring unavailable" for alert in payload["alerts"])
 
 
+def test_system_health_defaults_missing_monitor_metrics_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", "myapp")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_JOBS", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION", raising=False)
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 5, tzinfo=timezone.utc)
+    resource_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/myapp"
+    app_url = (
+        "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/myapp"
+    )
+    metrics_url = f"https://management.azure.com{resource_id}/providers/microsoft.insights/metrics"
+    captured_metrics_params: Dict[str, str] = {}
+    responses: Dict[str, Dict[str, Any]] = {
+        app_url: {
+            "id": resource_id,
+            "properties": {"provisioningState": "Succeeded", "latestReadyRevisionName": "rev1"},
+        },
+        metrics_url: {
+            "value": [
+                {
+                    "name": {"value": "UsageNanoCores"},
+                    "unit": "Count",
+                    "timeseries": [{"data": [{"timeStamp": "2024-01-05T00:00:00Z", "average": 1.0}]}],
+                }
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            if url == metrics_url and params is not None:
+                captured_metrics_params.update(params)
+            return responses[url]
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert payload["overall"] == "healthy"
+    assert payload["resources"][0]["status"] == "healthy"
+    assert captured_metrics_params == {
+        "api-version": system_health.DEFAULT_MONITOR_METRICS_API_VERSION,
+        "metricnames": "UsageNanoCores,WorkingSetBytes",
+        "timespan": "2024-01-04T23:45:00+00:00/2024-01-05T00:00:00+00:00",
+        "interval": system_health.DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL,
+        "aggregation": system_health.DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION,
+    }
+    assert not any(alert["title"] == "Azure monitoring unavailable" for alert in payload["alerts"])
+
+
+def test_system_health_defaults_missing_log_analytics_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", "myapp")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
+    monkeypatch.setenv(
+        "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON",
+        '[{"resourceType":"Microsoft.App/containerApps","name":"errors_15m","query":"X {resourceName}","warnAbove":1,"errorAbove":10,"unit":"count"}]',
+    )
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_JOBS", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", raising=False)
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 5, tzinfo=timezone.utc)
+    captured: Dict[str, Any] = {}
+    resource_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/myapp"
+    app_url = f"https://management.azure.com{resource_id}"
+    responses: Dict[str, Dict[str, Any]] = {
+        app_url: {
+            "id": resource_id,
+            "properties": {"provisioningState": "Succeeded", "latestReadyRevisionName": "rev1"},
+        }
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    class FakeAzureLogAnalyticsClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured["timeout_seconds"] = kwargs["timeout_seconds"]
+
+        def query(self, *, workspace_id: str, query: str, timespan: Optional[str] = None) -> Dict[str, Any]:
+            captured["workspace_id"] = workspace_id
+            captured["timespan"] = timespan
+            return {"tables": [{"rows": [[0]]}]}
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+    monkeypatch.setattr(system_health, "AzureLogAnalyticsClient", FakeAzureLogAnalyticsClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert payload["overall"] == "healthy"
+    assert captured["timeout_seconds"] == pytest.approx(
+        system_health.DEFAULT_SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS
+    )
+    assert captured["workspace_id"] == "workspace"
+    assert captured["timespan"] == "2024-01-04T23:45:00+00:00/2024-01-05T00:00:00+00:00"
+    assert not any(alert["title"] == "Azure monitoring unavailable" for alert in payload["alerts"])
+
+
+def test_system_health_defaults_missing_layer_freshness_and_container_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.config as app_config
+    from monitoring.system_health_modules import snapshot as system_health_snapshot
+
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.delenv("SYSTEM_HEALTH_MAX_AGE_SECONDS", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_MARKERS_CONTAINER", raising=False)
+    monkeypatch.delenv("AZURE_CONTAINER_COMMON", raising=False)
+    monkeypatch.delenv("AZURE_CONTAINER_BRONZE", raising=False)
+    monkeypatch.delenv("AZURE_CONTAINER_SILVER", raising=False)
+    monkeypatch.delenv("AZURE_CONTAINER_GOLD", raising=False)
+    monkeypatch.delenv("AZURE_CONTAINER_PLATINUM", raising=False)
+
+    now = datetime(2024, 1, 5, tzinfo=timezone.utc)
+    marker_containers: list[str] = []
+    folder_containers: list[str] = []
+
+    class FakeAzureBlobStoreConfig:
+        @classmethod
+        def from_env(cls) -> "FakeAzureBlobStoreConfig":
+            return cls()
+
+    class FakeAzureBlobStore:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def get_blob_last_modified(self, *, container: str, blob_name: str) -> datetime:
+            marker_containers.append(container)
+            return now
+
+    def _capture_folder_url(sub_id: str, rg: str, account: str, container: str, folder_path: str) -> None:
+        folder_containers.append(container)
+        return None
+
+    monkeypatch.setattr(system_health, "AzureBlobStoreConfig", FakeAzureBlobStoreConfig)
+    monkeypatch.setattr(system_health, "AzureBlobStore", FakeAzureBlobStore)
+    monkeypatch.setattr(system_health_snapshot, "_make_folder_portal_url", _capture_folder_url)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert payload["overall"] == "healthy"
+    assert {layer["name"] for layer in payload["dataLayers"]} == {"Bronze", "Silver", "Gold", "Platinum"}
+    assert all(
+        layer["maxAgeSeconds"] == system_health.DEFAULT_SYSTEM_HEALTH_MAX_AGE_SECONDS
+        for layer in payload["dataLayers"]
+    )
+    assert set(marker_containers) == {str(app_config.AZURE_CONTAINER_COMMON)}
+    assert {
+        str(app_config.AZURE_CONTAINER_BRONZE),
+        str(app_config.AZURE_CONTAINER_SILVER),
+        str(app_config.AZURE_CONTAINER_GOLD),
+        str(app_config.AZURE_CONTAINER_PLATINUM),
+    }.issubset(set(folder_containers))
+
+
 def test_system_health_critical_on_job_failure_reason_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")

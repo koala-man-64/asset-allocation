@@ -15,9 +15,8 @@ from monitoring.system_health_modules.env_config import (
     FreshnessPolicy,
     JobScheduleMetadata,
     MarkerProbeConfig,
+    _env_int_or_default,
     _env_or_default,
-    _require_env,
-    _require_int,
 )
 
 logger = logging.getLogger("asset_allocation.monitoring.system_health")
@@ -29,6 +28,15 @@ def _runtime_module() -> ModuleType:
 
 def _runtime_attr(name: str) -> Any:
     return getattr(_runtime_module(), name)
+
+
+def _config_attr(name: str) -> Any:
+    return getattr(import_module("core.config"), name, None)
+
+
+def _config_str(name: str) -> str:
+    value = _config_attr(name)
+    return str(value or "").strip()
 
 
 def _normalize_layer_key(value: str) -> str:
@@ -124,10 +132,9 @@ def _resolve_freshness_policy(
 
 def _marker_probe_config() -> MarkerProbeConfig:
     default_prefix = _runtime_attr("DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX")
-    container = (
-        os.environ.get("SYSTEM_HEALTH_MARKERS_CONTAINER")
-        or os.environ.get("AZURE_CONTAINER_COMMON")
-        or ""
+    container = _env_or_default(
+        "SYSTEM_HEALTH_MARKERS_CONTAINER",
+        _config_str("AZURE_CONTAINER_COMMON"),
     ).strip()
     prefix = os.environ.get("SYSTEM_HEALTH_MARKERS_PREFIX", default_prefix).strip()
 
@@ -459,7 +466,10 @@ class LayerProbeSpec:
     job_name: Optional[str] = None
 
     def container_name(self) -> str:
-        return _require_env(self.container_env)
+        container = _env_or_default(self.container_env, _config_str(self.container_env)).strip()
+        if container:
+            return container
+        raise ValueError(f"Missing required container setting: {self.container_env}")
 
 
 def _compute_layer_status(
@@ -488,7 +498,10 @@ def _overall_from_layers(statuses: Sequence[str]) -> str:
 
 
 def _default_layer_specs() -> List[LayerProbeSpec]:
-    max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
+    max_age_default = _env_int_or_default(
+        "SYSTEM_HEALTH_MAX_AGE_SECONDS",
+        _runtime_attr("DEFAULT_SYSTEM_HEALTH_MAX_AGE_SECONDS"),
+    )
 
     cron_bronze_market = "0 22 * * 1-5"
     cron_bronze_price_target = "0 4 * * 1-5"

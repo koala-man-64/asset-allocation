@@ -519,9 +519,6 @@ def _collect_control_plane_snapshot(
     env_or_default = _runtime_attr(runtime, "_env_or_default")
     env_float_or_default = _runtime_attr(runtime, "_env_float_or_default")
     env_int_or_default = _runtime_attr(runtime, "_env_int_or_default")
-    require_env = _runtime_attr(runtime, "_require_env")
-    require_float = _runtime_attr(runtime, "_require_float")
-    require_int = _runtime_attr(runtime, "_require_int")
     append_job_usage_percent_signals = _runtime_attr(runtime, "_append_job_usage_percent_signals")
     append_signal_details = _runtime_attr(runtime, "_append_signal_details")
     worse_resource_status = _runtime_attr(runtime, "_worse_resource_status")
@@ -543,10 +540,30 @@ def _collect_control_plane_snapshot(
     default_arm_api_version = _runtime_attr(runtime, "DEFAULT_ARM_API_VERSION")
     default_arm_timeout_seconds = _runtime_attr(runtime, "DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS")
     default_job_executions_per_job = _runtime_attr(runtime, "DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB")
+    default_monitor_metrics_timespan_minutes = _runtime_attr(
+        runtime,
+        "DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES",
+    )
+    default_monitor_metrics_interval = _runtime_attr(
+        runtime,
+        "DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL",
+    )
+    default_monitor_metrics_aggregation = _runtime_attr(
+        runtime,
+        "DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION",
+    )
     default_containerapp_metric_names = _runtime_attr(runtime, "DEFAULT_SYSTEM_HEALTH_CONTAINERAPP_MONITOR_METRIC_NAMES")
     default_job_metric_names = _runtime_attr(runtime, "DEFAULT_SYSTEM_HEALTH_JOB_MONITOR_METRIC_NAMES")
     default_monitor_metrics_api_version = _runtime_attr(runtime, "DEFAULT_MONITOR_METRICS_API_VERSION")
     default_resource_health_api_version = _runtime_attr(runtime, "DEFAULT_RESOURCE_HEALTH_API_VERSION")
+    default_log_analytics_timeout_seconds = _runtime_attr(
+        runtime,
+        "DEFAULT_SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS",
+    )
+    default_log_analytics_timespan_minutes = _runtime_attr(
+        runtime,
+        "DEFAULT_SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES",
+    )
     resource_health_item_cls = _runtime_attr(runtime, "ResourceHealthItem")
     logger_runtime = _runtime_attr(runtime, "logger")
 
@@ -564,10 +581,31 @@ def _collect_control_plane_snapshot(
     containerapp_metric_names = _runtime_attr(runtime, "_split_csv")(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")) or (list(default_containerapp_metric_names) if app_names else [])
     job_metric_names = _runtime_attr(runtime, "_split_csv")(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS")) or (list(default_job_metric_names) if job_names else [])
     monitor_metrics_enabled = bool(containerapp_metric_names or job_metric_names)
-    monitor_metrics_api_version = require_env("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION") if monitor_metrics_enabled else default_monitor_metrics_api_version
-    monitor_metrics_timespan_minutes = require_int("SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", min_value=1, max_value=24 * 60) if monitor_metrics_enabled else 0
-    monitor_metrics_interval = require_env("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL") if monitor_metrics_enabled else ""
-    monitor_metrics_aggregation = require_env("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION") if monitor_metrics_enabled else ""
+    monitor_metrics_api_version = (
+        env_or_default("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION", default_monitor_metrics_api_version)
+        if monitor_metrics_enabled
+        else default_monitor_metrics_api_version
+    )
+    monitor_metrics_timespan_minutes = (
+        env_int_or_default(
+            "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES",
+            default_monitor_metrics_timespan_minutes,
+            min_value=1,
+            max_value=24 * 60,
+        )
+        if monitor_metrics_enabled
+        else 0
+    )
+    monitor_metrics_interval = (
+        env_or_default("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL", default_monitor_metrics_interval)
+        if monitor_metrics_enabled
+        else ""
+    )
+    monitor_metrics_aggregation = (
+        env_or_default("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION", default_monitor_metrics_aggregation)
+        if monitor_metrics_enabled
+        else ""
+    )
     monitor_metrics_thresholds = {}
     raw_thresholds = (os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON") or "").strip()
     if raw_thresholds:
@@ -578,8 +616,26 @@ def _collect_control_plane_snapshot(
 
     log_analytics_workspace_id = (os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") or "").strip()
     log_analytics_enabled = bool(log_analytics_workspace_id)
-    log_analytics_timeout_seconds = require_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0) if log_analytics_enabled else 0.0
-    log_analytics_timespan_minutes = require_int("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", min_value=1, max_value=24 * 60) if log_analytics_enabled else 0
+    log_analytics_timeout_seconds = (
+        env_float_or_default(
+            "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS",
+            default_log_analytics_timeout_seconds,
+            min_value=0.5,
+            max_value=30.0,
+        )
+        if log_analytics_enabled
+        else 0.0
+    )
+    log_analytics_timespan_minutes = (
+        env_int_or_default(
+            "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES",
+            default_log_analytics_timespan_minutes,
+            min_value=1,
+            max_value=24 * 60,
+        )
+        if log_analytics_enabled
+        else 0
+    )
     log_analytics_queries = []
     raw_queries = (os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON") or "").strip()
     if raw_queries:

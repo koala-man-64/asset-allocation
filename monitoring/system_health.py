@@ -95,6 +95,20 @@ from monitoring.system_health_modules.snapshot import (
     collect_system_health_snapshot,
 )
 
+logger = logging.getLogger("asset_allocation.monitoring.system_health")
+DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_version
+DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX = "system/health_markers"
+DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS = 5.0
+DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB = 3
+DEFAULT_SYSTEM_HEALTH_MAX_AGE_SECONDS = 129600
+DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES = 15
+DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL = "PT1M"
+DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION = "Average"
+DEFAULT_SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS = 5.0
+DEFAULT_SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES = 15
+DEFAULT_SYSTEM_HEALTH_CONTAINERAPP_MONITOR_METRIC_NAMES = ("UsageNanoCores", "WorkingSetBytes")
+DEFAULT_SYSTEM_HEALTH_JOB_MONITOR_METRIC_NAMES = ("UsageNanoCores", "UsageBytes")
+
 # Preserve the historical import surface while the implementation lives in system_health_modules.
 _LEGACY_EXPORTS = (
     hashlib,
@@ -121,6 +135,12 @@ _LEGACY_EXPORTS = (
     collect_monitor_metrics,
     parse_metric_thresholds_json,
     DEFAULT_RESOURCE_HEALTH_API_VERSION,
+    DEFAULT_SYSTEM_HEALTH_MAX_AGE_SECONDS,
+    DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES,
+    DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL,
+    DEFAULT_SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION,
+    DEFAULT_SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS,
+    DEFAULT_SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES,
     _alert_id,
     _bronze_finance_zero_write_alerts,
     _bronze_symbol_jump_alerts,
@@ -182,11 +202,3 @@ _LEGACY_EXPORTS = (
     _make_job_portal_url,
     collect_system_health_snapshot,
 )
-
-logger = logging.getLogger("asset_allocation.monitoring.system_health")
-DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_version
-DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX = "system/health_markers"
-DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS = 5.0
-DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB = 3
-DEFAULT_SYSTEM_HEALTH_CONTAINERAPP_MONITOR_METRIC_NAMES = ("UsageNanoCores", "WorkingSetBytes")
-DEFAULT_SYSTEM_HEALTH_JOB_MONITOR_METRIC_NAMES = ("UsageNanoCores", "UsageBytes")
